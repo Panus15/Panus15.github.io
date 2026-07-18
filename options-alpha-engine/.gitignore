@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.DS_Store
+# data / secrets — never commit vendor data or API keys
+data/
+*.csv
+*.parquet
+.env

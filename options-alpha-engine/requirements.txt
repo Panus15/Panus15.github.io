@@ -1,0 +1,18 @@
+# The MVP core runs on the Python standard library ALONE — no install needed:
+#     python3 demo.py
+#     python3 tests/test_engine.py
+#
+# The packages below are for the PRODUCTION build, not the demo. Swap the
+# hand-rolled OLS / normal-CDF for these when you wire in real data and need
+# speed + vectorisation.
+#
+# numpy>=1.26          # vectorised pricing / linear algebra
+# pandas>=2.1          # time-series wrangling
+# scipy>=1.11          # optimisers, stats, robust IV root-finding
+# pytest>=7.4          # test runner (tests also run standalone without it)
+#
+# Later phases:
+# torch                # TFT (vol) + MDN (density)
+# stable-baselines3    # PPO execution agent
+# transformers         # FinBERT sentiment (Phase 2 NLP)
+# psycopg[binary]      # TimescaleDB (Postgres) client
