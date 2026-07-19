@@ -271,10 +271,16 @@ class SequenceMDNForecaster:
         sqrtT = fwd["sqrtT"]
 
         if vol is not None:
-            avg_su = sum(w[i] * su[i] for i in range(self.n_components))
-            if avg_su > 1e-9:
-                factor = vol / avg_su
-                s = [self.sigma_floor + su[i] * factor * sqrtT for i in range(self.n_components)]
+            # Rescale the component sigmas so the mixture's annualised log-return
+            # vol equals `vol` exactly (matching the baseline's `vol=` override),
+            # while keeping the learned weights and mean SHAPE (hence skew).
+            mbar = sum(w[i] * m[i] for i in range(self.n_components))
+            between = sum(w[i] * (m[i] - mbar) ** 2 for i in range(self.n_components))
+            within_now = sum(w[i] * s[i] * s[i] for i in range(self.n_components))
+            target_within = max(vol * vol * T - between, 1e-10)
+            if within_now > 1e-12:
+                k = math.sqrt(target_within / within_now)
+                s = [max(k * s[i], self.sigma_floor) for i in range(self.n_components)]
 
         ln_spot = math.log(spot)
         comps = [
