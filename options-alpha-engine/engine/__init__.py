@@ -11,13 +11,15 @@ Public surface:
     adapters     live (Polygon/ORATS) + offline (CSV/JSON) market-data adapters
     deribit      keyless Deribit bridge — real EUROPEAN crypto options, no API key
     tradier      free-key Tradier bridge — SPX/XSP European chain + paper execution
+    ibkr         Interactive Brokers (Client Portal) — real paper fills + latency
     portfolio    correlation-aware short-vega caps, CVaR sizing, kill-switch
     hedged_backtest  delta-hedged walk-forward short-vol backtest (governed)
 """
 
-from . import (adapters, backtest, data, deribit, hedged_backtest, iv,
+from . import (adapters, backtest, data, deribit, hedged_backtest, ibkr, iv,
                portfolio, pricing, signal, sizing, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
-           "data", "adapters", "deribit", "tradier", "portfolio", "hedged_backtest"]
+           "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
+           "hedged_backtest"]
 __version__ = "0.1.0"
