@@ -12,10 +12,15 @@ It walks the whole MVP loop:
      the metrics that decide whether an edge is real.
 """
 
+from datetime import date
+
 from engine import sizing, volforecast
 from engine.data import SyntheticAdapter
 from engine.hedged_backtest import price_path_with_crash, run_hedged_backtest
 from engine.signal import scan_chain
+from models.news_signal import event_risk
+from models.sentiment import (LexiconSentimentScorer, NewsItem,
+                              aggregate_sentiment)
 from models import objective
 from models.baseline import BaselineDensityForecaster
 from models.edge import regime_stressed, scan_distribution
@@ -70,7 +75,25 @@ def main() -> None:
     print("  (VRP>0 = market implies more variance than we forecast -> sell vol;\n"
           "   SRP/skew shown but DIAGNOSTIC-only; verdict gated by regime + cost)\n")
 
-    # 3c. Promotion gate — would a trained MDN replace the HAR baseline? --------
+    # 3c. News sentiment overlay (Phase 2) — FORWARD-looking vol-regime gate -----
+    # The price regime gate is backward-looking (HAR lags a spike). A burst of
+    # negative / dispersed news anticipates the vol spike, so it can veto selling
+    # vol BEFORE the move. It composes via edge.compare's existing `stressed` flag.
+    scorer = LexiconSentimentScorer()
+    asof = date(2026, 7, 19)
+    calm_news = [NewsItem("2026-07-19", "DEMO", "steady trading, guidance reaffirmed")]
+    risk_news = [NewsItem("2026-07-19", "DEMO", "shares plunge on fraud probe"),
+                 NewsItem("2026-07-19", "DEMO", "default fears and selloff deepen"),
+                 NewsItem("2026-07-19", "DEMO", "crisis warning; volatility surges")]
+    for label, news in (("calm news", calm_news), ("risk news", risk_news)):
+        feat = aggregate_sentiment(news, scorer, asof=asof)
+        fired, reason = event_risk(stressed, feat)
+        print(f"News overlay [{label}]: score={feat.score:+.2f} disp={feat.dispersion:.2f} "
+              f"vol={feat.volume:.1f} -> event_risk={fired} ({reason})")
+    print("  -> when event_risk=True, pass it as edge.compare(stressed=True) to "
+          "suppress short-vol early\n")
+
+    # 3d. Promotion gate — would a trained MDN replace the HAR baseline? --------
     # The neural model (a drop-in emitting the SAME MixtureLogNormal) only ships
     # if it beats the baseline OUT-OF-SAMPLE on the S_T density. Train on the
     # first 75% of history, score both on the held-out tail. Lower NLL = better.

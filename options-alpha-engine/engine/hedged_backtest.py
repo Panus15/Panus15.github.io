@@ -37,7 +37,10 @@ import random
 from dataclasses import dataclass, field
 
 from engine import backtest, pricing, portfolio, volforecast
-from models.edge import regime_stressed
+# NOTE: models.edge is imported lazily inside run_hedged_backtest (see below).
+# Importing it at module top creates an engine<->models import cycle, since
+# engine/__init__ eagerly imports this module while models/__init__ imports
+# engine. The lazy import keeps `import engine` free of any models dependency.
 
 MULT = 100
 
@@ -168,6 +171,8 @@ def run_hedged_backtest(
     unaffected by this flag; they always use the entry IV at which the straddle is
     actually sold.
     """
+    from models.edge import regime_stressed   # lazy: avoids engine<->models cycle
+
     limits = limits or portfolio.RiskLimits(
         max_net_short_vega=8_000.0, max_drawdown=0.25
     )
