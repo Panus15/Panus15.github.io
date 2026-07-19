@@ -15,8 +15,10 @@ It walks the whole MVP loop:
 from engine import backtest, sizing, volforecast
 from engine.data import SyntheticAdapter
 from engine.signal import scan_chain
+from models import objective
 from models.baseline import BaselineDensityForecaster
 from models.edge import regime_stressed, scan_distribution
+from models.mdn import SequenceMDNForecaster
 
 
 def main() -> None:
@@ -66,6 +68,27 @@ def main() -> None:
               f"{s.edge_net:>7.1f} {s.verdict:>9}")
     print("  (VRP>0 = market implies more variance than we forecast -> sell vol;\n"
           "   SRP/skew shown but DIAGNOSTIC-only; verdict gated by regime + cost)\n")
+
+    # 3c. Promotion gate — would a trained MDN replace the HAR baseline? --------
+    # The neural model (a drop-in emitting the SAME MixtureLogNormal) only ships
+    # if it beats the baseline OUT-OF-SAMPLE on the S_T density. Train on the
+    # first 75% of history, score both on the held-out tail. Lower NLL = better.
+    cut = int(len(prices) * 0.75)
+    mdn = SequenceMDNForecaster(context=63, seed=0)
+    mdn.fit(prices[:cut], horizons=(30,), epochs=15, lr=0.05, max_windows=200)
+    oos = objective.build_windows(prices[cut - 63:], context=63, horizons=(30,))
+    nll_base = objective.dataset_nll(BaselineDensityForecaster(), oos, r=0.0, q=0.0)
+    nll_mdn = objective.dataset_nll(mdn, oos, r=0.0, q=0.0)
+    tail_base = sum(objective.left_tail_pinball(BaselineDensityForecaster()
+                    .forecast(c, h / 365, spot=c[-1]), s) for c, h, s in oos) / len(oos)
+    tail_mdn = sum(objective.left_tail_pinball(mdn.forecast(c, h / 365, spot=c[-1]), s)
+                   for c, h, s in oos) / len(oos)
+    winner = "MDN" if (nll_mdn < nll_base and tail_mdn < tail_base) else "HAR baseline"
+    print(f"Promotion gate (out-of-sample, {len(oos)} windows, lower=better):")
+    print(f"  {'':13}{'NLL':>9} {'left-tail':>11}")
+    print(f"  HAR baseline {nll_base:>9.4f} {tail_base:>11.4f}")
+    print(f"  trained MDN  {nll_mdn:>9.4f} {tail_mdn:>11.4f}")
+    print(f"  -> ships: {winner}  (must win BOTH aggregate NLL and the tall tail)\n")
 
     # 4. Position sizing -----------------------------------------------------
     if ideas:

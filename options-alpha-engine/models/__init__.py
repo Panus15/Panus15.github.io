@@ -6,6 +6,7 @@ option-implied (risk-neutral) distribution. The gap is the tradeable edge.
 
     density   MixtureLogNormal — the forecast OUTPUT TYPE (baseline AND MDN emit it)
     baseline  parametric distributional forecaster (HAR-RV vol -> mixture) [ships first]
+    mdn       trainable Mixture Density Network forecaster — drop-in for baseline
     rnd       risk-neutral moments recovered from the option chain (BKM / model-free)
     edge      compares physical P forecast vs risk-neutral Q -> distributional signals
 
@@ -13,6 +14,6 @@ Production target: swap `baseline`'s parameter function for a TFT-encoder + MDN
 head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
-from . import baseline, density, edge, objective, rnd
+from . import baseline, density, edge, mdn, objective, rnd
 
-__all__ = ["density", "baseline", "rnd", "edge", "objective"]
+__all__ = ["density", "baseline", "mdn", "rnd", "edge", "objective"]
