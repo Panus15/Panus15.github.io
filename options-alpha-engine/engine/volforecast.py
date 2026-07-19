@@ -88,6 +88,25 @@ def _ols(X: list[list[float]], y: list[float]) -> list[float]:
     return [xtx[a][n_feat] / xtx[a][a] if abs(xtx[a][a]) > 1e-12 else 0.0 for a in range(n_feat)]
 
 
+def realized_skew(prices: Sequence[float], window: int = 63) -> float:
+    """Skewness of recent daily log-returns (physical, backward-looking).
+
+    Equities print persistent NEGATIVE return skew (crashes are sharper than
+    rallies). Used to make the baseline density's shape data-driven instead of a
+    hardcoded constant — see models/baseline.py. Returns 0.0 if under-sampled.
+    """
+    rets = log_returns(prices)[-window:]
+    n = len(rets)
+    if n < 10:
+        return 0.0
+    mean = sum(rets) / n
+    var = sum((x - mean) ** 2 for x in rets) / n
+    if var <= 0:
+        return 0.0
+    third = sum((x - mean) ** 3 for x in rets) / n
+    return third / var ** 1.5
+
+
 def har_rv_forecast(prices: Sequence[float]) -> float:
     """Heterogeneous Auto-Regressive Realised Volatility (Corsi, 2009) forecast.
 

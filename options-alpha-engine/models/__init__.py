@@ -13,6 +13,6 @@ Production target: swap `baseline`'s parameter function for a TFT-encoder + MDN
 head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
-from . import baseline, density
+from . import baseline, density, edge, objective, rnd
 
-__all__ = ["density", "baseline"]
+__all__ = ["density", "baseline", "rnd", "edge", "objective"]

@@ -15,6 +15,8 @@ It walks the whole MVP loop:
 from engine import backtest, sizing, volforecast
 from engine.data import SyntheticAdapter
 from engine.signal import scan_chain
+from models.baseline import BaselineDensityForecaster
+from models.edge import regime_stressed, scan_distribution
 
 
 def main() -> None:
@@ -48,6 +50,22 @@ def main() -> None:
               f"{q.mid:>6.2f} {m.fair_value:>6.2f} "
               f"{m.edge_net:>6.2f} {m.verdict:>7}")
     print()
+
+    # 3b. DISTRIBUTIONAL scan — the core ML technique --------------------------
+    # Forecast the FULL distribution of S_T (physical P) and compare it to the
+    # option-implied risk-neutral distribution (Q) recovered from the chain.
+    # This generalises the scalar scan above into a per-expiry P-vs-Q comparison.
+    forecaster = BaselineDensityForecaster()
+    stressed = regime_stressed(prices)
+    print(f"Distributional P-vs-Q scan (core technique)  [regime_stressed={stressed}]")
+    print(f"  {'dte':>3} {'P_vol':>6} {'Q_vol':>6} {'VRP':>7} "
+          f"{'P_skew':>7} {'Q_skew':>7} {'edge$':>7} {'verdict':>9}")
+    for s in scan_distribution(chain, forecaster, prices, actionable_only=False):
+        print(f"  {s.expiry_days:>3} {s.p_vol:>6.1%} {s.q_vol:>6.1%} "
+              f"{s.variance_risk_premium:>+7.4f} {s.p_skew:>7.2f} {s.q_skew:>7.2f} "
+              f"{s.edge_net:>7.1f} {s.verdict:>9}")
+    print("  (VRP>0 = market implies more variance than we forecast -> sell vol;\n"
+          "   SRP/skew shown but DIAGNOSTIC-only; verdict gated by regime + cost)\n")
 
     # 4. Position sizing -----------------------------------------------------
     if ideas:
