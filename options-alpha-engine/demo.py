@@ -12,8 +12,9 @@ It walks the whole MVP loop:
      the metrics that decide whether an edge is real.
 """
 
-from engine import backtest, sizing, volforecast
+from engine import sizing, volforecast
 from engine.data import SyntheticAdapter
+from engine.hedged_backtest import price_path_with_crash, run_hedged_backtest
 from engine.signal import scan_chain
 from models import objective
 from models.baseline import BaselineDensityForecaster
@@ -105,37 +106,25 @@ def main() -> None:
               f"{best.quote.strike:.0f} / {best.quote.expiry_days}d")
         print(f"Sized position (0.25 Kelly, 2% cap): {n} contracts\n")
 
-    # 5. Cost-aware backtest of a toy short-vol strategy ---------------------
-    # Illustrative daily P&L: collect the variance risk premium, minus the
-    # occasional volatility spike. The point is the *engine + metrics*, not
-    # this fixture's returns.
-    daily_pnl = _toy_short_vol_pnl(prices)
-    result = backtest.run_backtest(daily_pnl, starting_equity=100_000)
-    print("Backtest (toy short-vol, costs included):")
-    print("  " + result.summary().replace("\n", "\n  "))
-    print("\nReminder: swap SyntheticAdapter for real data before trusting any "
-          "of these numbers. This fixture only proves the plumbing works.")
-
-
-def _toy_short_vol_pnl(prices):
-    """Deterministic illustrative P&L stream derived from the price path.
-
-    Short-vol harvests small daily premium (theta) but pays up on large moves.
-    We inject periodic deterministic vol spikes so the series shows the true
-    signature: a high hit rate punctuated by painful losing days and real
-    drawdowns — "picking up pennies in front of a steamroller." A backtest
-    that hides this is lying to you.
-    """
-    rets = volforecast.log_returns(prices)
-    pnl = []
-    premium_per_day = 40.0            # theta collected each day
-    gamma_cost = 85_000.0            # penalty scaling for realised variance
-    for i, x in enumerate(rets):
-        move = abs(x)
-        if i % 21 == 0:              # ~monthly vol spike / gap risk
-            move *= 5.0
-        pnl.append(premium_per_day - gamma_cost * move * move)
-    return pnl
+    # 5. Delta-hedged WALK-FORWARD backtest — governed + crash-aware ----------
+    # The real proof: sell the straddle, delta-hedge daily, size via CVaR, and
+    # let the risk governor veto trades. Run it on a calm sample AND one with a
+    # crash — the gap between them is why a crash-free backtest lies.
+    calm = SyntheticAdapter(seed=5).price_history("CALM", 620)
+    crash = price_path_with_crash(756)
+    rc = run_hedged_backtest(calm)
+    rx = run_hedged_backtest(crash)
+    print("Walk-forward delta-hedged short-vol (CVaR-sized, governor-gated):")
+    print(f"  {'':16}{'Sharpe':>7} {'Sortino':>8} {'MaxDD':>7} {'trades':>7} {'skipped':>8}")
+    print(f"  calm sample    {rc.metrics.sharpe:>7.2f} {rc.metrics.sortino:>8.2f} "
+          f"{rc.metrics.max_drawdown:>7.1%} {rc.n_trades:>7} {rc.n_skipped:>8}")
+    print(f"  WITH a crash   {rx.metrics.sharpe:>7.2f} {rx.metrics.sortino:>8.2f} "
+          f"{rx.metrics.max_drawdown:>7.1%} {rx.n_trades:>7} {rx.n_skipped:>8}")
+    print(f"  crash skips: {rx.skip_reasons}")
+    print("  -> a crash-free sample looks like free money; the crash reveals the")
+    print("     short-vol tail and the regime gate/kill-switch fire. THAT is honest.\n")
+    print("Reminder: swap SyntheticAdapter for real data before trusting any "
+          "number. This fixture only proves the engine + risk discipline work.")
 
 
 if __name__ == "__main__":

@@ -10,11 +10,12 @@ Public surface:
     data         OptionQuote/OptionChain model + synthetic adapter
     adapters     live (Polygon/ORATS) + offline (CSV/JSON) market-data adapters
     portfolio    correlation-aware short-vega caps, CVaR sizing, kill-switch
+    hedged_backtest  delta-hedged walk-forward short-vol backtest (governed)
 """
 
-from . import (adapters, backtest, data, iv, portfolio, pricing, signal,
-               sizing, volforecast)
+from . import (adapters, backtest, data, hedged_backtest, iv, portfolio,
+               pricing, signal, sizing, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
-           "data", "adapters", "portfolio"]
+           "data", "adapters", "portfolio", "hedged_backtest"]
 __version__ = "0.1.0"
