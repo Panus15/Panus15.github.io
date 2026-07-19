@@ -54,23 +54,34 @@
 7. **ต้นทุนกิน edge** → คิด **round-trip spread + commission + hedge** แปลงเป็น vol points ผ่าน vega
 8. **Look-ahead** → เพิ่ม `OptionChain.asof` (P ต้อง truncate ≤ asof)
 
-## 5. ยังขาด (roadmap — verifier ชี้ว่าต้องมีก่อน go-live จริง)
+## 5. สถานะ roadmap (verifier ชี้ว่าต้องมีก่อน go-live)
 
-- **Portfolio risk layer:** short-vol ทุกไม้คือ *bet เดียวกัน* → ต้องมี net short-vega cap + correlation aggregation + CVaR sizing + prefer defined-risk spreads (ไม่ใช่ Kelly binary)
-- **Survivorship-free data:** VRP = ค่าตอบแทนความเสี่ยง crash/delist → ต้องใช้ point-in-time universe ที่เก็บ delisted names (CRSP + OptionMetrics/IvyDB)
-- **Non-overlapping / Newey-West:** options 30/60 DTE ทำ PnL overlap ~97% → Sharpe เฟ้อ; ต้องมี crash regime ใน sample
+**✅ ทำแล้ว:**
+- **Portfolio risk layer** (`engine/portfolio.py`) — correlation-aware short-vega cap (N short = N× ไม่ใช่ √N) + **CVaR sizing** (ไม่ใช่ Kelly binary) + drawdown kill-switch + defined-risk spread
+- **Delta-hedged walk-forward backtest** (`engine/hedged_backtest.py`) — **non-overlapping** trades (Sharpe ไม่เฟ้อ) + crash-aware (calm Sharpe 2.0 → crash 0.1) + regime gate/kill-switch ทำงานจริง
+- **MDN pathology guards** — sigma floor + weight-entropy reg (ทั้ง `mdn.py` และ `neural.py`)
+- **Data adapters** (`engine/adapters.py`) — Polygon/ORATS live + CSV/JSON offline (asof กัน look-ahead)
+- **Trained encoder** (`models/neural.py`) — MLP encoder เทรน end-to-end (numpy) = ก้าวสู่ TFT/GRU
+
+**🟠 ยังขาด:**
+- **Vega loss ใน backtest:** ตอนนี้ hold IV คงที่/trade → จับ gamma loss แต่ยังไม่จับ vega loss ตอน IV spike (ต่อ vol-of-vol path)
+- **Survivorship-free data:** point-in-time universe เก็บ delisted names (CRSP + OptionMetrics/IvyDB)
 - **American exercise + dividends:** single-name เป็น American; BKM/VIX สมมติ European → de-Americanize หรือใช้ **index/ETF (SPX/SPY)** ก่อน
-- **Wing-truncation guard ปรับตาม regime:** wings หายตอนตลาดเครียด (ตอน VRP สำคัญสุด) → ต้องเข้มขึ้นเมื่อ vol สูง
-- **MDN pathologies:** sigma→0 ทำ NLL→−∞, mode collapse → ต้องมี sigma floor + weight-entropy reg ก่อน swap
+- **Wing-truncation guard ปรับตาม regime:** wings หายตอนเครียด → ต้องเข้มขึ้นเมื่อ vol สูง
+- **Newey-West SE** สำหรับ overlapping backtest (ตอนนี้เลี่ยงด้วย non-overlapping)
 
 ## 6. Production target (หลัง baseline ผ่าน gate)
 
 ```
-features (price, RV, IV-surface, [sentiment]) 
-    → TFT encoder → MDN head → MixtureLogNormal   # แทน baseline.forecast()
+features (price, RV, IV-surface, [sentiment])
+    → trained encoder → MDN head → MixtureLogNormal   # แทน baseline.forecast()
 ```
-Promotion rule: MDN ต้องชนะ HAR baseline **ทั้ง** aggregate NLL **และ** left-tail pinball (แยก) บน OOS
-ที่ครอบ crash regime อย่างน้อย 1 ครั้ง + ผ่าน net-of-cost backtest — ถึงจะขึ้น production
+- `models/mdn.py` = fixed random-feature encoder + trained head (stdlib)
+- `models/neural.py` = **trained MLP encoder end-to-end** (numpy) — ก้าวถัดไปคือสลับ MLP เป็น **TFT/GRU** โดย type ที่ปล่อยออก (MixtureLogNormal) ไม่เปลี่ยน
+
+Promotion rule: โมเดลใหม่ต้องชนะ HAR baseline **ทั้ง** aggregate NLL **และ** left-tail pinball (แยก) บน OOS
+ที่ครอบ crash regime อย่างน้อย 1 ครั้ง + ผ่าน net-of-cost hedged backtest — ถึงจะขึ้น production
+(บน synthetic data ตอนนี้ baseline ยังชนะ — gate ทำงานถูก)
 
 ### ข้อมูลต้องเตรียม (งบ)
 IVDB/OptionMetrics (point-in-time, ~5 หลัก/ปี) หรือ ORATS (~$1-2k+/เดือน) · Polygon ถูกแต่ history ตื้น ·
