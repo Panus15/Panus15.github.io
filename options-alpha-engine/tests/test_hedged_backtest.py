@@ -67,6 +67,32 @@ def test_walk_forward_non_overlapping_coverage():
     assert r.n_trades + r.n_skipped == blocks
 
 
+def test_vega_loss_deepens_crash_drawdown():
+    # Same crash path, same params — only the opt-in vega-loss model is toggled.
+    # Modelling the IV spike must make the SHORT vega book's crash mark-to-market
+    # DEEPER (more negative max_drawdown) and the Sharpe WORSE than the constant-IV
+    # (gamma-only) run. Entry sizing/gates are IV-entry based, so the SAME trades
+    # are selected either way and the effect is purely the vega mark-to-market.
+    crash = price_path_with_crash(756)
+    off = run_hedged_backtest(crash, model_vega_loss=False)
+    on = run_hedged_backtest(crash, model_vega_loss=True)
+    assert on.n_trades == off.n_trades                          # identical trade set
+    assert on.metrics.max_drawdown < off.metrics.max_drawdown   # strictly deeper crash DD
+    assert on.metrics.sharpe < off.metrics.sharpe               # strictly worse Sharpe
+
+
+def test_vega_loss_negligible_on_calm_path():
+    # With no vol spike, trailing realised vol never runs hot enough to clear the
+    # deadband, so the vega-loss model leaves a calm run essentially unchanged —
+    # the vega loss is negligible when vol does not spike.
+    calm = SyntheticAdapter(seed=5).price_history("X", 620)
+    off = run_hedged_backtest(calm, model_vega_loss=False)
+    on = run_hedged_backtest(calm, model_vega_loss=True)
+    assert on.n_trades == off.n_trades
+    assert abs(on.metrics.max_drawdown - off.metrics.max_drawdown) < 1e-4
+    assert abs(on.metrics.sharpe - off.metrics.sharpe) < 0.05
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

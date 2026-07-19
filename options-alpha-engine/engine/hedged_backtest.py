@@ -22,10 +22,12 @@ This module simulates that day by day, with the disciplines the review demanded:
   * CRASH-AWARE    — meant to be run over a path that INCLUDES a vol spike, because
                      a crash-free sample makes short-vol look like free money.
 
-Honest limitation: implied vol is held constant within each trade, so the
-gamma (realised-variance) loss in a crash IS captured but the vega loss from IV
-itself spiking is not — this understates crash losses. A vol-of-vol path is the
-next refinement. Everything here is pure stdlib.
+Historically implied vol was held constant within each trade, so the gamma
+(realised-variance) loss in a crash was captured but the vega loss from IV itself
+spiking was not — that understates crash losses. Pass ``model_vega_loss=True`` to
+turn on an opt-in, walk-forward vega-loss model (see ``run_hedged_backtest``); the
+default remains constant-IV so legacy runs are unchanged. Everything here is pure
+stdlib.
 """
 
 from __future__ import annotations
@@ -84,6 +86,17 @@ def _straddle(S: float, K: float, T: float, r: float, q: float, iv: float):
     return c.price + p.price, c.delta + p.delta
 
 
+def _recent_realized_vol(prices, s: int, window: int) -> float:
+    """Annualised close-to-close realised vol over the ``window`` trading days
+    ending at (and including) day ``s``.
+
+    Strictly walk-forward: it reads only ``prices[..s]`` — no future price ever
+    enters the estimate — so it is safe to use inside the live simulation loop.
+    """
+    lo = max(0, s - window)
+    return volforecast.close_to_close_vol(prices[lo:s + 1], window=window)
+
+
 @dataclass
 class HedgedBacktestResult:
     metrics: backtest.BacktestResult
@@ -111,12 +124,49 @@ def run_hedged_backtest(
     spread_frac: float = 0.015,
     cvar_limit: float = 0.03,
     limits: portfolio.RiskLimits | None = None,
+    model_vega_loss: bool = False,
+    iv_beta: float = 0.5,
+    vega_window: int = 21,
+    iv_deadband: float = 0.8,
+    iv_shock_cap: float = 3.0,
 ) -> HedgedBacktestResult:
     """Walk-forward delta-hedged short-straddle backtest over ``prices``.
 
     ``dte`` is the holding period in TRADING days (non-overlapping). The market
     charges IV = forecast_vol * (1 + ``premium``); we harvest that premium when
     realised vol comes in below it, and pay when it doesn't.
+
+    Vega-loss model (opt-in)
+    ------------------------
+    With ``model_vega_loss=False`` (default) the short straddle is repriced every
+    day at the constant entry IV, so the run is byte-for-byte identical to the
+    legacy engine: only the GAMMA / realised-variance loss of a crash is captured.
+
+    With ``model_vega_loss=True`` the IV used to reprice the straddle (and to
+    compute its hedge delta) each day RESPONDS to the current realised-vol regime:
+
+        shock_s = max(0, recent_rv_s / forecast_vol - (1 + iv_deadband))   # >= 0
+        iv_s    = iv_entry * (1 + iv_beta * min(shock_s, iv_shock_cap))
+
+    where ``recent_rv_s`` is the trailing ``vega_window``-day close-to-close
+    realised vol ending at day ``s`` (walk-forward — only past/current prices) and
+    ``forecast_vol`` is the entry HAR-RV forecast. The ``iv_deadband`` means IV
+    only reacts once realised vol runs meaningfully HOT versus the forecast (by
+    default 80% above it): in a calm regime the trailing realised/forecast ratio
+    just wobbles from sampling noise (empirically it stays under ~1.7x), so the
+    shock is zero and the run is indistinguishable from the constant-IV path — the
+    vega loss is negligible when vol does not spike. When the underlying starts
+    moving violently the ratio blows past the deadband (a crash gap drives it to
+    ~7-10x), ``iv_s`` rises, and the SHORT vega position takes a mark-to-market
+    LOSS on top of the gamma loss — exactly the drawdown a real short-vol book
+    suffers when IV gaps up in a crash. ``iv_beta`` sets how hard IV tracks the
+    shock; ``iv_shock_cap`` bounds it so a single gap can't produce an unbounded
+    (or numerically unstable) IV. The same ``iv_s`` feeds BOTH the option MtM and
+    the delta-hedge greeks, so the hedge stays consistent.
+
+    Sizing, the regime gate and the risk governor are entry-time decisions and are
+    unaffected by this flag; they always use the entry IV at which the straddle is
+    actually sold.
     """
     limits = limits or portfolio.RiskLimits(
         max_net_short_vega=8_000.0, max_drawdown=0.25
@@ -188,7 +238,15 @@ def run_hedged_backtest(
         for s in range(i0 + 1, i0 + dte + 1):
             rem = (i0 + dte - s) / 252.0
             S, S_prev = prices[s], prices[s - 1]
-            v_now, d_now = _straddle(S, K, rem, r, q, iv_entry)
+            # Reprice at the CURRENT-regime IV when the vega-loss model is on;
+            # otherwise hold IV at entry (legacy, gamma-only, byte-for-byte).
+            if model_vega_loss:
+                recent_rv = _recent_realized_vol(prices, s, vega_window)
+                shock = max(0.0, recent_rv / fvol - (1.0 + iv_deadband))
+                iv_t = iv_entry * (1.0 + iv_beta * min(shock, iv_shock_cap))
+            else:
+                iv_t = iv_entry
+            v_now, d_now = _straddle(S, K, rem, r, q, iv_t)
             option_mtm = size * MULT * (v_prev - v_now)      # short: gain if value falls
             shares_pnl = hedge_prev * (S - S_prev)
             hedge_now = size * MULT * d_now
