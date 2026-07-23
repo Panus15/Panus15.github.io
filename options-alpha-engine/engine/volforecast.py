@@ -132,5 +132,15 @@ def har_rv_forecast(prices: Sequence[float]) -> float:
 
     last = [1.0, rv_d[-1], rv_w[-1], rv_m[-1]]
     var_hat = sum(b * f for b, f in zip(beta, last))
-    var_hat = max(var_hat, 1e-8)  # guard against negative fitted variance
+
+    # Sanity bracket — learned from REAL data (GOOG July-2008 earnings gap).
+    # On short samples containing one huge outlier day, the tiny-sample OLS can
+    # extrapolate a NEGATIVE (or absurd) next-day variance; the old guard
+    # (max(var_hat, 1e-8)) then emitted a ~0.01% vol forecast on a 48%-vol
+    # context, collapsing every downstream density to a spike. A negative or
+    # out-of-bracket prediction means the regression misfit -> fall back to the
+    # robust EWMA anchor instead of trusting the extrapolation.
+    anchor = ewma_vol(prices) ** 2
+    if not math.isfinite(var_hat) or var_hat < 0.1 * anchor or var_hat > 10.0 * anchor:
+        return math.sqrt(anchor)
     return math.sqrt(var_hat)

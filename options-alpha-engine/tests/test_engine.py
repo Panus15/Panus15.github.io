@@ -66,6 +66,34 @@ def test_vol_forecasts_are_positive():
     assert volforecast.har_rv_forecast(prices) > 0
 
 
+# 63 REAL GOOG adjusted closes ending 2008-08-04 (matplotlib's bundled goog.npz
+# sample), containing the -10% July-2008 earnings gap. On this context the
+# tiny-sample HAR OLS extrapolates a NEGATIVE next-day variance; the old
+# max(var_hat, 1e-8) guard emitted a 0.01% vol forecast against a ~48% realised
+# vol, collapsing every downstream density to a spike (found the first time the
+# engine touched real data). The fix falls back to the EWMA anchor instead.
+GOOG_2008_CTX = [
+    586.36, 579.00, 583.01, 573.20, 584.94, 583.00, 576.30, 581.00,
+    580.07, 577.52, 578.60, 549.99, 549.46, 544.62, 560.90, 568.24,
+    583.00, 585.80, 575.00, 567.30, 572.22, 586.30, 567.00, 557.87,
+    554.17, 545.20, 552.95, 571.51, 572.81, 569.46, 562.38, 560.20,
+    546.43, 545.21, 542.30, 551.00, 528.82, 528.07, 526.42, 534.73,
+    527.04, 537.00, 543.91, 554.53, 541.55, 540.57, 533.80, 521.62,
+    516.09, 535.60, 533.44, 481.32, 468.80, 477.11, 489.22, 475.62,
+    491.98, 477.12, 483.11, 482.70, 473.75, 467.86, 463.00,
+]
+
+
+def test_har_survives_real_outlier_context():
+    # Real-data regression: HAR must stay in the same ballpark as the robust
+    # estimators on a context whose OLS misfits, never collapse toward zero.
+    har = volforecast.har_rv_forecast(GOOG_2008_CTX)
+    ewma = volforecast.ewma_vol(GOOG_2008_CTX)
+    cc = volforecast.close_to_close_vol(GOOG_2008_CTX)
+    assert har > 0.10, f"HAR collapsed to {har:.4%} on a ~{cc:.0%}-vol context"
+    assert 0.3 * ewma <= har <= 3.0 * ewma
+
+
 def test_scanner_finds_injected_dislocation():
     md = SyntheticAdapter()
     chain = md.option_chain("X")
