@@ -207,6 +207,25 @@ def test_multi_expiry_reads_requested_dte():
     assert abs(e["q_vol"] - 0.20) < 0.05
 
 
+def test_news_gate_vetoes_an_otherwise_traded_entry():
+    # Find an index the strategy trades on, then re-record the SAME decision with
+    # a burst of negative news -> the trade must be vetoed and the reason kept.
+    from models.sentiment import SentimentFeature
+    led = paper_trade_series(PRICES, CHAIN, F, dte=21, warmup=63)
+    traded_idx = next(e["entry_index"] for e in led.entries if e["traded"])
+
+    risk_news = SentimentFeature(score=-0.8, volume=5.0, dispersion=0.1,
+                                 most_negative=-0.9, n_items=5)
+    calm_news = SentimentFeature(score=0.4, volume=5.0, dispersion=0.1,
+                                 most_negative=0.0, n_items=5)
+    led2 = PaperLedger()
+    chain = CHAIN(traded_idx, PRICES[:traded_idx + 1])
+    vetoed = led2.record(chain, PRICES, traded_idx, F, dte=21, news_feature=risk_news)
+    allowed = led2.record(chain, PRICES, traded_idx, F, dte=21, news_feature=calm_news)
+    assert vetoed["traded"] is False and "negative news" in vetoed["gate_reason"]
+    assert allowed["traded"] is True and "benign" in allowed["gate_reason"]
+
+
 def _dump_chain_json(chain, path, asof="2026-01-01"):
     obj = {"symbol": chain.symbol, "spot": chain.spot, "r": chain.r, "q": chain.q,
            "asof": asof, "quotes": [{"expiry_days": q.expiry_days, "strike": q.strike,

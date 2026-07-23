@@ -80,10 +80,16 @@ def run_signal_backtest(
     dte: int = 21, warmup: int = 63, r: float = 0.03, q: float = 0.0,
     hedge_bps: float = 5e-4, spread_frac: float = 0.015,
     starting_equity: float = 100_000.0, min_vrp: float = 0.0,
-    always_sell: bool = False,
+    always_sell: bool = False, stress_at=None,
 ) -> SignalBacktestResult:
     """Walk-forward, non-overlapping. Sells vol only when the day's chain signal
-    is RICH and the regime is clear (unless ``always_sell`` — the baseline)."""
+    is RICH and the regime is clear (unless ``always_sell`` — the baseline).
+
+    ``stress_at(t, trailing) -> bool`` is an optional FORWARD-looking veto on top
+    of the backward-looking price regime gate — e.g. the news gate
+    (models.news_signal): feed it dated sentiment and it suppresses selling
+    BEFORE the realised-vol spike the price gate only sees after the fact.
+    Skips it causes are counted under ``skip_reasons['news']``."""
     from models import edge, rnd
 
     n = len(prices)
@@ -122,6 +128,10 @@ def run_signal_backtest(
             vrp = q_vol ** 2 - p.log_return_vol(prices[t], T) ** 2
             if edge.regime_stressed(trailing):
                 _skip("regime")
+                t += dte
+                continue
+            if stress_at is not None and stress_at(t, trailing):
+                _skip("news")
                 t += dte
                 continue
             if vrp <= min_vrp:

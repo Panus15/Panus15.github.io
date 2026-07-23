@@ -64,6 +64,18 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     else:
         print(f"P-vs-Q scan skipped: only {len(prices)} price points (need >=30 for HAR)")
 
+    # 2b. Per-strike board — which exact contract looks mispriced ------------
+    if len(prices) >= 30:
+        from models.strike_scan import scan_strikes
+        board = scan_strikes(chain, forecaster, prices, top=8)
+        report["strike_board"] = [
+            {"dte": s.expiry_days, "strike": s.strike, "kind": s.kind,
+             "edge_buy": s.edge_buy, "edge_write": s.edge_write,
+             "verdict": s.verdict} for s in board]
+        print("Per-strike board (top 8 by |edge|):")
+        for s in board:
+            print("  " + s.line())
+
     # 3. Delta-hedged walk-forward backtest --------------------------------
     if run_backtest and len(prices) >= 63 + dte + 5:
         res = hedged_backtest.run_hedged_backtest(prices, dte=dte)

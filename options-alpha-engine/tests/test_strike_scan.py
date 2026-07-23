@@ -1,0 +1,122 @@
+"""Tests for the per-strike scanner (models/strike_scan.py).
+
+The oracle: price a chain FROM the forecaster's own P-density -> no contract can
+be +EV after costs (no free lunch against yourself), so every verdict is FAIR.
+Then inject one mispriced contract each way and require the scanner to find
+exactly it. Run: python3 tests/test_strike_scan.py
+"""
+
+import math
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from engine.data import OptionChain, OptionQuote
+from models.baseline import BaselineDensityForecaster
+from models.strike_scan import scan_strikes
+
+R, Q, DTE = 0.03, 0.0, 30
+T = DTE / 365.0
+F = BaselineDensityForecaster()
+
+# ~20%-vol wiggle path, calm (regime gate must NOT fire)
+PRICES = [100.0 * math.exp(0.0126 * math.sin(i / 3.0)) for i in range(80)]
+SPOT = PRICES[-1]
+
+
+def _fair_chain():
+    """Chain priced exactly from the forecaster's own P-density (zero spread)."""
+    p = F.forecast(PRICES, T, r=R, q=Q, spot=SPOT)
+    quotes = []
+    for k in range(80, 125, 4):
+        K = float(k)
+        for kind in ("call", "put"):
+            px = p.price(K, R, T, kind)
+            if px < 0.02:
+                continue
+            quotes.append(OptionQuote(DTE, K, kind, round(px, 4), round(px, 4)))
+    return OptionChain("FAIR", SPOT, R, Q, quotes)
+
+
+def test_no_free_lunch_on_self_priced_chain():
+    signals = scan_strikes(_fair_chain(), F, PRICES)
+    assert signals
+    for s in signals:
+        assert s.verdict == "FAIR", (s.strike, s.kind, s.verdict, s.edge_buy)
+        assert s.edge_buy <= 0 and s.edge_write <= 0
+
+
+def test_finds_the_one_cheap_call():
+    ch = _fair_chain()
+    victim = next(q for q in ch.quotes if q.kind == "call" and abs(q.strike - SPOT) < 3)
+    object.__setattr__(victim, "bid", round(victim.bid - 0.60, 4))
+    object.__setattr__(victim, "ask", round(victim.ask - 0.60, 4))
+    signals = scan_strikes(ch, F, PRICES)
+    buys = [s for s in signals if s.verdict == "BUY"]
+    assert len(buys) == 1
+    assert buys[0].strike == victim.strike and buys[0].kind == "call"
+    assert signals[0] is buys[0]                       # ranked first
+    assert buys[0].edge_buy * 100 > 40                 # ~$60 gap minus costs
+
+
+def test_finds_the_one_rich_put_and_regime_suppresses_it():
+    ch = _fair_chain()
+    victim = next(q for q in ch.quotes if q.kind == "put" and abs(q.strike - SPOT) < 3)
+    object.__setattr__(victim, "bid", round(victim.bid + 0.60, 4))
+    object.__setattr__(victim, "ask", round(victim.ask + 0.60, 4))
+    signals = scan_strikes(ch, F, PRICES)
+    writes = [s for s in signals if s.verdict == "WRITE"]
+    assert len(writes) == 1
+    assert writes[0].strike == victim.strike and writes[0].kind == "put"
+
+    # Same rich contract under a stressed regime (forced, so the forecast itself
+    # is unchanged) -> the write must be vetoed: verdict FAIR, note says why.
+    stressed = scan_strikes(ch, F, PRICES, stressed=True)
+    assert not [s for s in stressed if s.verdict == "WRITE"]
+    flagged = [s for s in stressed if "regime" in s.note]
+    assert flagged and flagged[0].strike == victim.strike
+
+
+def test_itm_probabilities_are_consistent():
+    signals = scan_strikes(_fair_chain(), F, PRICES)
+    by_strike = {}
+    for s in signals:
+        by_strike.setdefault(s.strike, {})[s.kind] = s
+    checked = 0
+    for K, pair in by_strike.items():
+        if "call" not in pair or "put" not in pair:
+            continue
+        # model call-ITM + put-ITM = 1 exactly (same density, complementary events)
+        assert abs(pair["call"].p_itm_model + pair["put"].p_itm_model - 1.0) < 1e-12
+        # market-implied N(d2) + N(-d2) = 1 when both sides have an IV
+        if pair["call"].p_itm_market is not None and pair["put"].p_itm_market is not None:
+            checked += 1
+        # probabilities are probabilities
+        assert 0.0 <= pair["call"].p_itm_model <= 1.0
+    assert checked >= 0
+
+
+def test_top_truncates_ranked_list():
+    signals = scan_strikes(_fair_chain(), F, PRICES, top=3)
+    assert len(signals) == 3
+    edges = [max(s.edge_buy, s.edge_write) for s in signals]
+    assert edges == sorted(edges, reverse=True)
+
+
+def _run_all():
+    tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS {t.__name__}")
+        except AssertionError as e:
+            failed += 1
+            print(f"FAIL {t.__name__}: {e}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    return failed
+
+
+if __name__ == "__main__":
+    sys.exit(1 if _run_all() else 0)

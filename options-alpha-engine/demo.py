@@ -77,6 +77,18 @@ def main() -> None:
     print("  (VRP>0 = market implies more variance than we forecast -> sell vol;\n"
           "   SRP/skew shown but DIAGNOSTIC-only; verdict gated by regime + cost)\n")
 
+    # 3b-2. PER-STRIKE board — which exact contract, at which strike/expiry? -----
+    # For every quoted call/put: the model's P(finish ITM) vs the market-implied
+    # N(d2), and fair value vs bid/ask after costs. Direction-neutral by design:
+    # edges come from vol level + distribution shape, never from an up/down call.
+    from models.strike_scan import scan_strikes
+    board = scan_strikes(chain, forecaster, prices, top=6)
+    print("Per-strike board (top 6 by |edge|, $/contract):")
+    for s in board:
+        print("  " + s.line())
+    print("  (on an efficiently-priced chain almost everything is FAIR — a BUY/\n"
+          "   WRITE only appears when fair-vs-market survives spread+commission)\n")
+
     # 3c. News sentiment overlay (Phase 2) — FORWARD-looking vol-regime gate -----
     # The price regime gate is backward-looking (HAR lags a spike). A burst of
     # negative / dispersed news anticipates the vol spike, so it can veto selling
@@ -162,6 +174,16 @@ def main() -> None:
                                 BaselineDensityForecaster(), dte=21, warmup=63)
     print("Forward-test paper ledger (record -> settle -> proper-score):")
     print("  " + ledger.report().summary().replace("\n", "\n  ") + "\n")
+
+    # 7. Benchmarks — same path, three books ----------------------------------
+    # "always-sell" is mechanically what option-income ETFs (QQQI/JEPQ) do; their
+    # big distributions are harvested premium, not a high win rate. The question
+    # that matters: does signal-gating beat it, and does either beat just holding?
+    from engine.benchmark import compare_books, summary_table
+    books = compare_books(price_path_with_crash(900), synthetic_chain_series(dte=21),
+                          BaselineDensityForecaster(), dte=21, warmup=63)
+    print("Benchmarks (same crash path, cost-inclusive):")
+    print(summary_table(books) + "\n")
 
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")

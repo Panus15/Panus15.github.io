@@ -62,6 +62,19 @@ def test_none_chain_is_skipped():
     assert r.n_sold == 0 and r.skip_reasons.get("no_chain", 0) == r.n_periods
 
 
+def test_news_stress_vetoes_selling():
+    # A forward-looking stress signal that always fires must stop every sale the
+    # price regime gate alone would have allowed (counted under 'news').
+    base = run_signal_backtest(PRICES, synthetic_chain_series(dte=21), F, dte=21)
+    gated = run_signal_backtest(PRICES, synthetic_chain_series(dte=21), F, dte=21,
+                                stress_at=lambda t, trailing: True)
+    assert base.n_sold > 0
+    assert gated.n_sold == 0
+    assert gated.skip_reasons.get("news", 0) > 0
+    # price-regime skips are unchanged (regime is checked first)
+    assert gated.skip_reasons.get("regime", 0) == base.skip_reasons.get("regime", 0)
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

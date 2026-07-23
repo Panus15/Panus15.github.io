@@ -128,8 +128,14 @@ class PaperLedger:
 
     # --- record --------------------------------------------------------------
     def record(self, chain, prices, entry_index: int, forecaster, *,
-               dte: int = 30, asof: str | None = None, min_vrp: float = 0.0):
+               dte: int = 30, asof: str | None = None, min_vrp: float = 0.0,
+               news_feature=None):
         """Freeze one decision. Sees ONLY prices[:entry_index+1] — no look-ahead.
+
+        ``news_feature`` (models.sentiment.SentimentFeature) composes the
+        FORWARD-looking news gate with the price regime gate via
+        models.news_signal.event_risk — a burst of negative/dispersed news
+        vetoes the sell before the realised-vol spike shows up in prices.
 
         Returns the entry dict (appended), or None if the chain can't yield Q
         moments at this expiry (nothing to grade).
@@ -149,6 +155,10 @@ class PaperLedger:
         p_vol = p.log_return_vol(spot, T)
         vrp = q_vol ** 2 - p_vol ** 2
         stressed = edge.regime_stressed(trailing)
+        gate_reason = None
+        if news_feature is not None:
+            from models.news_signal import event_risk
+            stressed, gate_reason = event_risk(stressed, news_feature)
         iv, strike = _atm_iv(chain, dte, T)
 
         # The strategy: sell vol only when the market's Q variance is richer than
@@ -174,6 +184,7 @@ class PaperLedger:
             "p_vol": p_vol,
             "vrp": vrp,
             "regime_stressed": stressed,
+            "gate_reason": gate_reason,
             "strike": strike,
             "entry_iv": iv,
             "traded": traded,
@@ -347,6 +358,21 @@ def _open_ledger(args, *, create: bool):
     return PaperLedger(**kw)
 
 
+def _news_feature(args, chain):
+    """--news-json -> SentimentFeature dated at the chain snapshot (or None)."""
+    if not getattr(args, "news_json", None):
+        return None
+    import datetime
+    from models.sentiment import (FileNewsAdapter, LexiconSentimentScorer,
+                                  aggregate_sentiment)
+    items = FileNewsAdapter(args.news_json).load(chain.symbol or None)
+    try:
+        asof = datetime.date.fromisoformat(str(chain.asof)[:10])
+    except (TypeError, ValueError):
+        asof = datetime.date.today()
+    return aggregate_sentiment(items, LexiconSentimentScorer(), asof=asof)
+
+
 def _cmd_record(args):
     from tools.run_live import fetch
     chain, hist = fetch(args.source, args)
@@ -357,8 +383,12 @@ def _cmd_record(args):
     elif hist:
         journal.append(float(hist[-1]))           # +1 close: today's bar
     led = _open_ledger(args, create=True)
+    feat = _news_feature(args, chain)
+    if feat is not None:
+        print(f"news gate: score={feat.score:+.2f} dispersion={feat.dispersion:.2f} "
+              f"volume={feat.volume:.1f} ({feat.n_items} items)")
     e = led.record(chain, journal, len(journal) - 1, BaselineDensityForecaster(),
-                   dte=args.dte, min_vrp=args.min_vrp)
+                   dte=args.dte, min_vrp=args.min_vrp, news_feature=feat)
     with open(jpath, "w") as fh:
         json.dump(journal, fh)
     if e is None:
@@ -419,6 +449,9 @@ def main(argv=None):
     r.add_argument("--hedge-bps", dest="hedge_bps", type=float, default=5e-4)
     r.add_argument("--spread-frac", dest="spread_frac", type=float, default=0.015)
     r.add_argument("--min-vrp", dest="min_vrp", type=float, default=0.0)
+    r.add_argument("--news-json", dest="news_json",
+                   help="news file (JSON/CSV of date,symbol,headline[,body]) -> "
+                        "forward-looking event-risk gate on today's entry")
     r.set_defaults(func=_cmd_record)
 
     s = sub.add_parser("settle", help="grade every matured entry against the price journal")
