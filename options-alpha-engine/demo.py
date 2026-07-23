@@ -18,6 +18,8 @@ from engine import sizing, volforecast
 from engine.data import SyntheticAdapter
 from engine.hedged_backtest import price_path_with_crash, run_hedged_backtest
 from engine.signal import scan_chain
+from engine.signal_backtest import synthetic_chain_series
+from tools.paper_trade import paper_trade_series
 from models.news_signal import event_risk
 from models.sentiment import (LexiconSentimentScorer, NewsItem,
                               aggregate_sentiment)
@@ -146,6 +148,21 @@ def main() -> None:
     print(f"  crash skips: {rx.skip_reasons}")
     print("  -> a crash-free sample looks like free money; the crash reveals the")
     print("     short-vol tail and the regime gate/kill-switch fire. THAT is honest.\n")
+
+    # 6. Forward-test PAPER LEDGER — the accumulating out-of-sample scoreboard --
+    # A backtest replays ONE strategy over history; this is the instrument you run
+    # LIVE going forward: at each date freeze the P-forecast + the market Q, then
+    # grade both against what actually happened. Two verdicts, kept separate:
+    #   CALIBRATION — did our physical density beat the market-implied one OOS?
+    #   PROFIT      — did the signal-fired trades make money, net of costs?
+    # On synthetic data it (correctly) refuses to claim edge — that honesty is the
+    # point. Feed it real recorded snapshots and it builds your true track record.
+    ledger = paper_trade_series(price_path_with_crash(900),
+                                synthetic_chain_series(dte=21),
+                                BaselineDensityForecaster(), dte=21, warmup=63)
+    print("Forward-test paper ledger (record -> settle -> proper-score):")
+    print("  " + ledger.report().summary().replace("\n", "\n  ") + "\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 
