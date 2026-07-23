@@ -164,6 +164,8 @@ class PaperLedger:
             "dte": dte,
             "r": self.r,
             "q": self.q,
+            "hedge_bps": self.hedge_bps,     # frozen per-entry so save->load settles
+            "spread_frac": self.spread_frac,  # with the SAME costs, not defaults
             "q_vol": q_vol,
             "q_skew": q_full.skew,
             "coverage_ok": q_full.coverage_ok,
@@ -207,7 +209,8 @@ class PaperLedger:
             if e["traded"]:
                 day_pnl = _realize_short_straddle(
                     prices, e["entry_index"], e["dte"], e["strike"], e["entry_iv"],
-                    e["r"], e["q"], self.hedge_bps, self.spread_frac)
+                    e["r"], e["q"], e.get("hedge_bps", self.hedge_bps),
+                    e.get("spread_frac", self.spread_frac))
                 e["trade_pnl"] = sum(day_pnl.values())
             else:
                 e["trade_pnl"] = None

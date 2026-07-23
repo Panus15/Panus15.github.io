@@ -36,7 +36,14 @@ def _atm_iv(chain, dte: int, T: float):
 
 
 def _realize_short_straddle(prices, t, dte, K, iv, r, q, hedge_bps, spread_frac):
-    """Daily-hedged short-straddle P&L over [t, t+dte]; returns per-day list."""
+    """Daily-hedged short-straddle P&L over [t, t+dte]; returns per-day list.
+
+    A single 252-day clock throughout: implied variance is credited at iv^2*dte/252
+    and realised variance is the actual squared daily returns over the same dte
+    bars (also 252-annualised), so the short breaks even exactly when realised
+    annual vol == iv. The dte/365 the chain was priced at cancels inside _atm_iv,
+    which recovers a pure (basis-free) vol; do NOT re-introduce a 365 clock here.
+    """
     T0 = dte / 252.0
     v_prev, d_prev = _straddle(prices[t], K, T0, r, q, iv)
     hedge_prev = MULT * d_prev

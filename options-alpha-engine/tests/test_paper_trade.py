@@ -7,18 +7,21 @@ feeding it real recorded snapshots).
 Run: python3 tests/test_paper_trade.py
 """
 
+import math
 import os
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from engine import pricing
+from engine.data import OptionChain, OptionQuote
 from engine.hedged_backtest import price_path_with_crash
-from engine.signal_backtest import synthetic_chain_series
+from engine.signal_backtest import _realize_short_straddle, synthetic_chain_series
 from models.baseline import BaselineDensityForecaster
 from models.density import single_lognormal_riskneutral
 from tools import paper_trade
-from tools.paper_trade import PaperLedger, paper_trade_series
+from tools.paper_trade import CAL_DAYS, PaperLedger, paper_trade_series
 
 PRICES = price_path_with_crash(900)
 CHAIN = synthetic_chain_series(dte=21)
@@ -112,6 +115,92 @@ def test_report_separates_calibration_from_profit():
 def test_none_chain_records_nothing():
     led = paper_trade_series(PRICES, lambda t, tr: None, F, dte=21, warmup=63)
     assert led.report().n_recorded == 0
+
+
+def test_p_better_density_wins_the_scoreboard():
+    # Guards the report's win DIRECTION. Force P to a tight density spiked at the
+    # realised price (strictly better than the broad market Q); it MUST register as
+    # a P win. A flipped comparison (p_nll > q_nll) drives nll_win_rate to 0 -> fail.
+    led = PaperLedger()
+    e = led.record(CHAIN(300, PRICES[:301]), PRICES, 300, F, dte=21)
+    assert e is not None
+    mat = e["entry_index"] + e["dte"]
+    e["p_density"] = [[1.0, math.log(PRICES[mat]), 0.01]]     # near-Dirac at the outcome
+    led.settle(PRICES)
+    assert e["p_nll"] < e["q_nll"]
+    assert led.report().nll_win_rate == 1.0
+
+
+def test_trade_pnl_matches_direct_realization():
+    # Pins the profit path's ARITHMETIC and ARG WIRING: a mis-wired strike/iv or a
+    # zeroed pnl would diverge from an independent realisation with the same args.
+    led = paper_trade_series(PRICES, CHAIN, F, dte=21, warmup=63)
+    traded = [e for e in led.entries if e["status"] == "settled" and e["traded"]]
+    assert traded, "expected at least one traded+settled entry"
+    e = traded[0]
+    direct = sum(_realize_short_straddle(
+        PRICES, e["entry_index"], e["dte"], e["strike"], e["entry_iv"],
+        e["r"], e["q"], e["hedge_bps"], e["spread_frac"]).values())
+    assert abs(e["trade_pnl"] - direct) < 1e-9
+
+
+def test_profit_path_actually_fires():
+    # The synthetic series must exercise the delta-hedged path, else a broken gate
+    # that silently records zero trades would pass every other (guarded) trade test.
+    led = paper_trade_series(PRICES, CHAIN, F, dte=21, warmup=63)
+    rep = led.report()
+    assert rep.n_trades > 0
+    traded = [e for e in led.entries if e["status"] == "settled" and e["traded"]]
+    assert traded and all(e["trade_pnl"] is not None for e in traded)
+
+
+def test_costs_persist_across_save_load():
+    # Record (do NOT settle) with non-default costs, save, load WITHOUT kwargs, then
+    # settle both. Per-entry cost persistence must make the trade P&Ls identical; if
+    # costs fell back to the loaded ledger's defaults, the P&Ls would diverge.
+    led = PaperLedger(hedge_bps=2e-3, spread_frac=0.05)
+    for idx in range(63, 400, 21):
+        led.record(CHAIN(idx, PRICES[:idx + 1]), PRICES, idx, F, dte=21)
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
+        path = fh.name
+    try:
+        led.save(path)
+        back = PaperLedger.load(path)                    # loads with default 5e-4 / 0.015
+        assert back.hedge_bps != led.hedge_bps           # ledger-level defaults DO differ
+        led.settle(PRICES)
+        back.settle(PRICES)
+        by_idx = {e["entry_index"]: e for e in back.entries}
+        traded = [e for e in led.entries if e["traded"] and e["status"] == "settled"]
+        assert traded
+        for e in traded:
+            assert abs(e["trade_pnl"] - by_idx[e["entry_index"]]["trade_pnl"]) < 1e-9
+    finally:
+        os.unlink(path)
+
+
+def test_multi_expiry_reads_requested_dte():
+    # Two expiries at distinct vols; record(dte=21) must read strike/iv/q_vol from
+    # the 21d slice only -- a dropped expiry filter would grab the 42d 0.40 vol.
+    spot, r, q = 100.0, 0.03, 0.0
+    quotes = []
+    for dte_, vol in ((21, 0.20), (42, 0.40)):
+        T = dte_ / 365.0
+        for mny in (-0.10, -0.05, 0.0, 0.05, 0.10):
+            K = round(spot * (1 + mny), 2)
+            for kind in ("call", "put"):
+                px = pricing.price(spot, K, T, r, q, vol, kind)
+                if px < 0.02:
+                    continue
+                quotes.append(OptionQuote(dte_, K, kind, round(max(px - 0.02, 0.01), 2),
+                                          round(px + 0.02, 2)))
+    chain = OptionChain("MX", spot, r, q, quotes)
+    prices = [100.0 * (1 + 0.01 * math.sin(i / 5.0)) for i in range(80)]
+    led = PaperLedger()
+    e = led.record(chain, prices, len(prices) - 1, F, dte=21)
+    assert e is not None
+    assert e["strike"] == 100.0
+    assert abs(e["entry_iv"] - 0.20) < 0.03          # 21d vol, not the 42d 0.40
+    assert abs(e["q_vol"] - 0.20) < 0.05
 
 
 def _run_all():
