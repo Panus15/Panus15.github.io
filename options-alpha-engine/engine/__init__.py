@@ -14,12 +14,14 @@ Public surface:
     ibkr         Interactive Brokers (Client Portal) — real paper fills + latency
     portfolio    correlation-aware short-vega caps, CVaR sizing, kill-switch
     hedged_backtest  delta-hedged walk-forward short-vol backtest (governed)
+    signal_backtest  multi-date signal-driven walk-forward (does the signal add value?)
 """
 
 from . import (adapters, backtest, data, deribit, hedged_backtest, ibkr, iv,
-               portfolio, pricing, signal, sizing, tradier, volforecast)
+               portfolio, pricing, signal, signal_backtest, sizing, tradier,
+               volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
-           "hedged_backtest"]
+           "hedged_backtest", "signal_backtest"]
 __version__ = "0.1.0"
