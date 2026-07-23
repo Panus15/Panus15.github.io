@@ -7,8 +7,12 @@ feeding it real recorded snapshots).
 Run: python3 tests/test_paper_trade.py
 """
 
+import contextlib
+import io
+import json
 import math
 import os
+import shutil
 import sys
 import tempfile
 
@@ -201,6 +205,57 @@ def test_multi_expiry_reads_requested_dte():
     assert e["strike"] == 100.0
     assert abs(e["entry_iv"] - 0.20) < 0.03          # 21d vol, not the 42d 0.40
     assert abs(e["q_vol"] - 0.20) < 0.05
+
+
+def _dump_chain_json(chain, path, asof="2026-01-01"):
+    obj = {"symbol": chain.symbol, "spot": chain.spot, "r": chain.r, "q": chain.q,
+           "asof": asof, "quotes": [{"expiry_days": q.expiry_days, "strike": q.strike,
+                                     "kind": q.kind, "bid": q.bid, "ask": q.ask}
+                                    for q in chain.quotes]}
+    with open(path, "w") as fh:
+        json.dump(obj, fh)
+
+
+def test_cli_record_settle_report_offline():
+    # End-to-end CLI over the offline `replay` source: record seeds a stable price
+    # journal and appends an entry; growing the journal with the real future path
+    # (simulating days passing) lets settle/report grade it out of sample.
+    from tools.paper_trade import main
+
+    full = price_path_with_crash(300)
+    d = tempfile.mkdtemp()
+    try:
+        cp, pp, lp = (os.path.join(d, "chain.json"),
+                      os.path.join(d, "px.json"), os.path.join(d, "led.jsonl"))
+        _dump_chain_json(CHAIN(99, list(full[:100])), cp)
+        with open(pp, "w") as fh:
+            json.dump(list(full[:100]), fh)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            main(["record", "--source", "replay", "--chain-json", cp, "--price-json", pp,
+                  "--ledger", lp, "--dte", "21", "--symbol", "SYN"])
+        assert os.path.exists(lp) and os.path.exists(lp + ".prices.json")
+        led = PaperLedger.load(lp)
+        assert len(led.entries) == 1 and led.entries[0]["entry_index"] == 99
+        assert led.entries[0]["status"] == "open"            # journal only 100 bars -> immature
+        assert json.load(open(lp + ".prices.json")) == list(full[:100])
+
+        # ~a month of daily bars arrive: extend the journal with the REAL future path
+        with open(lp + ".prices.json", "w") as fh:
+            json.dump(list(full[:130]), fh)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["settle", "--ledger", lp])
+        assert "newly matured" in buf.getvalue()
+        assert PaperLedger.load(lp).entries[0]["status"] == "settled"   # matured at 120 < 130
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            main(["report", "--ledger", lp])
+        assert "VERDICT" in buf.getvalue() and "CALIBRATION" in buf.getvalue()
+    finally:
+        shutil.rmtree(d)
 
 
 def _run_all():

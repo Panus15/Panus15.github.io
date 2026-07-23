@@ -5,7 +5,7 @@
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 108 tests
+for t in tests/test_*.py; do python3 "$t"; done   # 114 tests
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
@@ -53,30 +53,29 @@ python3 -m tools.run_live replay --chain-json btc.json --price-json prices.json
 
 `run_live` is a one-shot spot check. To actually answer *"is the edge real?"* you
 need to accumulate dated forecasts and grade them once their horizon elapses. That
-is `tools/paper_trade.py` — record → settle → proper-score, persisted to an
-append-only JSON-lines file so you record live and settle offline later:
+is `tools/paper_trade.py` — record → settle → proper-score — with a one-command CLI:
 
-```python
-from tools.run_live import fetch                      # the network boundary
-from tools.paper_trade import PaperLedger
-from models.baseline import BaselineDensityForecaster
+```bash
+# --- run ONCE PER TRADING DAY: freeze today's forecast + the market Q ---
+python3 -m tools.paper_trade record --source deribit --currency BTC \
+        --dte 30 --ledger btc.jsonl
 
-# --- each trading day: freeze today's forecast + the market Q (no look-ahead) ---
-led = PaperLedger.load("btc.jsonl") if __import__("os").path.exists("btc.jsonl") else PaperLedger()
-chain, prices = fetch("deribit", type("A", (), {"currency": "BTC", "days": 400})())
-led.record(chain, prices, len(prices) - 1, BaselineDensityForecaster(), dte=30)
-led.save("btc.jsonl")
-
-# --- any time later: settle everything matured, print the scoreboard ------------
-led.settle(prices)                                     # prices = the realised path
-print(led.report().summary())
+# --- any day: grade everything matured and print the scoreboard ---
+python3 -m tools.paper_trade report --ledger btc.jsonl
 ```
+
+A companion append-only price journal (`btc.jsonl.prices.json`) is seeded from
+history on the first `record` and grows one close per day, so every entry keeps a
+**stable index** and `no look-ahead` holds even as the vendor's window slides. The
+first graded score therefore appears only after `dte` more daily records — that lag
+is the honest cost of a real out-of-sample test.
 
 You get two verdicts, kept honest and separate: **CALIBRATION** (did our physical
 `P` density beat the market-implied `Q` one out-of-sample, by NLL and left-tail?)
 and **PROFIT** (did the signal-fired, delta-hedged, cost-inclusive trades make
-money?). Offline, `tools.paper_trade.paper_trade_series(...)` replays the whole
-loop deterministically (that is what `demo.py` section 6 prints).
+money?). The same thing runs fully offline on a replayed snapshot —
+`--source replay --chain-json c.json --price-json p.json` — or in Python via
+`PaperLedger` / `paper_trade_series(...)` (that is what `demo.py` section 6 prints).
 
 ## 2. What to look at (and not fool yourself)
 

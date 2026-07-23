@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import asdict, dataclass, field
 
 from engine.signal_backtest import _atm_iv, _realize_short_straddle
 from models import edge, objective, rnd
+from models.baseline import BaselineDensityForecaster
 from models.density import (LogNormalComponent, MixtureLogNormal,
                             single_lognormal_riskneutral)
 
@@ -307,3 +309,129 @@ def paper_trade_series(prices, chain_at, forecaster, *, dte: int = 21, warmup: i
         t += step
     led.settle(prices)
     return led
+
+
+# --------------------------------------------------------------------------- #
+# CLI — record live daily, settle + report offline.  Turnkey forward test.
+#
+#   python3 -m tools.paper_trade record --source deribit --currency BTC \
+#       --dte 30 --ledger btc.jsonl                  # run once per trading day
+#   python3 -m tools.paper_trade report --ledger btc.jsonl
+#
+# A companion append-only PRICE JOURNAL (<ledger>.prices.json) gives every entry a
+# STABLE index: seeded from history on the first record, then +1 close per day, so
+# prices[entry_index+dte] is unambiguous however the vendor's window slides. The
+# first settled score therefore appears only after `dte` further daily records —
+# that lag is the honest cost of a real out-of-sample test, not a bug.
+# --------------------------------------------------------------------------- #
+def _load_json(path, default):
+    if path and os.path.exists(path):
+        with open(path) as fh:
+            return json.load(fh)
+    return default
+
+
+def _journal_path(args):
+    return args.prices or (args.ledger + ".prices.json")
+
+
+def _open_ledger(args, *, create: bool):
+    kw = {}
+    for k in ("r", "q", "hedge_bps", "spread_frac"):
+        if getattr(args, k, None) is not None:
+            kw[k] = getattr(args, k)
+    if os.path.exists(args.ledger):
+        return PaperLedger.load(args.ledger, **kw)
+    if not create:
+        raise SystemExit(f"ledger not found: {args.ledger} (run `record` first)")
+    return PaperLedger(**kw)
+
+
+def _cmd_record(args):
+    from tools.run_live import fetch
+    chain, hist = fetch(args.source, args)
+    jpath = _journal_path(args)
+    journal = _load_json(jpath, [])
+    if not journal:
+        journal = list(hist)                      # seed once from vendor history
+    elif hist:
+        journal.append(float(hist[-1]))           # +1 close: today's bar
+    led = _open_ledger(args, create=True)
+    e = led.record(chain, journal, len(journal) - 1, BaselineDensityForecaster(),
+                   dte=args.dte, min_vrp=args.min_vrp)
+    with open(jpath, "w") as fh:
+        json.dump(journal, fh)
+    if e is None:
+        print(f"record: chain gave no usable Q at {args.dte}d — nothing added "
+              f"(journal={len(journal)} bars)")
+    else:
+        print(f"record: id={e['id']} asof={e['asof']} spot={e['entry_spot']:,.2f} "
+              f"dte={e['dte']} traded={e['traded']} vrp={e['vrp']:+.4f} q_vol={e['q_vol']:.1%} "
+              f"(journal={len(journal)} bars; matures at index {e['entry_index'] + e['dte']})")
+    n = led.settle(journal)
+    led.save(args.ledger)
+    if n:
+        print(f"record: settled {n} newly-matured entr{'y' if n == 1 else 'ies'}")
+
+
+def _cmd_settle(args):
+    journal = _load_json(_journal_path(args), [])
+    led = _open_ledger(args, create=False)
+    n = led.settle(journal)
+    led.save(args.ledger)
+    n_open = sum(1 for x in led.entries if x["status"] == "open")
+    print(f"settle: {n} newly matured; {n_open} still open; "
+          f"{len(led.entries) - n_open} settled total")
+
+
+def _cmd_report(args):
+    journal = _load_json(_journal_path(args), None)
+    led = _open_ledger(args, create=False)
+    if journal:
+        led.settle(journal)
+        led.save(args.ledger)
+    print(led.report().summary())
+
+
+def main(argv=None):
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="tools.paper_trade",
+        description="Forward-test paper-trading ledger: record -> settle -> score.")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def common(sp):
+        sp.add_argument("--ledger", required=True, help="ledger .jsonl path")
+        sp.add_argument("--prices", help="price-journal .json (default <ledger>.prices.json)")
+
+    r = sub.add_parser("record", help="freeze today's forecast + market Q, append an entry")
+    common(r)
+    r.add_argument("--source", required=True, choices=["deribit", "tradier", "replay"])
+    r.add_argument("--currency", default="BTC")
+    r.add_argument("--symbol", default="SPX")
+    r.add_argument("--dte", type=int, default=30)
+    r.add_argument("--days", type=int, default=400)
+    r.add_argument("--chain-json", dest="chain_json")
+    r.add_argument("--price-json", dest="price_json")
+    r.add_argument("--r", type=float, default=0.03)
+    r.add_argument("--q", type=float, default=0.0)
+    r.add_argument("--hedge-bps", dest="hedge_bps", type=float, default=5e-4)
+    r.add_argument("--spread-frac", dest="spread_frac", type=float, default=0.015)
+    r.add_argument("--min-vrp", dest="min_vrp", type=float, default=0.0)
+    r.set_defaults(func=_cmd_record)
+
+    s = sub.add_parser("settle", help="grade every matured entry against the price journal")
+    common(s)
+    s.set_defaults(func=_cmd_settle, r=None, q=None, hedge_bps=None, spread_frac=None)
+
+    rp = sub.add_parser("report", help="settle (if a journal exists) then print the scoreboard")
+    common(rp)
+    rp.set_defaults(func=_cmd_report, r=None, q=None, hedge_bps=None, spread_frac=None)
+
+    args = p.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()
