@@ -89,6 +89,29 @@ def main() -> None:
     print("  (on an efficiently-priced chain almost everything is FAIR — a BUY/\n"
           "   WRITE only appears when fair-vs-market survives spread+commission)\n")
 
+    # 3b-3. DE-AMERICANIZATION — unlock US single-name / ETF (American) options ---
+    # BKM/VIX/BL replication assumes EUROPEAN prices; US equity & ETF options
+    # (QQQ, SPY, the holdings inside income funds like QQQI) are American and
+    # carry an early-exercise premium that biases the recovered Q variance HIGH.
+    # Build an American chain at a KNOWN 25% vol, then read Q raw vs de-Americanized.
+    from engine.american import american_price, de_americanize_chain
+    from engine.data import OptionChain as _OC, OptionQuote as _OQ
+    from models import rnd as _rnd
+    a_dte, a_true = 45, 0.25
+    a_T = a_dte / 365.0
+    a_quotes = []
+    for K in range(85, 116, 5):
+        for kind in ("call", "put"):
+            px = american_price(chain.spot, chain.spot * K / 100.0, a_T, chain.r, 0.0, a_true, kind, steps=120)
+            a_quotes.append(_OQ(a_dte, round(chain.spot * K / 100.0, 2), kind, round(px, 4), round(px, 4)))
+    a_chain = _OC("USEQ", chain.spot, chain.r, 0.0, a_quotes)
+    raw_q = _rnd.model_free_implied_vol(a_chain, a_T, a_dte)
+    deam_q = _rnd.model_free_implied_vol(de_americanize_chain(a_chain, steps=120), a_T, a_dte)
+    print("De-Americanization (American chain priced at a known 25% vol):")
+    print(f"  raw American Q vol   = {raw_q:.2%}  (biased HIGH by the early-exercise premium)")
+    print(f"  de-Americanized Q    = {deam_q:.2%}  (early-exercise premium stripped -> unbiased)")
+    print("  -> US equity/ETF options need this before any Q number is trustworthy\n")
+
     # 3c. News sentiment overlay (Phase 2) — FORWARD-looking vol-regime gate -----
     # The price regime gate is backward-looking (HAR lags a spike). A burst of
     # negative / dispersed news anticipates the vol spike, so it can veto selling

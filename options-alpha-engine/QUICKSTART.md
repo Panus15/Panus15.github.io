@@ -5,7 +5,7 @@
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 126 tests
+for t in tests/test_*.py; do python3 "$t"; done   # 132 tests
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
@@ -81,8 +81,10 @@ money?). The same thing runs fully offline on a replayed snapshot —
 
 - **`coverage_ok`** must be `True` — sparse/illiquid wings bias the Q variance LOW,
   exactly in stressed regimes. Prefer liquid index / BTC-ETH chains.
-- **European instruments only** for a real Q number. US single-name equity options
-  are American (Polygon/Finnhub/Alpaca free tiers) — plumbing smoke tests only.
+- **American options (US single-name / ETF: QQQ, SPY, ...)** must be de-Americanized
+  before Q extraction — pass `--american` to `run_live` (binomial American IV ->
+  European-equivalent prices; raw American prices bias the recovered variance HIGH).
+  European instruments (SPX/XSP index, BTC/ETH) need no flag.
 - A single snapshot is a **spot check**, not evidence of edge. The milestone is an
   honest **out-of-sample, cost-inclusive equity curve over many dates including a
   crash** (`--gate` adds the MDN-vs-HAR promotion check; run the backtest over long

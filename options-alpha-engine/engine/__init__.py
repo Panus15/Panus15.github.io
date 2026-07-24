@@ -16,13 +16,14 @@ Public surface:
     hedged_backtest  delta-hedged walk-forward short-vol backtest (governed)
     signal_backtest  multi-date signal-driven walk-forward (does the signal add value?)
     benchmark    same-path comparison: signal vs always-sell (income-ETF) vs buy-hold
+    american     binomial American pricing + de-Americanization to a European chain
 """
 
-from . import (adapters, backtest, benchmark, data, deribit, hedged_backtest,
-               ibkr, iv, portfolio, pricing, signal, signal_backtest, sizing,
-               tradier, volforecast)
+from . import (adapters, american, backtest, benchmark, data, deribit,
+               hedged_backtest, ibkr, iv, portfolio, pricing, signal,
+               signal_backtest, sizing, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
-           "hedged_backtest", "signal_backtest", "benchmark"]
+           "hedged_backtest", "signal_backtest", "benchmark", "american"]
 __version__ = "0.1.0"

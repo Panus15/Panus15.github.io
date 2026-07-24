@@ -29,11 +29,23 @@ from models.baseline import BaselineDensityForecaster
 
 
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
-            label: str = "", run_backtest: bool = True, run_gate: bool = False) -> dict:
-    """Run the full pipeline on a chain + price history. PURE (no network)."""
+            label: str = "", run_backtest: bool = True, run_gate: bool = False,
+            american: bool = False) -> dict:
+    """Run the full pipeline on a chain + price history. PURE (no network).
+
+    ``american=True`` de-Americanizes the chain first (binomial American IV ->
+    European-equivalent prices) so the Q-extractors, which assume European
+    options, get an unbiased chain. REQUIRED for US single-name / ETF options
+    (QQQ, SPY, ...); a no-op-ish pass for already-European chains (SPX/XSP, BTC)."""
     T = dte / 365.0
+    if american:
+        from engine.american import de_americanize_chain
+        n_before = len(chain.quotes)
+        chain = de_americanize_chain(chain)
+        print(f"[de-Americanized] {n_before} American quotes -> "
+              f"{len(chain.quotes)} European-equivalent (early-exercise premium stripped)")
     report: dict = {"symbol": chain.symbol, "spot": chain.spot, "asof": chain.asof,
-                    "n_quotes": len(chain.quotes), "dte": dte}
+                    "n_quotes": len(chain.quotes), "dte": dte, "american": american}
     print(f"\n=== {label or chain.symbol} @ {chain.asof} "
           f"spot={chain.spot:,.2f} quotes={len(chain.quotes)} ===")
 
@@ -143,6 +155,8 @@ def main(argv=None):
     p.add_argument("--dump", help="save the fetched chain to this JSON path")
     p.add_argument("--gate", action="store_true", help="also run the MDN promotion gate")
     p.add_argument("--no-backtest", dest="backtest", action="store_false")
+    p.add_argument("--american", action="store_true",
+                   help="de-Americanize the chain before Q extraction (US equity/ETF options)")
     args = p.parse_args(argv)
 
     chain, prices = fetch(args.source, args)
@@ -152,7 +166,7 @@ def main(argv=None):
         print(f"saved chain -> {args.dump} (replay offline with: "
               f"run_live replay --chain-json {args.dump})")
     analyze(chain, prices, dte=args.dte, label=args.source,
-            run_backtest=args.backtest, run_gate=args.gate)
+            run_backtest=args.backtest, run_gate=args.gate, american=args.american)
 
 
 if __name__ == "__main__":
