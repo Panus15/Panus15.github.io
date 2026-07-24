@@ -64,6 +64,7 @@ class StrikeSignal:
     edge_write: float             # bid - fair - commission   (>0: paid over fair)
     verdict: str                  # BUY / WRITE / FAIR
     note: str = ""
+    contract_mult: float = 100.0  # shares/contract: 100 US equity/ETF, 1 crypto coin
 
     def line(self) -> str:
         pm = f"{self.p_itm_market:6.1%}" if self.p_itm_market is not None else "   n/a"
@@ -71,8 +72,8 @@ class StrikeSignal:
         edge = self.edge_buy if self.verdict == "BUY" else self.edge_write
         return (f"{self.expiry_days:>4}d {self.kind:>4} {self.strike:>9.2f} "
                 f"iv={iv} P_itm model={self.p_itm_model:6.1%} mkt={pm} "
-                f"fair={self.fair_value:>7.3f} mid={self.mid:>7.3f} "
-                f"edge${edge * 100:>+8.2f} {self.verdict:>6}")
+                f"fair={self.fair_value:>9.2f} mid={self.mid:>9.2f} "
+                f"edge${edge * self.contract_mult:>+10.2f} {self.verdict:>6}")
 
 
 def scan_strikes(
@@ -86,6 +87,7 @@ def scan_strikes(
     use_surface: bool = True,
     top: int | None = None,
     stressed: bool | None = None,
+    contract_mult: float = 100.0,
 ) -> list[StrikeSignal]:
     """Scan every quoted contract; return signals sorted best-edge-first.
 
@@ -160,7 +162,7 @@ def scan_strikes(
                 p_itm_model=p_itm_model, p_itm_market=p_itm_market,
                 prob_gap=(p_itm_model - p_itm_market) if p_itm_market is not None else None,
                 fair_value=fair, edge_buy=edge_buy, edge_write=edge_write,
-                verdict=verdict, note=note,
+                verdict=verdict, note=note, contract_mult=contract_mult,
             ))
 
     out.sort(key=lambda s: max(s.edge_buy, s.edge_write), reverse=True)

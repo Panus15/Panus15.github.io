@@ -30,7 +30,7 @@ from models.baseline import BaselineDensityForecaster
 
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
-            american: bool = False) -> dict:
+            american: bool = False, contract_mult: float = 100.0) -> dict:
     """Run the full pipeline on a chain + price history. PURE (no network).
 
     ``american=True`` de-Americanizes the chain first (binomial American IV ->
@@ -79,7 +79,7 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     # 2b. Per-strike board — which exact contract looks mispriced ------------
     if len(prices) >= 30:
         from models.strike_scan import scan_strikes
-        board = scan_strikes(chain, forecaster, prices, top=8)
+        board = scan_strikes(chain, forecaster, prices, top=8, contract_mult=contract_mult)
         report["strike_board"] = [
             {"dte": s.expiry_days, "strike": s.strike, "kind": s.kind,
              "edge_buy": s.edge_buy, "edge_write": s.edge_write,
@@ -165,8 +165,11 @@ def main(argv=None):
         save_chain_json(chain, args.dump)
         print(f"saved chain -> {args.dump} (replay offline with: "
               f"run_live replay --chain-json {args.dump})")
+    # Crypto options are 1 coin/contract; US equity & ETF options are 100 shares.
+    mult = 1.0 if args.source == "deribit" else 100.0
     analyze(chain, prices, dte=args.dte, label=args.source,
-            run_backtest=args.backtest, run_gate=args.gate, american=args.american)
+            run_backtest=args.backtest, run_gate=args.gate, american=args.american,
+            contract_mult=mult)
 
 
 if __name__ == "__main__":
