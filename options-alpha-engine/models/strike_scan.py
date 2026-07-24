@@ -65,15 +65,18 @@ class StrikeSignal:
     verdict: str                  # BUY / WRITE / FAIR
     note: str = ""
     contract_mult: float = 100.0  # shares/contract: 100 US equity/ETF, 1 crypto coin
+    break_even_slip_frac: float = float("inf")  # slippage (× spread) the edge absorbs before 0
 
     def line(self) -> str:
         pm = f"{self.p_itm_market:6.1%}" if self.p_itm_market is not None else "   n/a"
         iv = f"{self.market_iv:6.1%}" if self.market_iv is not None else "   n/a"
         edge = self.edge_buy if self.verdict == "BUY" else self.edge_write
+        be = ("  be=inf" if self.break_even_slip_frac == float("inf")
+              else f"  be={self.break_even_slip_frac:>4.1f}x")
         return (f"{self.expiry_days:>4}d {self.kind:>4} {self.strike:>9.2f} "
                 f"iv={iv} P_itm model={self.p_itm_model:6.1%} mkt={pm} "
                 f"fair={self.fair_value:>9.2f} mid={self.mid:>9.2f} "
-                f"edge${edge * self.contract_mult:>+10.2f} {self.verdict:>6}")
+                f"edge${edge * self.contract_mult:>+10.2f} {self.verdict:>6}{be}")
 
 
 def scan_strikes(
@@ -145,9 +148,12 @@ def scan_strikes(
             # penalty proportional to the spread itself, so deep ITM/OTM strikes
             # with gaping quotes are penalised most, exactly where they should be.
             fair = p.price(qt.strike, r, T, qt.kind)
-            slip = slippage_frac * max(qt.ask - qt.bid, 0.0)
-            edge_buy = fair - (qt.ask + slip) - comm_ps
-            edge_write = (qt.bid - slip) - fair - comm_ps
+            spread = max(qt.ask - qt.bid, 0.0)
+            slip = slippage_frac * spread
+            gross_buy = fair - qt.ask - comm_ps          # touch fill, no extra slippage
+            gross_write = qt.bid - fair - comm_ps
+            edge_buy = gross_buy - slip
+            edge_write = gross_write - slip
 
             note = ""
             if edge_buy > min_edge:
@@ -161,6 +167,14 @@ def scan_strikes(
             else:
                 verdict = "FAIR"
 
+            # Margin of safety: how much slippage (as a multiple of the current
+            # spread) the winning side's edge can absorb before it hits zero. High
+            # = robust; < ~0.5 = the edge dies inside one spread of execution cost.
+            win_gross = (gross_buy if verdict == "BUY"
+                         else gross_write if verdict == "WRITE"
+                         else max(gross_buy, gross_write))
+            be = win_gross / spread if spread > 1e-9 else float("inf")
+
             out.append(StrikeSignal(
                 expiry_days=dte, strike=qt.strike, kind=qt.kind,
                 bid=qt.bid, ask=qt.ask, mid=mid,
@@ -169,6 +183,7 @@ def scan_strikes(
                 prob_gap=(p_itm_model - p_itm_market) if p_itm_market is not None else None,
                 fair_value=fair, edge_buy=edge_buy, edge_write=edge_write,
                 verdict=verdict, note=note, contract_mult=contract_mult,
+                break_even_slip_frac=be,
             ))
 
     out.sort(key=lambda s: max(s.edge_buy, s.edge_write), reverse=True)

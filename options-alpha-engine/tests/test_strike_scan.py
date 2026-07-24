@@ -113,6 +113,30 @@ def test_slippage_penalises_wide_spread_edges():
     assert b1.edge_buy < b0.edge_buy
 
 
+def test_break_even_slippage_margin():
+    # A wide-spread cheap call: break_even_slip_frac = gross edge / spread — how
+    # many spreads of slippage the edge survives. The decision metric for thin VRP.
+    ch = _fair_chain()
+    v = next(q for q in ch.quotes if q.kind == "call" and abs(q.strike - SPOT) < 3)
+    object.__setattr__(v, "bid", round(v.bid - 0.80, 4))
+    object.__setattr__(v, "ask", round(v.ask - 0.40, 4))
+    s = next(x for x in scan_strikes(ch, F, PRICES, slippage_frac=0.0)
+             if x.strike == v.strike and x.kind == "call")
+    assert s.verdict == "BUY"
+    gross = s.fair_value - v.ask - 0.65 / 100.0
+    assert abs(s.break_even_slip_frac - gross / (v.ask - v.bid)) < 1e-6
+    assert 0.5 < s.break_even_slip_frac < 1.5
+
+    # A zero-spread edge: slippage penalty (∝ spread) is always 0 -> infinite margin.
+    ch2 = _fair_chain()
+    v2 = next(q for q in ch2.quotes if q.kind == "call" and abs(q.strike - SPOT) < 3)
+    object.__setattr__(v2, "bid", round(v2.bid - 0.60, 4))
+    object.__setattr__(v2, "ask", round(v2.ask - 0.60, 4))
+    s2 = next(x for x in scan_strikes(ch2, F, PRICES)
+              if x.strike == v2.strike and x.kind == "call")
+    assert s2.break_even_slip_frac == float("inf")
+
+
 def test_top_truncates_ranked_list():
     signals = scan_strikes(_fair_chain(), F, PRICES, top=3)
     assert len(signals) == 3
