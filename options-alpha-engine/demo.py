@@ -130,6 +130,22 @@ def main() -> None:
     print("  -> when event_risk=True, pass it as edge.compare(stressed=True) to "
           "suppress short-vol early\n")
 
+    # 3c-2. MACRO regime gate (Phase 2) — the economic backdrop as a vol veto ----
+    # The third gate the user asked for: yield-curve inversion, credit blowouts,
+    # VIX-term backwardation, tightening shocks. Composes into the SAME event_risk.
+    from models.macro import MacroSnapshot
+    benign = MacroSnapshot("2026-07-19", short_rate=0.03, long_rate=0.043,
+                           credit_spread=0.03, vix=15.0, vix_3m=17.0)
+    stress = MacroSnapshot("2026-07-19", short_rate=0.055, long_rate=0.041,   # inverted
+                           credit_spread=0.07, vix=34.0, vix_3m=27.0)
+    for label, snap in (("benign macro", benign), ("stressed macro", stress)):
+        fired, reason = event_risk(stressed, None, macro=snap)
+        print(f"Macro gate [{label}]: curve={snap.curve_slope*100:+.0f}bp "
+              f"credit={snap.credit_spread*100:.0f}bp vixTS={snap.vix_term_slope:+.1f} "
+              f"-> veto={fired} ({reason})")
+    print("  -> macro/news/price gates all OR into one `stressed` flag; none is a\n"
+          "     directional bet — they only ever STOP selling vol, never direct it\n")
+
     # 3d. Promotion gate — would a trained MDN replace the HAR baseline? --------
     # The neural model (a drop-in emitting the SAME MixtureLogNormal) only ships
     # if it beats the baseline OUT-OF-SAMPLE on the S_T density. Train on the

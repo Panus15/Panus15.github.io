@@ -129,7 +129,7 @@ class PaperLedger:
     # --- record --------------------------------------------------------------
     def record(self, chain, prices, entry_index: int, forecaster, *,
                dte: int = 30, asof: str | None = None, min_vrp: float = 0.0,
-               news_feature=None):
+               news_feature=None, macro=None):
         """Freeze one decision. Sees ONLY prices[:entry_index+1] — no look-ahead.
 
         ``news_feature`` (models.sentiment.SentimentFeature) composes the
@@ -156,9 +156,9 @@ class PaperLedger:
         vrp = q_vol ** 2 - p_vol ** 2
         stressed = edge.regime_stressed(trailing)
         gate_reason = None
-        if news_feature is not None:
+        if news_feature is not None or macro is not None:
             from models.news_signal import event_risk
-            stressed, gate_reason = event_risk(stressed, news_feature)
+            stressed, gate_reason = event_risk(stressed, news_feature, macro=macro)
         iv, strike = _atm_iv(chain, dte, T)
 
         # The strategy: sell vol only when the market's Q variance is richer than

@@ -45,11 +45,17 @@ def news_risk_gate(
 
 
 def event_risk(price_stressed: bool, feature: SentimentFeature | None = None,
-               **gate_kwargs) -> tuple[bool, str]:
+               macro=None, **gate_kwargs) -> tuple[bool, str]:
     """Combine the backward-looking price regime gate with the forward-looking
-    news gate. True if EITHER fires. Pass this as `stressed` to edge.compare."""
+    news and macro gates. True if ANY fires. Pass this as `stressed` to
+    edge.compare. ``macro`` is an optional models.macro.MacroSnapshot."""
     if price_stressed:
         return True, "realised vol accelerating (price regime)"
+    if macro is not None:
+        from .macro import macro_regime_gate
+        fired, reason = macro_regime_gate(macro)
+        if fired:
+            return True, f"macro: {reason}"
     if feature is not None:
         return news_risk_gate(feature, **gate_kwargs)
     return False, "no elevated regime"
