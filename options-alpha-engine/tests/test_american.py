@@ -98,6 +98,60 @@ def test_de_americanization_recovers_true_q_vol():
     assert abs(deam_q - euro_floor) < abs(raw_q - euro_floor)
 
 
+def test_dividend_call_early_exercise_premium():
+    # q > r -> an American CALL carries a real early-exercise premium. Guards the
+    # call-side max(continuation, intrinsic): a wrong impl returns the European value.
+    am = american.american_price(S, 80, 1.0, 0.02, 0.08, 0.25, "call", steps=300)
+    eu = pricing.price(S, 80, 1.0, 0.02, 0.08, 0.25, "call")
+    assert am > eu + 0.1, (am, eu)
+    assert american.early_exercise_premium(S, 80, 1.0, 0.02, 0.08, 0.25, "call", steps=300) > 0.1
+
+
+def test_early_exercise_premium_never_negative_no_div_call():
+    # Same-tree European cancels discretization -> premium is exactly >= 0, not noise.
+    for K in (80, 100, 120):
+        prem = american.early_exercise_premium(S, K, 1.0, 0.05, 0.0, 0.25, "call", steps=128)
+        assert prem >= 0.0, (K, prem)
+    assert american.early_exercise_premium(S, 100, 1.0, 0.05, 0.0, 0.25, "call", steps=128) == 0.0
+
+
+def test_de_americanize_dividend_chain_recovers_european_floor():
+    # The module's stated purpose is dividend ETFs. With q > r the CALL wing carries
+    # a real early-exercise premium; de-Am must still recover the European-floor Q vol.
+    # A q-passthrough regression (chain.q -> 0) biases the recovered vol and fails here.
+    dte, true_vol, r, qy = 45, 0.25, 0.02, 0.06
+    T = dte / 365.0
+    quotes_a, quotes_e = [], []
+    for K in range(85, 116, 5):
+        for kind in ("call", "put"):
+            pa = american.american_price(S, float(K), T, r, qy, true_vol, kind, steps=120)
+            pe = pricing.price(S, float(K), T, r, qy, true_vol, kind)
+            quotes_a.append(OptionQuote(dte, float(K), kind, round(pa, 4), round(pa, 4)))
+            quotes_e.append(OptionQuote(dte, float(K), kind, round(pe, 4), round(pe, 4)))
+    chain_a = OptionChain("USEQ", S, r, qy, quotes_a)
+    euro_floor = rnd.model_free_implied_vol(OptionChain("E", S, r, qy, quotes_e), T, dte)
+    deam_q = rnd.model_free_implied_vol(american.de_americanize_chain(chain_a, steps=120), T, dte)
+    assert abs(deam_q - euro_floor) < 2e-3, (deam_q, euro_floor)
+
+
+def test_de_americanize_keeps_zero_bid_wing_and_preserves_spread():
+    # A zero-bid OTM wing (routine on equity chains) must NOT drop the strike, and
+    # the reflowed spread must bracket the European mid.
+    dte, T = 30, 30 / 365.0
+    px = american.american_price(S, 130.0, T, 0.05, 0.0, 0.25, "call", steps=120)
+    quotes = [
+        OptionQuote(dte, 100.0, "call", round(px * 0 + 2.0, 4), 2.2),   # normal quote
+        OptionQuote(dte, 130.0, "call", 0.0, round(px + 0.05, 4)),      # zero-bid OTM wing
+    ]
+    deam = american.de_americanize_chain(OptionChain("W", S, 0.05, 0.0, quotes), steps=120)
+    strikes = {(q.strike, q.kind) for q in deam.quotes}
+    assert (130.0, "call") in strikes                      # wing survives (mid was solvable)
+    wing = next(q for q in deam.quotes if q.strike == 130.0)
+    assert wing.bid <= wing.mid <= wing.ask and wing.bid >= 0.0
+    # original half-spread preserved
+    assert abs((wing.ask - wing.bid) - (px + 0.05 - 0.0)) < 1e-3
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

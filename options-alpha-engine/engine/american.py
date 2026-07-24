@@ -31,11 +31,11 @@ from engine import pricing
 from engine.data import OptionChain, OptionQuote
 
 
-def american_price(S: float, K: float, T: float, r: float, q: float, vol: float,
-                   kind: str, *, steps: int = 128) -> float:
-    """Cox-Ross-Rubinstein binomial value of an AMERICAN option (early exercise
-    tested at every node). Converges to Black-Scholes as ``steps`` grows for
-    cases where early exercise is never optimal (e.g. a call with no dividend)."""
+def _binomial(S: float, K: float, T: float, r: float, q: float, vol: float,
+              kind: str, steps: int, american: bool) -> float:
+    """Cox-Ross-Rubinstein binomial value. ``american`` toggles the early-exercise
+    test at every node; with it off this is a discrete European (used so the
+    early-exercise premium isolates cleanly — the discretization error cancels)."""
     kind = kind.lower()
     if kind not in ("call", "put"):
         raise ValueError(f"kind must be 'call' or 'put', got {kind!r}")
@@ -63,14 +63,25 @@ def american_price(S: float, K: float, T: float, r: float, q: float, vol: float,
     else:
         val = [max(K - spot(steps, j), 0.0) for j in range(steps + 1)]
 
-    # Backward induction with the early-exercise test.
+    # Backward induction, with the early-exercise test when american.
     for i in range(steps - 1, -1, -1):
         for j in range(i + 1):
             cont = pu * val[j + 1] + pd * val[j]
-            s = spot(i, j)
-            intrinsic = (s - K) if kind == "call" else (K - s)
-            val[j] = cont if cont >= intrinsic else intrinsic
+            if american:
+                s = spot(i, j)
+                intrinsic = (s - K) if kind == "call" else (K - s)
+                val[j] = cont if cont >= intrinsic else intrinsic
+            else:
+                val[j] = cont
     return val[0]
+
+
+def american_price(S: float, K: float, T: float, r: float, q: float, vol: float,
+                   kind: str, *, steps: int = 128) -> float:
+    """Cox-Ross-Rubinstein binomial value of an AMERICAN option (early exercise
+    tested at every node). Converges to Black-Scholes as ``steps`` grows for
+    cases where early exercise is never optimal (e.g. a call with no dividend)."""
+    return _binomial(S, K, T, r, q, vol, kind, steps, american=True)
 
 
 def american_iv(market_price: float, S: float, K: float, T: float, r: float,
@@ -121,29 +132,37 @@ def de_americanize_price(american_market_price: float, S: float, K: float, T: fl
 def de_americanize_chain(chain: OptionChain, *, steps: int = 128) -> OptionChain:
     """Map an AMERICAN OptionChain to its European-equivalent (drop-in for rnd).
 
-    Each quote's bid and ask are independently de-Americanized (repriced European
-    at that side's American implied vol). Quotes whose bid or ask can't be solved
-    (below intrinsic, unquoted) are dropped. ``r``/``q``/``asof``/``spot`` pass
-    through unchanged. NOTE: European call, no dividend -> a no-op (there is no
-    early-exercise premium to strip), which the tests assert."""
+    The MID of each quote is de-Americanized (models.rnd integrates mids), and the
+    original half-spread is reflowed around the European mid. De-Americanizing the
+    mid — not bid and ask independently — is deliberate: a routine zero-bid OTM
+    wing has an unsolvable bid but a perfectly solvable mid, so per-side handling
+    would drop the whole strike (and rnd's call/put strike intersection would then
+    drop the paired side too), silently truncating the wings and biasing the
+    recovered variance LOW. Only a quote whose MID is below intrinsic (a genuinely
+    broken quote) is dropped. ``r``/``q``/``asof``/``spot`` pass through unchanged.
+    European call with no dividend -> a no-op (no early-exercise premium)."""
     out = []
     for qt in chain.quotes:
         T = qt.expiry_days / 365.0
-        eb = de_americanize_price(qt.bid, chain.spot, qt.strike, T, chain.r,
+        de = de_americanize_price(qt.mid, chain.spot, qt.strike, T, chain.r,
                                   chain.q, qt.kind, steps=steps)
-        ea = de_americanize_price(qt.ask, chain.spot, qt.strike, T, chain.r,
-                                  chain.q, qt.kind, steps=steps)
-        if eb is None or ea is None:
+        if de is None:
             continue
+        eur_mid = de[0]
+        half = max(0.0, 0.5 * (qt.ask - qt.bid))
         out.append(OptionQuote(qt.expiry_days, qt.strike, qt.kind,
-                               round(eb[0], 4), round(ea[0], 4)))
+                               round(max(eur_mid - half, 0.0), 4),
+                               round(eur_mid + half, 4)))
     return OptionChain(chain.symbol, chain.spot, chain.r, chain.q, out,
                        asof=chain.asof)
 
 
 def early_exercise_premium(S: float, K: float, T: float, r: float, q: float,
                            vol: float, kind: str, *, steps: int = 128) -> float:
-    """American value minus the European value at the same vol (>= 0). A
-    diagnostic: how much of a quoted price is early-exercise optionality."""
-    return american_price(S, K, T, r, q, vol, kind, steps=steps) - \
-        pricing.price(S, K, T, r, q, vol, kind)
+    """American minus European value at the same vol — the early-exercise premium,
+    guaranteed >= 0. Both legs use the SAME binomial tree so the discretization
+    error cancels exactly (subtracting an exact BSM price from a coarse tree price
+    would instead leak discretization noise, which can go negative)."""
+    am = _binomial(S, K, T, r, q, vol, kind, steps, american=True)
+    eu = _binomial(S, K, T, r, q, vol, kind, steps, american=False)
+    return am - eu

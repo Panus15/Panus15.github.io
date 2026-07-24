@@ -5,7 +5,7 @@
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 132 tests
+for t in tests/test_*.py; do python3 "$t"; done   # 136 tests
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
