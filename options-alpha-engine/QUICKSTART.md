@@ -96,5 +96,5 @@ money?). The same thing runs fully offline on a replayed snapshot —
 |---|---|---|
 | 0 · start today | Deribit (keyless), OptionsDX free SPX CSV | European, zero/near-zero auth |
 | 1 · free-key | Tradier Sandbox, Deribit testnet, marketdata.app | adds paper execution |
-| 2 · American (plumbing only) | Polygon/Finnhub free | NOT a defensible Q number |
+| 2 · American (US equity/ETF) | Polygon/Finnhub free | defensible Q via `--american` de-Am |
 | 3 · paid, defensible | ORATS, CBOE DataShop, OptionMetrics/WRDS | survivorship-safe |
