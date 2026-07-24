@@ -17,13 +17,14 @@ Public surface:
     signal_backtest  multi-date signal-driven walk-forward (does the signal add value?)
     benchmark    same-path comparison: signal vs always-sell (income-ETF) vs buy-hold
     american     binomial American pricing + de-Americanization to a European chain
+    stress       overnight-gap / jump stress — the short-gamma risk a smooth backtest hides
 """
 
 from . import (adapters, american, backtest, benchmark, data, deribit,
                hedged_backtest, ibkr, iv, portfolio, pricing, signal,
-               signal_backtest, sizing, tradier, volforecast)
+               signal_backtest, sizing, stress, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
-           "hedged_backtest", "signal_backtest", "benchmark", "american"]
+           "hedged_backtest", "signal_backtest", "benchmark", "american", "stress"]
 __version__ = "0.1.0"

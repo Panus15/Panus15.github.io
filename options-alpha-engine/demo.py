@@ -224,6 +224,18 @@ def main() -> None:
     print("Benchmarks (same crash path, cost-inclusive):")
     print(summary_table(books) + "\n")
 
+    # 8. Overnight-gap / short-gamma STRESS — the risk a smooth backtest hides ----
+    # Continuous delta-hedging is a fiction; real markets gap over nights and
+    # weekends and you are short gamma across the jump. Inject big jumps and re-run.
+    from engine.stress import gap_stress
+    gs = gap_stress(price_path_with_crash(760), synthetic_chain_series(dte=21),
+                    BaselineDensityForecaster(), dte=21, warmup=63,
+                    always_sell=True, every=40, size=0.20)
+    print("Overnight-gap stress (ungated short vol, ±20% jumps):")
+    print("  " + gs.summary().replace("\n", "\n  "))
+    print("  -> big un-hedgeable jumps bleed short gamma; THIS is what the regime\n"
+          "     gate + kill-switch defend against, and why continuous-hedge Sharpe lies\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 

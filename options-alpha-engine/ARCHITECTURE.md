@@ -136,6 +136,12 @@ honest, cost-inclusive verdict leaves on the right.
   the market's Q, settle when the horizon elapses, and score both with proper
   scoring rules. This is the only instrument that can turn "the math works" into
   "the edge is real," and it deliberately refuses to claim edge on modelled data.
+- **`engine/stress.py`** — overnight-gap / jump stress. Continuous delta-hedging
+  is a fiction; markets gap over nights and weekends and you are short gamma
+  across the jump. Inject jumps and re-run the book so the gamma bleed a smooth
+  backtest omits becomes a number. (A finding worth internalising: *small* gaps
+  can help — you then sell elevated IV — but a *big* un-hedgeable move bleeds; the
+  gate defends the tail, not the average.)
 
 ---
 

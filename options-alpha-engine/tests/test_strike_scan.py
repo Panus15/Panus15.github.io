@@ -97,6 +97,22 @@ def test_itm_probabilities_are_consistent():
     assert checked >= 0
 
 
+def test_slippage_penalises_wide_spread_edges():
+    # Give the cheap call a WIDE spread; slippage must shrink its edge and can
+    # push a marginal signal back to FAIR. Deep/illiquid strikes pay the most.
+    ch = _fair_chain()
+    victim = next(q for q in ch.quotes if q.kind == "call" and abs(q.strike - SPOT) < 3)
+    object.__setattr__(victim, "bid", round(victim.bid - 0.80, 4))   # 0.60 under fair...
+    object.__setattr__(victim, "ask", round(victim.ask - 0.40, 4))   # ...with a 0.40 spread
+    no_slip = scan_strikes(ch, F, PRICES, slippage_frac=0.0)
+    with_slip = scan_strikes(ch, F, PRICES, slippage_frac=0.5)
+    b0 = next(s for s in no_slip if s.strike == victim.strike and s.kind == "call")
+    b1 = next(s for s in with_slip if s.strike == victim.strike and s.kind == "call")
+    spread = victim.ask - victim.bid
+    assert abs((b0.edge_buy - b1.edge_buy) - 0.5 * spread) < 1e-9   # exactly half the spread
+    assert b1.edge_buy < b0.edge_buy
+
+
 def test_top_truncates_ranked_list():
     signals = scan_strikes(_fair_chain(), F, PRICES, top=3)
     assert len(signals) == 3

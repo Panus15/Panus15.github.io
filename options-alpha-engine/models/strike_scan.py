@@ -88,6 +88,7 @@ def scan_strikes(
     top: int | None = None,
     stressed: bool | None = None,
     contract_mult: float = 100.0,
+    slippage_frac: float = 0.25,
 ) -> list[StrikeSignal]:
     """Scan every quoted contract; return signals sorted best-edge-first.
 
@@ -139,9 +140,14 @@ def scan_strikes(
                       / (iv_used * math.sqrt(T)))
                 p_itm_market = _ncdf(d2) if qt.kind == "call" else _ncdf(-d2)
 
+            # You do not get the touch on a wide/illiquid strike — you sweep into
+            # the book. Charge the FULL spread (buy@ask, write@bid) PLUS a slippage
+            # penalty proportional to the spread itself, so deep ITM/OTM strikes
+            # with gaping quotes are penalised most, exactly where they should be.
             fair = p.price(qt.strike, r, T, qt.kind)
-            edge_buy = fair - qt.ask - comm_ps
-            edge_write = qt.bid - fair - comm_ps
+            slip = slippage_frac * max(qt.ask - qt.bid, 0.0)
+            edge_buy = fair - (qt.ask + slip) - comm_ps
+            edge_write = (qt.bid - slip) - fair - comm_ps
 
             note = ""
             if edge_buy > min_edge:
