@@ -12,9 +12,21 @@ It walks the whole MVP loop:
      the metrics that decide whether an edge is real.
 """
 
-from engine import backtest, sizing, volforecast
+from datetime import date
+
+from engine import sizing, volforecast
 from engine.data import SyntheticAdapter
+from engine.hedged_backtest import price_path_with_crash, run_hedged_backtest
 from engine.signal import scan_chain
+from engine.signal_backtest import synthetic_chain_series
+from tools.paper_trade import paper_trade_series
+from models.news_signal import event_risk
+from models.sentiment import (LexiconSentimentScorer, NewsItem,
+                              aggregate_sentiment)
+from models import objective
+from models.baseline import BaselineDensityForecaster
+from models.edge import regime_stressed, scan_distribution
+from models.mdn import SequenceMDNForecaster
 
 
 def main() -> None:
@@ -49,6 +61,112 @@ def main() -> None:
               f"{m.edge_net:>6.2f} {m.verdict:>7}")
     print()
 
+    # 3b. DISTRIBUTIONAL scan — the core ML technique --------------------------
+    # Forecast the FULL distribution of S_T (physical P) and compare it to the
+    # option-implied risk-neutral distribution (Q) recovered from the chain.
+    # This generalises the scalar scan above into a per-expiry P-vs-Q comparison.
+    forecaster = BaselineDensityForecaster()
+    stressed = regime_stressed(prices)
+    print(f"Distributional P-vs-Q scan (core technique)  [regime_stressed={stressed}]")
+    print(f"  {'dte':>3} {'P_vol':>6} {'Q_vol':>6} {'VRP':>7} "
+          f"{'P_skew':>7} {'Q_skew':>7} {'edge$':>7} {'verdict':>9}")
+    for s in scan_distribution(chain, forecaster, prices, actionable_only=False):
+        print(f"  {s.expiry_days:>3} {s.p_vol:>6.1%} {s.q_vol:>6.1%} "
+              f"{s.variance_risk_premium:>+7.4f} {s.p_skew:>7.2f} {s.q_skew:>7.2f} "
+              f"{s.edge_net:>7.1f} {s.verdict:>9}")
+    print("  (VRP>0 = market implies more variance than we forecast -> sell vol;\n"
+          "   SRP/skew shown but DIAGNOSTIC-only; verdict gated by regime + cost)\n")
+
+    # 3b-2. PER-STRIKE board — which exact contract, at which strike/expiry? -----
+    # For every quoted call/put: the model's P(finish ITM) vs the market-implied
+    # N(d2), and fair value vs bid/ask after costs. Direction-neutral by design:
+    # edges come from vol level + distribution shape, never from an up/down call.
+    from models.strike_scan import scan_strikes
+    board = scan_strikes(chain, forecaster, prices, top=6)
+    print("Per-strike board (top 6 by |edge|, $/contract):")
+    for s in board:
+        print("  " + s.line())
+    print("  (on an efficiently-priced chain almost everything is FAIR — a BUY/\n"
+          "   WRITE only appears when fair-vs-market survives spread+commission)\n")
+
+    # 3b-3. DE-AMERICANIZATION — unlock US single-name / ETF (American) options ---
+    # BKM/VIX/BL replication assumes EUROPEAN prices; US equity & ETF options
+    # (QQQ, SPY, the holdings inside income funds like QQQI) are American and
+    # carry an early-exercise premium that biases the recovered Q variance HIGH.
+    # Build an American chain at a KNOWN 25% vol, then read Q raw vs de-Americanized.
+    from engine.american import american_price, de_americanize_chain
+    from engine.data import OptionChain as _OC, OptionQuote as _OQ
+    from models import rnd as _rnd
+    a_dte, a_true = 45, 0.25
+    a_T = a_dte / 365.0
+    a_quotes = []
+    for K in range(85, 116, 5):
+        for kind in ("call", "put"):
+            px = american_price(chain.spot, chain.spot * K / 100.0, a_T, chain.r, 0.0, a_true, kind, steps=120)
+            a_quotes.append(_OQ(a_dte, round(chain.spot * K / 100.0, 2), kind, round(px, 4), round(px, 4)))
+    a_chain = _OC("USEQ", chain.spot, chain.r, 0.0, a_quotes)
+    raw_q = _rnd.model_free_implied_vol(a_chain, a_T, a_dte)
+    deam_q = _rnd.model_free_implied_vol(de_americanize_chain(a_chain, steps=120), a_T, a_dte)
+    print("De-Americanization (American chain priced at a known 25% vol):")
+    print(f"  raw American Q vol   = {raw_q:.2%}  (biased HIGH by the early-exercise premium)")
+    print(f"  de-Americanized Q    = {deam_q:.2%}  (early-exercise premium stripped -> unbiased)")
+    print("  -> US equity/ETF options need this before any Q number is trustworthy\n")
+
+    # 3c. News sentiment overlay (Phase 2) — FORWARD-looking vol-regime gate -----
+    # The price regime gate is backward-looking (HAR lags a spike). A burst of
+    # negative / dispersed news anticipates the vol spike, so it can veto selling
+    # vol BEFORE the move. It composes via edge.compare's existing `stressed` flag.
+    scorer = LexiconSentimentScorer()
+    asof = date(2026, 7, 19)
+    calm_news = [NewsItem("2026-07-19", "DEMO", "steady trading, guidance reaffirmed")]
+    risk_news = [NewsItem("2026-07-19", "DEMO", "shares plunge on fraud probe"),
+                 NewsItem("2026-07-19", "DEMO", "default fears and selloff deepen"),
+                 NewsItem("2026-07-19", "DEMO", "crisis warning; volatility surges")]
+    for label, news in (("calm news", calm_news), ("risk news", risk_news)):
+        feat = aggregate_sentiment(news, scorer, asof=asof)
+        fired, reason = event_risk(stressed, feat)
+        print(f"News overlay [{label}]: score={feat.score:+.2f} disp={feat.dispersion:.2f} "
+              f"vol={feat.volume:.1f} -> event_risk={fired} ({reason})")
+    print("  -> when event_risk=True, pass it as edge.compare(stressed=True) to "
+          "suppress short-vol early\n")
+
+    # 3c-2. MACRO regime gate (Phase 2) — the economic backdrop as a vol veto ----
+    # The third gate the user asked for: yield-curve inversion, credit blowouts,
+    # VIX-term backwardation, tightening shocks. Composes into the SAME event_risk.
+    from models.macro import MacroSnapshot
+    benign = MacroSnapshot("2026-07-19", short_rate=0.03, long_rate=0.043,
+                           credit_spread=0.03, vix=15.0, vix_3m=17.0)
+    stress = MacroSnapshot("2026-07-19", short_rate=0.055, long_rate=0.041,   # inverted
+                           credit_spread=0.07, vix=34.0, vix_3m=27.0)
+    for label, snap in (("benign macro", benign), ("stressed macro", stress)):
+        fired, reason = event_risk(stressed, None, macro=snap)
+        print(f"Macro gate [{label}]: curve={snap.curve_slope*100:+.0f}bp "
+              f"credit={snap.credit_spread*100:.0f}bp vixTS={snap.vix_term_slope:+.1f} "
+              f"-> veto={fired} ({reason})")
+    print("  -> macro/news/price gates all OR into one `stressed` flag; none is a\n"
+          "     directional bet — they only ever STOP selling vol, never direct it\n")
+
+    # 3d. Promotion gate — would a trained MDN replace the HAR baseline? --------
+    # The neural model (a drop-in emitting the SAME MixtureLogNormal) only ships
+    # if it beats the baseline OUT-OF-SAMPLE on the S_T density. Train on the
+    # first 75% of history, score both on the held-out tail. Lower NLL = better.
+    cut = int(len(prices) * 0.75)
+    mdn = SequenceMDNForecaster(context=63, seed=0)
+    mdn.fit(prices[:cut], horizons=(30,), epochs=15, lr=0.05, max_windows=200)
+    oos = objective.build_windows(prices[cut - 63:], context=63, horizons=(30,))
+    nll_base = objective.dataset_nll(BaselineDensityForecaster(), oos, r=0.0, q=0.0)
+    nll_mdn = objective.dataset_nll(mdn, oos, r=0.0, q=0.0)
+    tail_base = sum(objective.left_tail_pinball(BaselineDensityForecaster()
+                    .forecast(c, h / 365, spot=c[-1]), s) for c, h, s in oos) / len(oos)
+    tail_mdn = sum(objective.left_tail_pinball(mdn.forecast(c, h / 365, spot=c[-1]), s)
+                   for c, h, s in oos) / len(oos)
+    winner = "MDN" if (nll_mdn < nll_base and tail_mdn < tail_base) else "HAR baseline"
+    print(f"Promotion gate (out-of-sample, {len(oos)} windows, lower=better):")
+    print(f"  {'':13}{'NLL':>9} {'left-tail':>11}")
+    print(f"  HAR baseline {nll_base:>9.4f} {tail_base:>11.4f}")
+    print(f"  trained MDN  {nll_mdn:>9.4f} {tail_mdn:>11.4f}")
+    print(f"  -> ships: {winner}  (must win BOTH aggregate NLL and the tall tail)\n")
+
     # 4. Position sizing -----------------------------------------------------
     if ideas:
         best = ideas[0]
@@ -64,37 +182,50 @@ def main() -> None:
               f"{best.quote.strike:.0f} / {best.quote.expiry_days}d")
         print(f"Sized position (0.25 Kelly, 2% cap): {n} contracts\n")
 
-    # 5. Cost-aware backtest of a toy short-vol strategy ---------------------
-    # Illustrative daily P&L: collect the variance risk premium, minus the
-    # occasional volatility spike. The point is the *engine + metrics*, not
-    # this fixture's returns.
-    daily_pnl = _toy_short_vol_pnl(prices)
-    result = backtest.run_backtest(daily_pnl, starting_equity=100_000)
-    print("Backtest (toy short-vol, costs included):")
-    print("  " + result.summary().replace("\n", "\n  "))
-    print("\nReminder: swap SyntheticAdapter for real data before trusting any "
-          "of these numbers. This fixture only proves the plumbing works.")
+    # 5. Delta-hedged WALK-FORWARD backtest — governed + crash-aware ----------
+    # The real proof: sell the straddle, delta-hedge daily, size via CVaR, and
+    # let the risk governor veto trades. Run it on a calm sample AND one with a
+    # crash — the gap between them is why a crash-free backtest lies.
+    calm = SyntheticAdapter(seed=5).price_history("CALM", 620)
+    crash = price_path_with_crash(756)
+    rc = run_hedged_backtest(calm)
+    rx = run_hedged_backtest(crash)
+    print("Walk-forward delta-hedged short-vol (CVaR-sized, governor-gated):")
+    print(f"  {'':16}{'Sharpe':>7} {'Sortino':>8} {'MaxDD':>7} {'trades':>7} {'skipped':>8}")
+    print(f"  calm sample    {rc.metrics.sharpe:>7.2f} {rc.metrics.sortino:>8.2f} "
+          f"{rc.metrics.max_drawdown:>7.1%} {rc.n_trades:>7} {rc.n_skipped:>8}")
+    print(f"  WITH a crash   {rx.metrics.sharpe:>7.2f} {rx.metrics.sortino:>8.2f} "
+          f"{rx.metrics.max_drawdown:>7.1%} {rx.n_trades:>7} {rx.n_skipped:>8}")
+    print(f"  crash skips: {rx.skip_reasons}")
+    print("  -> a crash-free sample looks like free money; the crash reveals the")
+    print("     short-vol tail and the regime gate/kill-switch fire. THAT is honest.\n")
 
+    # 6. Forward-test PAPER LEDGER — the accumulating out-of-sample scoreboard --
+    # A backtest replays ONE strategy over history; this is the instrument you run
+    # LIVE going forward: at each date freeze the P-forecast + the market Q, then
+    # grade both against what actually happened. Two verdicts, kept separate:
+    #   CALIBRATION — did our physical density beat the market-implied one OOS?
+    #   PROFIT      — did the signal-fired trades make money, net of costs?
+    # On synthetic data it (correctly) refuses to claim edge — that honesty is the
+    # point. Feed it real recorded snapshots and it builds your true track record.
+    ledger = paper_trade_series(price_path_with_crash(900),
+                                synthetic_chain_series(dte=21),
+                                BaselineDensityForecaster(), dte=21, warmup=63)
+    print("Forward-test paper ledger (record -> settle -> proper-score):")
+    print("  " + ledger.report().summary().replace("\n", "\n  ") + "\n")
 
-def _toy_short_vol_pnl(prices):
-    """Deterministic illustrative P&L stream derived from the price path.
+    # 7. Benchmarks — same path, three books ----------------------------------
+    # "always-sell" is mechanically what option-income ETFs (QQQI/JEPQ) do; their
+    # big distributions are harvested premium, not a high win rate. The question
+    # that matters: does signal-gating beat it, and does either beat just holding?
+    from engine.benchmark import compare_books, summary_table
+    books = compare_books(price_path_with_crash(900), synthetic_chain_series(dte=21),
+                          BaselineDensityForecaster(), dte=21, warmup=63)
+    print("Benchmarks (same crash path, cost-inclusive):")
+    print(summary_table(books) + "\n")
 
-    Short-vol harvests small daily premium (theta) but pays up on large moves.
-    We inject periodic deterministic vol spikes so the series shows the true
-    signature: a high hit rate punctuated by painful losing days and real
-    drawdowns — "picking up pennies in front of a steamroller." A backtest
-    that hides this is lying to you.
-    """
-    rets = volforecast.log_returns(prices)
-    pnl = []
-    premium_per_day = 40.0            # theta collected each day
-    gamma_cost = 85_000.0            # penalty scaling for realised variance
-    for i, x in enumerate(rets):
-        move = abs(x)
-        if i % 21 == 0:              # ~monthly vol spike / gap risk
-            move *= 5.0
-        pnl.append(premium_per_day - gamma_cost * move * move)
-    return pnl
+    print("Reminder: swap SyntheticAdapter for real data before trusting any "
+          "number. This fixture only proves the engine + risk discipline work.")
 
 
 if __name__ == "__main__":

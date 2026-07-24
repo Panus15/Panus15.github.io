@@ -1,0 +1,442 @@
+<title>Options Alpha Engine — system overview</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#0b0f17; --panel:#141b28; --panel-2:#1b2434; --line:#26314582;
+    --ink:#d5deec; --mut:#8b98ad; --faint:#5f6b80;
+    --p:#8b8cf0; --q:#5cc6f0;            /* physical vs risk-neutral */
+    --good:#3fbfa0; --warn:#e0a54d; --bad:#e5726b;
+    --grid:#1d2636;
+    --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --maxw:1120px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --ground:#eef1f6; --panel:#ffffff; --panel-2:#f4f7fb; --line:#d5dced;
+      --ink:#1a2230; --mut:#556072; --faint:#8a94a6;
+      --p:#5b5cd6; --q:#1f8fc7; --grid:#e3e9f2;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0b0f17; --panel:#141b28; --panel-2:#1b2434; --line:#26314582;
+    --ink:#d5deec; --mut:#8b98ad; --faint:#5f6b80;
+    --p:#8b8cf0; --q:#5cc6f0; --grid:#1d2636;
+  }
+  :root[data-theme="light"]{
+    --ground:#eef1f6; --panel:#ffffff; --panel-2:#f4f7fb; --line:#d5dced;
+    --ink:#1a2230; --mut:#556072; --faint:#8a94a6;
+    --p:#5b5cd6; --q:#1f8fc7; --grid:#e3e9f2;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;font-size:16px}
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  a{color:var(--q);text-decoration:none}
+  a:hover{text-decoration:underline}
+  h1,h2,h3{text-wrap:balance;font-weight:600;letter-spacing:-.01em;margin:0}
+  .ey{font-family:var(--mono);font-size:12px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--faint)}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+  /* ---- top bar ---- */
+  .bar{position:sticky;top:0;z-index:20;backdrop-filter:blur(10px);
+    background:color-mix(in srgb,var(--ground) 82%,transparent);
+    border-bottom:1px solid var(--line)}
+  .bar .wrap{display:flex;align-items:center;gap:14px;height:56px}
+  .brand{font-family:var(--mono);font-weight:600;letter-spacing:.02em;font-size:14px}
+  .brand b{color:var(--q)}
+  .bar nav{margin-left:auto;display:flex;gap:20px}
+  .bar nav a{color:var(--mut);font-family:var(--mono);font-size:12.5px;letter-spacing:.04em}
+  .bar nav a:hover{color:var(--ink);text-decoration:none}
+  #theme{cursor:pointer;background:none;border:1px solid var(--line);color:var(--mut);
+    border-radius:6px;font-family:var(--mono);font-size:12px;padding:5px 9px;line-height:1}
+  #theme:hover{color:var(--ink);border-color:var(--q)}
+
+  /* ---- hero ---- */
+  .hero{padding:64px 0 40px}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:44px;align-items:center}
+  @media(max-width:840px){.hero-grid{grid-template-columns:1fr;gap:28px}}
+  .hero h1{font-size:clamp(30px,4.4vw,50px);line-height:1.06;margin:14px 0 0}
+  .hero h1 .pp{color:var(--p)} .hero h1 .qq{color:var(--q)}
+  .lede{color:var(--mut);font-size:18px;margin:20px 0 0;max-width:60ch}
+  .chips{display:flex;flex-wrap:wrap;gap:10px;margin-top:26px}
+  .chip{font-family:var(--mono);font-size:12.5px;border:1px solid var(--line);
+    background:var(--panel);border-radius:999px;padding:7px 13px;color:var(--mut)}
+  .chip b{color:var(--ink)}
+  figure.plot{margin:0;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:14px 14px 8px;box-shadow:0 16px 40px -28px #000a}
+  figure.plot canvas{width:100%;height:auto;display:block}
+  figcaption{font-family:var(--mono);font-size:11.5px;color:var(--faint);
+    padding:6px 4px 2px;line-height:1.5}
+  figcaption .lp{color:var(--p)} figcaption .lq{color:var(--q)}
+
+  /* ---- sections ---- */
+  section{padding:44px 0;border-top:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:26px;flex-wrap:wrap}
+  .sec-head h2{font-size:22px}
+  .sec-head p{margin:0;color:var(--mut);font-size:14.5px;max-width:56ch}
+
+  /* ---- pipeline ---- */
+  .pipe{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}
+  @media(max-width:840px){.pipe{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:440px){.pipe{grid-template-columns:1fr}}
+  .stage{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:14px 12px;position:relative;min-height:118px}
+  .stage .n{font-family:var(--mono);font-size:11px;color:var(--faint)}
+  .stage h3{font-size:13.5px;margin:8px 0 6px;letter-spacing:0}
+  .stage p{margin:0;font-size:12px;color:var(--mut);line-height:1.45}
+  .stage .tag{position:absolute;top:12px;right:12px;width:8px;height:8px;border-radius:50%}
+  .t-q{background:var(--q)} .t-p{background:var(--p)} .t-r{background:var(--warn)}
+  .t-x{background:var(--good)}
+
+  /* ---- capability grid ---- */
+  .caps{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:720px){.caps{grid-template-columns:1fr}}
+  .cap{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 18px}
+  .cap h3{font-size:14px;display:flex;align-items:center;gap:9px}
+  .cap h3 .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .cap ul{margin:12px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:9px}
+  .cap li{font-size:13.5px;color:var(--mut);display:flex;gap:9px;line-height:1.45}
+  .cap li code{font-family:var(--mono);font-size:12px;color:var(--ink);
+    background:var(--panel-2);padding:1px 6px;border-radius:5px;white-space:nowrap}
+
+  /* ---- credibility ---- */
+  .cred{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:840px){.cred{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:20px;position:relative;overflow:hidden}
+  .card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .card.ok::before{background:var(--good)} .card.mid::before{background:var(--warn)}
+  .card.no::before{background:var(--bad)}
+  .card .st{font-family:var(--mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+  .card.ok .st{color:var(--good)} .card.mid .st{color:var(--warn)} .card.no .st{color:var(--bad)}
+  .card h3{font-size:16px;margin:10px 0 8px}
+  .card p{margin:0;font-size:13.5px;color:var(--mut)}
+  .card .big{font-family:var(--mono);font-size:30px;color:var(--ink);margin-top:14px;
+    font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+  .card .big small{font-size:13px;color:var(--faint);letter-spacing:0}
+
+  /* ---- data panels ---- */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:840px){.twocol{grid-template-columns:1fr}}
+  .datacard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px}
+  .datacard h3{font-size:15px;margin-bottom:4px}
+  .datacard .sub{color:var(--faint);font-family:var(--mono);font-size:11.5px;margin-bottom:16px}
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:13px;
+    font-variant-numeric:tabular-nums}
+  .scroll{overflow-x:auto}
+  th,td{text-align:right;padding:8px 6px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  thead th{color:var(--faint);font-weight:500;font-size:11px;letter-spacing:.06em;text-transform:uppercase}
+  td.pos{color:var(--good)} td.neg{color:var(--bad)} td.hi{color:var(--ink)}
+  .note{font-size:12.5px;color:var(--mut);margin-top:14px;line-height:1.5}
+  .note b{color:var(--warn);font-weight:600}
+  .verdict{margin-top:14px;padding:12px 14px;border-radius:9px;background:var(--panel-2);
+    border:1px solid var(--line);font-size:13.5px;color:var(--ink)}
+  .verdict .k{font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--bad);display:block;margin-bottom:4px}
+
+  /* ---- run strip ---- */
+  .run{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:720px){.run{grid-template-columns:1fr}}
+  .runc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .runc .ey{margin-bottom:10px;display:block}
+  pre{margin:0;font-family:var(--mono);font-size:12.5px;color:var(--ink);white-space:pre-wrap;
+    line-height:1.7}
+  pre .c{color:var(--faint)}
+  footer{padding:40px 0 60px;border-top:1px solid var(--line);color:var(--faint);
+    font-family:var(--mono);font-size:12px}
+
+  /* Reveal is opt-in via html.anim so content is ALWAYS visible without JS /
+     with reduced motion / in a static capture; JS only adds the fade when safe. */
+  @media(prefers-reduced-motion:no-preference){
+    html.anim .reveal{opacity:0;transform:translateY(10px);transition:opacity .6s ease,transform .6s ease}
+    html.anim .reveal.in{opacity:1;transform:none}
+  }
+</style>
+
+<div class="bar"><div class="wrap">
+  <span class="brand">options-alpha-engine <b>//</b> P vs Q</span>
+  <nav>
+    <a href="#pipeline">pipeline</a>
+    <a href="#caps">capabilities</a>
+    <a href="#credibility">credibility</a>
+    <a href="#real">real data</a>
+  </nav>
+  <button id="theme" aria-label="Toggle colour theme">◐ theme</button>
+</div></div>
+
+<header class="hero"><div class="wrap hero-grid">
+  <div>
+    <span class="ey">Probabilistic options engine · stdlib core · 0 deps</span>
+    <h1>The edge is the gap between the <span class="pp">physical</span> and the <span class="qq">risk-neutral</span> distribution.</h1>
+    <p class="lede">Forecast the <em>whole distribution</em> of the terminal price (physical&nbsp;P), read the option-implied distribution off the chain (risk-neutral&nbsp;Q), and harvest the variance &amp; skew risk premium in the gap — wired end-to-end through de-Americanization, three regime gates, CVaR risk control, a delta-hedged walk-forward backtest, and an out-of-sample forward-test ledger.</p>
+    <div class="chips">
+      <span class="chip"><b>144</b> tests · 21 files</span>
+      <span class="chip"><b>28</b> modules</span>
+      <span class="chip"><b>5,937</b> lines</span>
+      <span class="chip">stdlib core · <b>numpy optional</b></span>
+    </div>
+  </div>
+  <figure class="plot">
+    <canvas id="density" width="560" height="360" role="img"
+      aria-label="Two probability densities of the terminal price. The risk-neutral Q density is wider than the physical P density; the shaded gap between them is the variance risk premium the engine harvests."></canvas>
+    <figcaption>Terminal price S<sub>T</sub> · <span class="lp">■ P physical forecast</span> &nbsp; <span class="lq">■ Q implied by the chain</span> &nbsp; shaded = variance-risk-premium the short-vol book is paid to carry</figcaption>
+  </figure>
+</div></header>
+
+<section id="pipeline"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">01</span>
+    <h2>The pipeline</h2>
+    <p>Every stage is a small, tested module. Data in on the left; an honest, cost-inclusive verdict out on the right.</p>
+  </div>
+  <div class="pipe">
+    <div class="stage reveal"><span class="tag t-q"></span><span class="n">01 · data</span><h3>Ingest</h3><p>Deribit · Tradier · IBKR · Polygon/ORATS · CSV/JSON replay — one <code>OptionChain</code>.</p></div>
+    <div class="stage reveal"><span class="tag t-q"></span><span class="n">02 · de-Am</span><h3>De-Americanize</h3><p>Binomial American IV → European-equivalent prices so US equity/ETF chains are BKM-valid.</p></div>
+    <div class="stage reveal"><span class="tag t-q"></span><span class="n">03 · Q</span><h3>Risk-neutral</h3><p>BKM / VIX-style model-free / Breeden-Litzenberger, SVI-smoothed on sparse chains.</p></div>
+    <div class="stage reveal"><span class="tag t-p"></span><span class="n">04 · P</span><h3>Physical</h3><p>HAR-RV baseline → mixture-of-lognormals density (MDN / neural drop-ins).</p></div>
+    <div class="stage reveal"><span class="tag t-r"></span><span class="n">05 · edge</span><h3>Signal + gates</h3><p>VRP z-score, per-strike scan; price / news / macro regime gates veto short vol.</p></div>
+    <div class="stage reveal"><span class="tag t-r"></span><span class="n">06 · risk</span><h3>Govern</h3><p>Correlation-aware vega cap · CVaR sizing · drawdown kill-switch.</p></div>
+    <div class="stage reveal"><span class="tag t-x"></span><span class="n">07 · proof</span><h3>Prove</h3><p>Delta-hedged backtest · promotion gate · forward-test ledger (record→settle→score).</p></div>
+  </div>
+</div></section>
+
+<section id="caps"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">02</span>
+    <h2>What it does</h2>
+    <p>It selects vol structure — is implied variance rich or cheap? — never direction. There is no up/down call anywhere in it, by design.</p>
+  </div>
+  <div class="caps">
+    <div class="cap reveal"><h3><span class="dot" style="background:var(--q)"></span>Read the market (Q)</h3>
+      <ul>
+        <li><code>rnd</code> Model-free / BKM variance, skew &amp; kurtosis — forward from put-call parity, spot-anchored.</li>
+        <li><code>surface</code> SVI fit densifies sparse / truncated chains before extraction.</li>
+        <li><code>american</code> De-Americanization unlocks QQQ / SPY / single-name chains.</li>
+      </ul></div>
+    <div class="cap reveal"><h3><span class="dot" style="background:var(--p)"></span>Forecast (P)</h3>
+      <ul>
+        <li><code>baseline</code> HAR-RV vol → calm+crash mixture with data-driven skew.</li>
+        <li><code>mdn</code> / <code>neural</code> Trainable density heads — drop-in, same output type.</li>
+        <li><code>objective</code> NLL / CRPS / pinball + a decomposed left-tail score.</li>
+      </ul></div>
+    <div class="cap reveal"><h3><span class="dot" style="background:var(--warn)"></span>Decide &amp; gate</h3>
+      <ul>
+        <li><code>edge</code> Trades the VRP <em>z-score</em>, not its level — the premium alone is carry, not alpha.</li>
+        <li><code>strike_scan</code> Per-contract model vs market P(ITM) + EV, BUY/WRITE/FAIR.</li>
+        <li><code>news</code> + <code>macro</code> Forward-looking vetoes: sentiment, curve, credit, VIX-term, tightening.</li>
+      </ul></div>
+    <div class="cap reveal"><h3><span class="dot" style="background:var(--good)"></span>Control &amp; prove</h3>
+      <ul>
+        <li><code>portfolio</code> Correlation-aware short-vega cap, CVaR sizing, kill-switch.</li>
+        <li><code>benchmark</code> Signal vs always-sell (income-ETF) vs buy-and-hold, same path.</li>
+        <li><code>paper_trade</code> Live-forward ledger: the only thing that can prove real edge.</li>
+      </ul></div>
+  </div>
+</div></section>
+
+<section id="credibility"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">03</span>
+    <h2>Credibility, stated honestly</h2>
+    <p>The math is proven and the machinery is stress-tested. What has <em>not</em> happened is the only thing that certifies alpha: touching a live option market.</p>
+  </div>
+  <div class="cred">
+    <div class="card ok reveal">
+      <span class="st">● Proven</span>
+      <h3>The mathematics</h3>
+      <p>Pricing, Greeks and the distribution machinery are pinned by oracle tests (risk-neutral lognormal reprices Black-Scholes exactly). Four adversarial multi-agent reviews found real defects — all fixed.</p>
+      <div class="big">144<small> / 21 tests pass</small></div>
+    </div>
+    <div class="card mid reveal">
+      <span class="st">● Working</span>
+      <h3>On real underlying data</h3>
+      <p>Run on real GOOG closes through the 2008 crash. First contact surfaced a HAR-RV collapse on an earnings-gap context — found and fixed with a regression test built from the real bars.</p>
+      <div class="big">2004–08<small> · real path, crash-tested</small></div>
+    </div>
+    <div class="card no reveal">
+      <span class="st">● Unproven</span>
+      <h3>On a live option market</h3>
+      <p>The engine has never priced a real option chain. This sandbox blocks market-data egress, so the alpha claim stays at zero until it is run live — one keyless command on your own machine.</p>
+      <div class="big">0<small> · real chains touched</small></div>
+    </div>
+  </div>
+</div></section>
+
+<section id="real"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">04</span>
+    <h2>First contact with real data</h2>
+    <p>GOOG daily closes, Aug 2004 – Oct 2008 (1,047 sessions, worst day −12.3%, vol regime ~32% → ~80%). Underlying is real; the option market here is modelled — this tests the machinery on real dynamics, not the 2008 option tape.</p>
+  </div>
+  <div class="twocol">
+    <div class="datacard reveal">
+      <h3>Promotion gate — does the neural model earn its place?</h3>
+      <div class="sub">out-of-sample, 241 walk-forward windows · lower = better</div>
+      <div class="scroll"><table>
+        <thead><tr><th>model</th><th>NLL</th><th>left-tail</th><th>ships?</th></tr></thead>
+        <tbody>
+          <tr><td>HAR baseline</td><td class="hi">8.24</td><td class="hi pos">9.29</td><td class="pos">✓ ships</td></tr>
+          <tr><td>trained MDN</td><td class="pos">6.36</td><td class="neg">16.72</td><td class="neg">✗ rejected</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">The MDN wins aggregate NLL but <b>loses the crash tail</b> — it never saw a 2008. The gate requires winning <em>both</em>, so it correctly refuses to ship a model that would blow up in the regime that matters.</p>
+    </div>
+    <div class="datacard reveal">
+      <h3>Delta-hedged short-vol, on the real path</h3>
+      <div class="sub">walk-forward · governor + regime gate live · cost-inclusive</div>
+      <div class="scroll"><table>
+        <thead><tr><th>book</th><th>Sharpe</th><th>Max&nbsp;DD</th><th>skips</th></tr></thead>
+        <tbody>
+          <tr><td>signal-gated</td><td class="hi pos">0.88</td><td class="pos">−4.4%</td><td>regime 8 · not-rich 18</td></tr>
+          <tr><td>always-sell (income-ETF)</td><td>0.61</td><td class="neg">−9.4%</td><td>—</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">Gating on the P-vs-Q signal beat selling every period — higher Sharpe, half the drawdown, trading 43% of the time. The signal <em>adds</em> on real dynamics.</p>
+    </div>
+  </div>
+  <div class="verdict reveal">
+    <span class="k">Forward-test ledger · synthetic control</span>
+    On modelled chains the ledger <b style="color:var(--ink)">refuses to claim edge</b> — physical P does not beat the market's Q density out-of-sample (wins 53% of dates, 69% on the left tail). That refusal is the point: the scoreboard flatters nothing. Real chains are what turn it into a verdict.
+  </div>
+</div></section>
+
+<section id="bench"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">05</span>
+    <h2>Measured against what you could just buy</h2>
+    <p>A covered-call income fund (QQQI, JEPQ) mechanically <em>is</em> the always-sell book — its big distribution is harvested premium, not a win rate. So the honest bar is: beat that, and beat holding.</p>
+  </div>
+  <div class="scroll"><table style="max-width:760px">
+    <thead><tr><th>book (crash fixture, cost-inclusive)</th><th>Sharpe</th><th>Max&nbsp;DD</th><th>trades</th></tr></thead>
+    <tbody>
+      <tr><td>signal-gated</td><td>−0.04</td><td class="pos hi">−4.5%</td><td>23</td></tr>
+      <tr><td>always-sell · income-ETF mechanic</td><td>−0.01</td><td>−4.5%</td><td>36</td></tr>
+      <tr><td>buy-and-hold underlying</td><td class="pos">+0.50</td><td class="neg">−27.1%</td><td>1</td></tr>
+    </tbody>
+  </table></div>
+  <p class="note">On a bull-with-a-crash path buy-and-hold wins total return — and pays for it with a <b>−27% drawdown</b> the overlays never take. The overlays earn their keep on risk, not return; where they don't, the table says so.</p>
+</div></section>
+
+<section id="run"><div class="wrap">
+  <div class="sec-head">
+    <span class="ey">06</span>
+    <h2>Run it</h2>
+    <p>Pure-Python core, zero installs. The whole loop on synthetic data, then the same pipeline pointed at a real, keyless chain.</p>
+  </div>
+  <div class="run">
+    <div class="runc reveal"><span class="ey">Right now · no network</span>
+      <pre><span class="c"># full loop, no deps</span>
+python3 demo.py
+
+<span class="c"># 144 tests</span>
+for t in tests/test_*.py; do
+  python3 "$t"; done</pre></div>
+    <div class="runc reveal"><span class="ey">Real options · keyless</span>
+      <pre>python3 -m tools.run_live \
+  deribit --currency BTC \
+  --dte 30 --dump btc.json
+
+<span class="c"># US equity/ETF (American)</span>
+... --american</pre></div>
+    <div class="runc reveal"><span class="ey">Build a track record</span>
+      <pre><span class="c"># once per trading day</span>
+python3 -m tools.paper_trade \
+  record --source deribit \
+  --currency BTC --ledger btc.jsonl
+
+python3 -m tools.paper_trade \
+  report --ledger btc.jsonl</pre></div>
+  </div>
+</div></section>
+
+<footer><div class="wrap">
+  options-alpha-engine · distributional P-vs-Q variance-premium engine · stdlib core, numpy optional<br>
+  Proven in the math and on real underlying data · unproven on a live option market until you run it.
+</div></footer>
+
+<script>
+(function(){
+  "use strict";
+  var root=document.documentElement;
+  function apply(t){root.setAttribute("data-theme",t);try{localStorage.setItem("oae-theme",t);}catch(e){}draw();}
+  var saved;try{saved=localStorage.getItem("oae-theme");}catch(e){}
+  if(saved)root.setAttribute("data-theme",saved);
+  document.getElementById("theme").addEventListener("click",function(){
+    var cur=root.getAttribute("data-theme");
+    if(!cur)cur=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+    apply(cur==="dark"?"light":"dark");
+  });
+
+  // ---- P vs Q density hero (canvas) ----
+  var cv=document.getElementById("density"), ctx=cv.getContext("2d");
+  function tok(n){return getComputedStyle(root).getPropertyValue(n).trim();}
+  function lognpdf(x,mu,s){if(x<=0)return 0;var z=(Math.log(x)-mu)/s;
+    return Math.exp(-0.5*z*z)/(x*s*Math.sqrt(2*Math.PI));}
+  // physical P: 20% vol, slight crash skew (small down-shifted stress lump)
+  function pP(x){var muc=Math.log(100)-0.5*0.20*0.20*0.5, s=0.20*Math.sqrt(0.5);
+    return 0.82*lognpdf(x,muc,s)+0.18*lognpdf(x,muc-0.16,s*1.9);}
+  // risk-neutral Q: richer implied vol (24%) -> wider -> the premium
+  function pQ(x){var mu=Math.log(100)-0.5*0.24*0.24*0.5, s=0.24*Math.sqrt(0.5);
+    return lognpdf(x,mu,s);}
+  var prog=0, raf=null;
+  function draw(){
+    var dpr=Math.min(devicePixelRatio||1,2), cssW=cv.clientWidth||560, cssH=360;
+    cv.width=cssW*dpr; cv.height=cssH*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+    var W=cssW,H=cssH,padL=16,padR=16,padB=26,padT=14;
+    ctx.clearRect(0,0,W,H);
+    var x0=55,x1=170,N=240,xs=[],yp=[],yq=[],max=0;
+    for(var i=0;i<=N;i++){var x=x0+(x1-x0)*i/N;xs.push(x);
+      var a=pP(x),b=pQ(x);yp.push(a);yq.push(b);if(a>max)max=a;if(b>max)max=b;}
+    max*=1.12;
+    function X(x){return padL+(x-x0)/(x1-x0)*(W-padL-padR);}
+    function Y(y){return H-padB-(y/max)*(H-padB-padT);}
+    // grid
+    ctx.strokeStyle=tok("--grid");ctx.lineWidth=1;ctx.font="10px "+tok("--mono").split(",")[0];
+    ctx.fillStyle=tok("--faint");ctx.textAlign="center";
+    for(var g=60;g<=160;g+=20){var gx=X(g);ctx.beginPath();ctx.moveTo(gx,padT);ctx.lineTo(gx,H-padB);ctx.stroke();
+      ctx.fillText(g,gx,H-padB+15);}
+    var n=Math.floor(N*Math.min(prog,1));
+    // shaded variance-risk-premium gap: the band between the Q and P curves
+    ctx.beginPath();
+    for(var k=0;k<=n;k++){var qx=X(xs[k]),qy=Y(yq[k]);if(k===0)ctx.moveTo(qx,qy);else ctx.lineTo(qx,qy);}
+    for(var m=n;m>=0;m--)ctx.lineTo(X(xs[m]),Y(yp[m]));
+    ctx.closePath();
+    ctx.fillStyle=hexA(tok("--q"),0.13);ctx.fill();
+    // P curve
+    line(yp,n,tok("--p"),X,Y,xs);
+    // Q curve
+    line(yq,n,tok("--q"),X,Y,xs);
+    // spot marker
+    ctx.strokeStyle=tok("--faint");ctx.setLineDash([3,4]);ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(X(100),padT);ctx.lineTo(X(100),H-padB);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle=tok("--faint");ctx.textAlign="center";ctx.fillText("spot",X(100),padT+2);
+    if(prog<1){prog+=0.03;raf=requestAnimationFrame(draw);}
+  }
+  function line(arr,n,color,X,Y,xs){ctx.beginPath();ctx.lineWidth=2.2;ctx.strokeStyle=color;
+    ctx.lineJoin="round";for(var i=0;i<=n;i++){var px=X(xs[i]),py=Y(arr[i]);
+      if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py);}ctx.stroke();}
+  function hexA(h,a){h=h.replace("#","");if(h.length===3)h=h.split("").map(function(c){return c+c;}).join("");
+    var r=parseInt(h.substr(0,2),16),g=parseInt(h.substr(2,2),16),b=parseInt(h.substr(4,2),16);
+    return "rgba("+r+","+g+","+b+","+a+")";}
+  function start(){prog=0;if(raf)cancelAnimationFrame(raf);
+    if(matchMedia("(prefers-reduced-motion: reduce)").matches){prog=1;}draw();}
+  addEventListener("resize",function(){prog=1;draw();});
+  start();
+
+  // reveal on scroll — additive: content is visible by default; this only adds a
+  // gentle fade when motion is allowed, with a failsafe so nothing can stay hidden.
+  var reveals=document.querySelectorAll(".reveal");
+  function revealAll(){reveals.forEach(function(el){el.classList.add("in");});}
+  if("IntersectionObserver" in window && !matchMedia("(prefers-reduced-motion: reduce)").matches){
+    root.classList.add("anim");
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){
+      if(e.isIntersecting){e.target.classList.add("in");io.unobserve(e.target);}});},{threshold:.12});
+    reveals.forEach(function(el){io.observe(el);});
+    setTimeout(revealAll,1400);   // failsafe: never leave content hidden
+  } else {revealAll();}
+})();
+</script>

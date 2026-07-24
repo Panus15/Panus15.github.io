@@ -88,6 +88,25 @@ def _ols(X: list[list[float]], y: list[float]) -> list[float]:
     return [xtx[a][n_feat] / xtx[a][a] if abs(xtx[a][a]) > 1e-12 else 0.0 for a in range(n_feat)]
 
 
+def realized_skew(prices: Sequence[float], window: int = 63) -> float:
+    """Skewness of recent daily log-returns (physical, backward-looking).
+
+    Equities print persistent NEGATIVE return skew (crashes are sharper than
+    rallies). Used to make the baseline density's shape data-driven instead of a
+    hardcoded constant — see models/baseline.py. Returns 0.0 if under-sampled.
+    """
+    rets = log_returns(prices)[-window:]
+    n = len(rets)
+    if n < 10:
+        return 0.0
+    mean = sum(rets) / n
+    var = sum((x - mean) ** 2 for x in rets) / n
+    if var <= 0:
+        return 0.0
+    third = sum((x - mean) ** 3 for x in rets) / n
+    return third / var ** 1.5
+
+
 def har_rv_forecast(prices: Sequence[float]) -> float:
     """Heterogeneous Auto-Regressive Realised Volatility (Corsi, 2009) forecast.
 
@@ -113,5 +132,15 @@ def har_rv_forecast(prices: Sequence[float]) -> float:
 
     last = [1.0, rv_d[-1], rv_w[-1], rv_m[-1]]
     var_hat = sum(b * f for b, f in zip(beta, last))
-    var_hat = max(var_hat, 1e-8)  # guard against negative fitted variance
+
+    # Sanity bracket — learned from REAL data (GOOG July-2008 earnings gap).
+    # On short samples containing one huge outlier day, the tiny-sample OLS can
+    # extrapolate a NEGATIVE (or absurd) next-day variance; the old guard
+    # (max(var_hat, 1e-8)) then emitted a ~0.01% vol forecast on a 48%-vol
+    # context, collapsing every downstream density to a spike. A negative or
+    # out-of-bracket prediction means the regression misfit -> fall back to the
+    # robust EWMA anchor instead of trusting the extrapolation.
+    anchor = ewma_vol(prices) ** 2
+    if not math.isfinite(var_hat) or var_hat < 0.1 * anchor or var_hat > 10.0 * anchor:
+        return math.sqrt(anchor)
     return math.sqrt(var_hat)

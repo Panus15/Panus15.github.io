@@ -46,6 +46,12 @@ class OptionChain:
     r: float
     q: float
     quotes: list[OptionQuote]
+    asof: str | None = None   # ISO snapshot date of this chain (look-ahead contract)
+    # LOOK-AHEAD CONTRACT: any price history fed to a P-forecast alongside this
+    # chain MUST be truncated to <= asof. The physical model and the Q-snapshot
+    # have to be aligned to the same instant, or the future leaks into the edge.
+    # Enforced by convention in Phase-1 (synthetic data is a single instant);
+    # becomes a hard assertion once real timestamped data lands.
 
 
 class MarketDataAdapter(Protocol):
