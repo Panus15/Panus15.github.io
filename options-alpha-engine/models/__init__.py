@@ -10,6 +10,7 @@ option-implied (risk-neutral) distribution. The gap is the tradeable edge.
     rnd       risk-neutral moments recovered from the option chain (BKM / model-free)
     edge      compares physical P forecast vs risk-neutral Q -> distributional signals
     strike_scan  per-contract board: model vs market P(ITM) + EV -> BUY/WRITE/FAIR
+    spreads   defined-risk structures (iron condor / put credit spread) — capped tail
     surface   SVI IV-surface fit -> densify sparse chains for robust Q extraction
     sentiment Phase-2 NLP: news -> sentiment feature (lexicon core, FinBERT optional)
     news_signal  forward-looking vol-regime gate from sentiment (feeds edge.stressed)
@@ -20,7 +21,8 @@ head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
 from . import (baseline, density, edge, macro, mdn, news_signal, objective,
-               rnd, sentiment, strike_scan, surface)
+               rnd, sentiment, spreads, strike_scan, surface)
 
 __all__ = ["density", "baseline", "mdn", "rnd", "edge", "objective",
-           "sentiment", "news_signal", "surface", "strike_scan", "macro"]
+           "sentiment", "news_signal", "surface", "strike_scan", "macro",
+           "spreads"]

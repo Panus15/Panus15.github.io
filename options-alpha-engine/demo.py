@@ -89,6 +89,18 @@ def main() -> None:
     print("  (on an efficiently-priced chain almost everything is FAIR — a BUY/\n"
           "   WRITE only appears when fair-vs-market survives spread+commission)\n")
 
+    # 3b-2b. DEFINED-RISK SPREADS — harvest the premium with a CAPPED tail --------
+    # VRP is compensation for a crash; selling NAKED vol takes the un-hedgeable
+    # tail. Defined-risk structures cap the loss with long wings — the structural
+    # answer to the tail problem. Each is scored EV = credit - E_P[loss] - cost.
+    from models.spreads import scan_spreads
+    _dtes = sorted({q.expiry_days for q in chain.quotes})
+    _sdte = min(_dtes, key=lambda d: abs(d - 30))          # ~monthly expiry
+    for s in scan_spreads(chain, forecaster, prices, dte=_sdte):
+        print("  " + s.line())
+    print("  (EV>0 = the market pays more credit than the P-model's expected loss;\n"
+          "   max loss is DEFINED — the crash can't blow the position up)\n")
+
     # 3b-3. DE-AMERICANIZATION — unlock US single-name / ETF (American) options ---
     # BKM/VIX/BL replication assumes EUROPEAN prices; US equity & ETF options
     # (QQQ, SPY, the holdings inside income funds like QQQI) are American and

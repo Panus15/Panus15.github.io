@@ -107,7 +107,15 @@ honest, cost-inclusive verdict leaves on the right.
 - **`models/strike_scan.py`** — zooms from "sell this expiry's vol" to "*which
   contract*": for every call/put, the model's P(finish ITM) vs the market-implied
   `N(d2)`, and fair value vs bid/ask after costs → BUY / WRITE / FAIR. Still
-  direction-neutral: edges come from vol level and distribution shape.
+  direction-neutral: edges come from vol level and distribution shape. Each signal
+  carries `break_even_slip_frac` — how many spreads of slippage the edge survives.
+- **`models/spreads.py`** — the *structural* answer to the tail problem. VRP is
+  paid because you lose in a crash; rather than forecast the tail better, stop
+  selling naked vol and sell DEFINED-RISK structures (iron condor, put credit
+  spread) whose max loss is capped by long wings. Each is scored `EV = credit −
+  E_P[loss] − cost` against the physical density, with break-evens and P(profit).
+  You give up some premium to buy back the un-hedgeable tail — the honest way to
+  actually harvest the premium the whole engine is built around.
 - **Gates** — three forward-looking vetoes that all OR into one `stressed` flag
   passed to `edge.compare`. Never directional; they only ever *stop* selling vol:
   - `edge.regime_stressed` — realised short-vol accelerating (backward-looking).
