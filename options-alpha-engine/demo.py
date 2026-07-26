@@ -179,6 +179,17 @@ def main() -> None:
     print(f"  trained MDN  {nll_mdn:>9.4f} {tail_mdn:>11.4f}")
     print(f"  -> ships: {winner}  (must win BOTH aggregate NLL and the tall tail)\n")
 
+    # 3e. CALIBRATION — is P RIGHT in absolute terms, not just better than a rival?
+    # NLL/CRPS only rank models against each other; a winner can still be
+    # systematically too narrow. Since the edge IS the P-vs-Q gap, a P vol biased
+    # low inflates every RICH verdict by exactly that bias. PIT says so, and hands
+    # back the vol scale that would fix it.
+    from models.calibration import calibration_report
+    cal = calibration_report(BaselineDensityForecaster(), oos)
+    print(cal.summary())
+    print("  (width is judged CENTERED because the forecast is direction-neutral by\n"
+          "   design — a trending sample is expected to tilt the raw PIT)\n")
+
     # 4. Position sizing -----------------------------------------------------
     if ideas:
         best = ideas[0]

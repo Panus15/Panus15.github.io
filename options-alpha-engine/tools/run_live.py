@@ -148,6 +148,27 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     elif run_backtest:
         print(f"Backtest skipped: need >= {63 + dte + 5} price points, have {len(prices)}")
 
+    # 3b. Is the P density even CALIBRATED on this underlying? ---------------
+    # The VRP is P-vs-Q, so a P vol biased low inflates every RICH verdict by
+    # exactly that bias. PIT answers it in absolute terms, and hands back the vol
+    # scale that would fix it. Width is judged on a CENTERED PIT because this
+    # forecast is direction-neutral by design.
+    if len(prices) >= 150:
+        from models import calibration
+        windows = objective_windows(prices, dte)
+        if len(windows) >= 40:
+            cal = calibration.calibration_report(forecaster, windows)
+            report["calibration"] = {"vol_scale": cal.vol_scale,
+                                     "verdict": cal.verdict.split(" — ")[0],
+                                     "coverage_90": cal.centered_coverage_90}
+            print("\n" + cal.summary())
+            if cal.vol_scale > 1.15:
+                print(f"  !! the P vol looks ~{(cal.vol_scale - 1) * 100:.0f}% too LOW here, so the "
+                      f"VRP above is OVERSTATED — treat RICH verdicts with suspicion")
+            elif cal.vol_scale < 0.87:
+                print(f"  !! the P vol looks ~{(1 - cal.vol_scale) * 100:.0f}% too HIGH here, so the "
+                      f"VRP above is UNDERSTATED")
+
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
@@ -155,6 +176,14 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     print("\nReminder: a single snapshot is a spot check. A real edge claim needs an\n"
           "honest OUT-OF-SAMPLE, cost-inclusive equity curve over many dates + a crash.")
     return report
+
+
+def objective_windows(prices: list, dte: int, *, context: int = 63):
+    """Leak-free (context, horizon, outcome) windows at this horizon, capped so a
+    long history does not make the calibration scan crawl."""
+    from models import objective
+    w = objective.build_windows(prices, context=context, horizons=(dte,))
+    return w[::max(1, len(w) // 250)]
 
 
 def _promotion_gate(prices: list) -> dict:
