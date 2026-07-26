@@ -189,6 +189,53 @@ def suggest_vol_scale(forecaster, windows, *, r: float = 0.0, q: float = 0.0,
     return 0.5 * (a + b)
 
 
+@dataclass
+class CalibratedForecaster:
+    """A forecaster with its vol bias corrected by a calibration scale.
+
+    Turns the diagnostic into a correction: `scan_distribution` against a
+    CalibratedForecaster reports a VRP net of the model's own measured vol bias,
+    instead of one inflated by it.
+
+    LOOK-AHEAD WARNING. The scale must be estimated on data STRICTLY BEFORE the
+    forecasts it corrects. Fitting the scale on a sample and then "correcting"
+    forecasts inside that same sample is in-sample fitting — it will make any
+    backtest look better and mean nothing. Use ``walk_forward_scale`` (or fit on a
+    training split and apply to the held-out tail); the tests pin this.
+    """
+    base: object
+    vol_scale: float = 1.0
+
+    def forecast(self, prices, T, *, r=0.0, q=0.0, spot=None, vol=None):
+        dist = self.base.forecast(prices, T, r=r, q=q, spot=spot, vol=vol)
+        if abs(self.vol_scale - 1.0) < 1e-12:
+            return dist
+        s = spot if spot is not None else prices[-1]
+        return self.base.forecast(prices, T, r=r, q=q, spot=spot,
+                                  vol=dist.log_return_vol(s, T) * self.vol_scale)
+
+
+def walk_forward_scale(forecaster, prices, *, dte: int, context: int = 63,
+                       train_frac: float = 0.7, r: float = 0.0, q: float = 0.0,
+                       max_windows: int = 250, clamp=(0.5, 2.0)) -> float:
+    """Calibration scale fitted on the FIRST ``train_frac`` of history only.
+
+    Returns 1.0 (no correction) when there is not enough training history to
+    estimate one — never a scale fitted on the data it would be applied to.
+    """
+    from . import objective
+    cut = int(len(prices) * train_frac)
+    train = prices[:cut]
+    if len(train) < context + dte + 20:
+        return 1.0
+    w = objective.build_windows(train, context=context, horizons=(dte,))
+    if len(w) < 30:
+        return 1.0
+    w = w[::max(1, len(w) // max_windows)]
+    s = suggest_vol_scale(forecaster, w, r=r, q=q)
+    return min(clamp[1], max(clamp[0], s))
+
+
 def calibration_report(forecaster, windows, *, r: float = 0.0, q: float = 0.0,
                        bins: int = 10, tol_mean: float = 0.05,
                        tol_sd: float = 0.02, with_scale: bool = True) -> CalibrationReport:

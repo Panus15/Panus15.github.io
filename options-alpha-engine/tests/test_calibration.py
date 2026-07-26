@@ -103,6 +103,57 @@ def test_ks_and_histogram_primitives():
         pass
 
 
+def test_calibrated_forecaster_applies_the_scale_and_fixes_the_pit():
+    from models.calibration import CalibratedForecaster
+    w = _windows(n=600, seed=7)
+    biased = FixedVolForecaster(TRUE_VOL / 1.6)               # 1.6x too narrow
+    fixed = CalibratedForecaster(biased, vol_scale=1.6)
+
+    # the wrapper genuinely widens the emitted density
+    d0 = biased.forecast([SPOT] * 5, T, spot=SPOT)
+    d1 = fixed.forecast([SPOT] * 5, T, spot=SPOT)
+    assert abs(d1.log_return_vol(SPOT, T) / d0.log_return_vol(SPOT, T) - 1.6) < 1e-6
+
+    # and the correction actually calibrates it
+    before = calibration_report(biased, w, with_scale=False)
+    after = calibration_report(fixed, w, with_scale=False)
+    assert before.verdict.startswith("TOO NARROW")
+    assert after.verdict.startswith("CALIBRATED")
+    assert abs(after.centered_sd - UNIFORM_SD) < abs(before.centered_sd - UNIFORM_SD)
+
+    # scale 1.0 is a strict no-op
+    passthrough = CalibratedForecaster(biased, vol_scale=1.0)
+    assert (passthrough.forecast([SPOT] * 5, T, spot=SPOT).log_return_vol(SPOT, T)
+            == d0.log_return_vol(SPOT, T))
+
+
+def test_walk_forward_scale_never_peeks_and_degrades_safely():
+    from models.calibration import walk_forward_scale
+    rng = random.Random(11)
+    prices = [100.0]
+    for _ in range(600):
+        prices.append(prices[-1] * math.exp(rng.gauss(0.0, TRUE_VOL / math.sqrt(252))))
+
+    seen = []
+
+    class Spy(FixedVolForecaster):
+        def forecast(self, p, T, *, r=0.0, q=0.0, spot=None, vol=None):
+            seen.append(len(p))
+            return super().forecast(p, T, r=r, q=q, spot=spot, vol=vol)
+
+    cut = int(len(prices) * 0.7)
+    walk_forward_scale(Spy(TRUE_VOL / 1.5), prices, dte=21, train_frac=0.7)
+    assert seen, "the scale search must actually run"
+    # every context came from the TRAINING split; nothing after the cut was touched
+    assert max(seen) <= cut
+
+    # too little history -> no correction rather than a fitted-on-itself one
+    assert walk_forward_scale(FixedVolForecaster(TRUE_VOL), [100.0] * 50, dte=21) == 1.0
+    # and the estimate is clamped to a sane band
+    s = walk_forward_scale(FixedVolForecaster(TRUE_VOL / 1.5), prices, dte=21)
+    assert 0.5 <= s <= 2.0
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

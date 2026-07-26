@@ -169,6 +169,39 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
                 print(f"  !! the P vol looks ~{(1 - cal.vol_scale) * 100:.0f}% too HIGH here, so the "
                       f"VRP above is UNDERSTATED")
 
+            # Re-scan with the bias corrected, using a scale fitted ONLY on the
+            # earlier part of the history (walk-forward — a scale fitted on the
+            # same data it corrects is in-sample fitting and proves nothing).
+            wf = calibration.walk_forward_scale(forecaster, prices, dte=dte)
+            report["wf_vol_scale"] = wf
+            if abs(wf - 1.0) > 0.05:
+                fixed = calibration.CalibratedForecaster(forecaster, vol_scale=wf)
+                adj = edge.scan_distribution(chain, fixed, prices, actionable_only=False)
+                report["signals_calibrated"] = [
+                    {"dte": s.expiry_days, "p_vol": s.p_vol, "q_vol": s.q_vol,
+                     "vrp": s.variance_risk_premium, "verdict": s.verdict} for s in adj]
+                print(f"\nSENSITIVITY: P-vs-Q re-scanned with a walk-forward vol scale "
+                      f"x{wf:.2f} (fitted on the earlier history only):")
+                print(f"  {'dte':>5} {'P_vol':>7} {'Q_vol':>7} {'VRP':>9} {'verdict':>9}")
+                for s in adj[:8]:
+                    print(f"  {s.expiry_days:>5} {s.p_vol:>7.1%} {s.q_vol:>7.1%} "
+                          f"{s.variance_risk_premium:>+9.4f} {s.verdict:>9}")
+                print("  -> read this as a STRESS TEST of the signal, not a better "
+                      "estimate: the scale\n     conflates genuine model bias with a "
+                      "regime shift between the fitting window\n     and now, so on a "
+                      "regime-changing sample it OVERCORRECTS. What matters is\n"
+                      "     whether a verdict SURVIVES it — one that flips was never robust.")
+                # Pair by EXPIRY, not position: both scans are sorted by |VRP|, so
+                # zipping them compares different contracts.
+                raw_by_dte = {s.expiry_days: s.verdict for s in signals}
+                flips = sum(1 for s in adj
+                            if raw_by_dte.get(s.expiry_days, s.verdict) != s.verdict)
+                print(f"  {flips}/{len(adj)} verdicts flip under this correction.")
+                if wf >= 1.9 or wf <= 0.55:
+                    print("  !! the scale hit its clamp — the estimate is extreme "
+                          "(usually a regime change,\n     not a model bias). Treat both "
+                          "scans as wide error bars, not a decision.")
+
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
