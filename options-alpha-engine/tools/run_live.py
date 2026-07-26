@@ -37,6 +37,16 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     European-equivalent prices) so the Q-extractors, which assume European
     options, get an unbiased chain. REQUIRED for US single-name / ETF options
     (QQQ, SPY, ...); a no-op-ish pass for already-European chains (SPX/XSP, BTC)."""
+    # Vendors list their OWN expiries; a requested --dte 30 usually does not exist
+    # (Deribit quotes 5/12/19/33/61/152/243/334, say). Snap to the nearest listed
+    # expiry instead of silently failing Q extraction on an empty slice.
+    available = sorted({q.expiry_days for q in chain.quotes})
+    if available and dte not in available:
+        snapped = min(available, key=lambda d: abs(d - dte))
+        print(f"[expiry] no {dte}d expiry listed; snapping to the nearest: {snapped}d "
+              f"(available: {', '.join(str(d) for d in available[:10])}"
+              f"{'...' if len(available) > 10 else ''})")
+        dte = snapped
     T = dte / 365.0
     if american:
         from engine.american import de_americanize_chain
@@ -90,7 +100,8 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
 
     # 3. Delta-hedged walk-forward backtest --------------------------------
     if run_backtest and len(prices) >= 63 + dte + 5:
-        res = hedged_backtest.run_hedged_backtest(prices, dte=dte)
+        res = hedged_backtest.run_hedged_backtest(
+            prices, dte=dte, contract_mult=int(contract_mult))
         report["backtest"] = {"sharpe": res.metrics.sharpe,
                               "max_drawdown": res.metrics.max_drawdown,
                               "total_return": res.metrics.total_return,

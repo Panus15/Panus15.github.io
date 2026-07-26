@@ -132,6 +132,7 @@ def run_hedged_backtest(
     vega_window: int = 21,
     iv_deadband: float = 0.8,
     iv_shock_cap: float = 3.0,
+    contract_mult: int = MULT,
 ) -> HedgedBacktestResult:
     """Walk-forward delta-hedged short-straddle backtest over ``prices``.
 
@@ -208,7 +209,7 @@ def run_hedged_backtest(
         template = portfolio.Position(
             underlying="U", strike=K, expiry_days=dte, kind="put",
             quantity=-1, entry_price=pricing.price(spot, K, dte / 252, r, q, iv_entry, "put"),
-            spot=spot, r=r, q=q, vol=iv_entry,
+            spot=spot, r=r, q=q, vol=iv_entry, multiplier=contract_mult,
         )
         size = portfolio.size_by_cvar(
             equity, template,
@@ -223,7 +224,7 @@ def run_hedged_backtest(
         short_straddle_leg = portfolio.Position(
             underlying="U", strike=K, expiry_days=dte, kind="put",
             quantity=-size, entry_price=template.entry_price,
-            spot=spot, r=r, q=q, vol=iv_entry,
+            spot=spot, r=r, q=q, vol=iv_entry, multiplier=contract_mult,
         )
         ok, reason = gov.can_add(short_straddle_leg, portfolio.Portfolio(), equity, drawdown)
         if not ok:
@@ -233,10 +234,10 @@ def run_hedged_backtest(
 
         # --- simulate the delta-hedged short straddle day by day ----------- #
         v_prev, d_prev = _straddle(spot, K, dte / 252, r, q, iv_entry)
-        hedge_prev = size * MULT * d_prev            # shares to hold (neutralise)
+        hedge_prev = size * contract_mult * d_prev            # shares to hold (neutralise)
         # entry cost: cross half the spread on both legs.
         entry_spread = spread_frac * v_prev + 0.04
-        trade_cost = size * MULT * 0.5 * entry_spread
+        trade_cost = size * contract_mult * 0.5 * entry_spread
         pnl_by_day[i0] -= trade_cost
         trade_total = -trade_cost
 
@@ -252,9 +253,9 @@ def run_hedged_backtest(
             else:
                 iv_t = iv_entry
             v_now, d_now = _straddle(S, K, rem, r, q, iv_t)
-            option_mtm = size * MULT * (v_prev - v_now)      # short: gain if value falls
+            option_mtm = size * contract_mult * (v_prev - v_now)      # short: gain if value falls
             shares_pnl = hedge_prev * (S - S_prev)
-            hedge_now = size * MULT * d_now
+            hedge_now = size * contract_mult * d_now
             rebal_cost = abs(hedge_now - hedge_prev) * S * hedge_bps
             day_pnl = option_mtm + shares_pnl - rebal_cost
             pnl_by_day[s] += day_pnl

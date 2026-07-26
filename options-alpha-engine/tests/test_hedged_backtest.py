@@ -93,6 +93,24 @@ def test_vega_loss_negligible_on_calm_path():
     assert abs(on.metrics.sharpe - off.metrics.sharpe) < 0.05
 
 
+def test_contract_mult_lets_a_crypto_level_path_trade():
+    # Found on the first real Deribit run: BTC spot ~64,000 with the hardcoded
+    # 100-shares multiplier made every position 100x too large, so CVaR sizing
+    # returned 0 and the backtest reported trades=0 / size_zero. One BTC option is
+    # ONE coin — with contract_mult=1 the same path trades normally.
+    import math
+    import random
+    rng = random.Random(2)
+    p = [64482.0]
+    for _ in range(400):
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.025)))
+    wrong = run_hedged_backtest(p, dte=21)                      # default 100
+    right = run_hedged_backtest(p, dte=21, contract_mult=1)
+    assert wrong.n_trades == 0 and wrong.skip_reasons.get("size_zero", 0) > 0
+    assert right.n_trades > 0
+    assert right.metrics.sharpe == right.metrics.sharpe         # finite
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

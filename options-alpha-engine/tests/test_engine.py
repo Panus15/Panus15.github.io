@@ -94,6 +94,36 @@ def test_har_survives_real_outlier_context():
     assert 0.3 * ewma <= har <= 3.0 * ewma
 
 
+def test_term_vol_reverts_toward_the_long_run():
+    # Found on the FIRST real option chain (Deribit BTC): the flat forecast gave
+    # the SAME annualised vol at 5d and 334d, so any upward-sloping implied curve
+    # made the longest expiry look richest — an artifact, not an edge.
+    import random
+    rng = random.Random(5)
+    p = [100.0]
+    for _ in range(300):                      # volatile history (~60%)
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.038)))
+    for _ in range(120):                      # calm recently (~20%)
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.0126)))
+    spot_v = volforecast.har_rv_forecast(p)
+    long_v = volforecast.long_run_vol(p)
+    assert spot_v < long_v                    # calm now, hot long-run
+
+    short_T = volforecast.term_vol(p, 5 / 365)
+    long_T = volforecast.term_vol(p, 334 / 365)
+    assert short_T < long_T                   # the curve SLOPES, no longer flat
+    assert abs(short_T - spot_v) < 0.02       # short end ~ today's vol
+    assert spot_v < long_T <= long_v          # long end reverts toward long-run
+
+    # and it is symmetric: hot now, calm long-run -> a DOWNWARD-sloping curve
+    q = [100.0]
+    for _ in range(300):
+        q.append(q[-1] * math.exp(rng.gauss(0, 0.0126)))
+    for _ in range(120):
+        q.append(q[-1] * math.exp(rng.gauss(0, 0.038)))
+    assert volforecast.term_vol(q, 5 / 365) > volforecast.term_vol(q, 334 / 365)
+
+
 def test_scanner_finds_injected_dislocation():
     md = SyntheticAdapter()
     chain = md.option_chain("X")

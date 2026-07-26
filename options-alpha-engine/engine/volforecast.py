@@ -107,6 +107,56 @@ def realized_skew(prices: Sequence[float], window: int = 63) -> float:
     return third / var ** 1.5
 
 
+def long_run_vol(prices: Sequence[float], window: int = 252) -> float:
+    """Annualised vol over a LONG window — the level short-horizon vol reverts to.
+
+    Uses the whole available history up to ``window`` bars, so it is deliberately
+    slow-moving: it is the anchor, not the signal.
+    """
+    rets = log_returns(prices)[-window:]
+    if len(rets) < 2:
+        raise ValueError("need at least 3 prices")
+    mean = sum(rets) / len(rets)
+    var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
+    return math.sqrt(var * TRADING_DAYS)
+
+
+def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
+             spot_vol: float | None = None, long_run: float | None = None,
+             window: int = 252) -> float:
+    """Annualised vol for the horizon T, WITH a mean-reverting term structure.
+
+    Volatility mean-reverts: a hot (or calm) spot vol decays toward a long-run
+    level, so the *average* variance over a long horizon sits closer to the
+    long-run level than to today's. Under an OU/Heston-style variance the
+    horizon-average is closed form::
+
+        sigma^2(T) = v_inf + (v_0 - v_inf) * (1 - e^{-kappa*T}) / (kappa*T)
+
+    with ``v_0`` today's (HAR) instantaneous variance and ``v_inf`` the long-run
+    variance. ``kappa=2.77`` is a ~3-month variance half-life (ln2/0.25), typical
+    for equity and crypto vol.
+
+    WHY THIS EXISTS — found on the first real option chain: the flat forecast
+    returned the SAME annualised vol at 5 days and 334 days, while the market's
+    implied term structure sloped 38% -> 47%. Subtracting a flat number from a
+    sloping one makes the LONGEST expiry look richest every single time, whatever
+    the market does. That is a model artifact masquerading as an edge; a term
+    structure is what makes a P-vs-Q comparison meaningful across maturities.
+    """
+    if T <= 0:
+        raise ValueError("T must be positive")
+    v0 = (spot_vol if spot_vol is not None else har_rv_forecast(prices)) ** 2
+    try:
+        vinf = (long_run if long_run is not None else long_run_vol(prices, window)) ** 2
+    except ValueError:
+        vinf = v0
+    kT = max(kappa * T, 1e-9)
+    weight = (1.0 - math.exp(-kT)) / kT          # -> 1 as T->0, -> 0 as T->inf
+    var = vinf + (v0 - vinf) * weight
+    return math.sqrt(max(var, 1e-12))
+
+
 def har_rv_forecast(prices: Sequence[float]) -> float:
     """Heterogeneous Auto-Regressive Realised Volatility (Corsi, 2009) forecast.
 
