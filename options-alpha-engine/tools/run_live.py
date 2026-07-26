@@ -106,9 +106,24 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
                               "max_drawdown": res.metrics.max_drawdown,
                               "total_return": res.metrics.total_return,
                               "trades": res.n_trades, "skipped": res.n_skipped}
+        reasons = "; ".join(f"{k}:{v}" for k, v in res.skip_reasons.items()) or "none"
         print(f"Backtest (delta-hedged, {len(prices)}d history): "
               f"Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
-              f"trades={res.n_trades} skipped={res.n_skipped}")
+              f"trades={res.n_trades} skipped={res.n_skipped} ({reasons})")
+        if res.n_trades == 0 and res.skip_reasons:
+            top = max(res.skip_reasons, key=res.skip_reasons.get)
+            why = {
+                "size_zero": ("CVaR sizing returned 0 contracts — one contract's tail "
+                              "loss exceeds the risk budget. On a high-notional "
+                              "underlying (BTC ~$64k/contract) a small account "
+                              "genuinely cannot carry one; raise starting_equity or "
+                              "cvar_limit, or trade a defined-risk spread instead."),
+                "vega_cap": ("the short-vega cap bound every trade — the position's "
+                             "vega is large relative to the equity limit."),
+                "regime": "the regime gate suppressed selling (realised vol accelerating).",
+                "kill_switch": "the drawdown kill-switch was active.",
+            }.get(top, "see skip_reasons above.")
+            print(f"  -> no trades because {top} dominated: {why}")
     elif run_backtest:
         print(f"Backtest skipped: need >= {63 + dte + 5} price points, have {len(prices)}")
 
