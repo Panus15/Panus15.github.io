@@ -28,6 +28,27 @@ from models import edge, rnd
 from models.baseline import BaselineDensityForecaster
 
 
+#: Underlyings whose options are ONE unit per contract (crypto), not 100 shares.
+_UNIT_CONTRACT_SYMBOLS = ("BTC", "ETH", "SOL", "XRP", "DOGE", "AVAX", "MATIC")
+
+
+def default_contract_mult(source: str, chain: OptionChain) -> float:
+    """Contract size to assume: 1 unit for crypto, 100 shares for equity/ETF.
+
+    Keyed off the CHAIN, not just the CLI source — the documented workflow is
+    `--dump` from a live vendor and then `replay` the file offline, and a replayed
+    crypto chain must keep its 1-coin contract size. Deriving it from the source
+    alone silently reverts a dumped BTC chain to 100x on replay, overstating every
+    dollar figure by two orders of magnitude. Override with --contract-mult.
+    """
+    if source == "deribit":
+        return 1.0
+    symbol = (chain.symbol or "").upper()
+    if any(tok in symbol for tok in _UNIT_CONTRACT_SYMBOLS):
+        return 1.0
+    return 100.0
+
+
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
             american: bool = False, contract_mult: float = 100.0) -> dict:
@@ -183,6 +204,9 @@ def main(argv=None):
     p.add_argument("--no-backtest", dest="backtest", action="store_false")
     p.add_argument("--american", action="store_true",
                    help="de-Americanize the chain before Q extraction (US equity/ETF options)")
+    p.add_argument("--contract-mult", dest="contract_mult", type=float, default=None,
+                   help="units per contract (1 for crypto, 100 for US equity/ETF); "
+                        "default is inferred from the source and the chain symbol")
     args = p.parse_args(argv)
 
     chain, prices = fetch(args.source, args)
@@ -191,8 +215,8 @@ def main(argv=None):
         save_chain_json(chain, args.dump)
         print(f"saved chain -> {args.dump} (replay offline with: "
               f"run_live replay --chain-json {args.dump})")
-    # Crypto options are 1 coin/contract; US equity & ETF options are 100 shares.
-    mult = 1.0 if args.source == "deribit" else 100.0
+    mult = args.contract_mult if args.contract_mult else default_contract_mult(
+        args.source, chain)
     analyze(chain, prices, dte=args.dte, label=args.source,
             run_backtest=args.backtest, run_gate=args.gate, american=args.american,
             contract_mult=mult)

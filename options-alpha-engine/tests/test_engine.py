@@ -124,6 +124,53 @@ def test_term_vol_reverts_toward_the_long_run():
     assert volforecast.term_vol(q, 5 / 365) > volforecast.term_vol(q, 334 / 365)
 
 
+def test_term_vol_matches_the_closed_form_exactly():
+    # Pin the FORMULA, not just the slope direction: a wrong weight (e.g. dropping
+    # the 1/(kT), or e^{-kT} instead of (1-e^{-kT})/(kT)) still slopes the right
+    # way but returns wrong numbers, so a direction-only test cannot catch it.
+    v0, vinf, kappa = 0.20 ** 2, 0.45 ** 2, 2.77
+    for T in (5 / 365, 33 / 365, 152 / 365, 334 / 365, 3.0):
+        got = volforecast.term_vol([1.0, 1.0, 1.0], T, kappa=kappa,
+                                   spot_vol=math.sqrt(v0), long_run=math.sqrt(vinf))
+        kT = kappa * T
+        want = math.sqrt(vinf + (v0 - vinf) * (1.0 - math.exp(-kT)) / kT)
+        assert abs(got - want) < 1e-12, (T, got, want)
+
+    # limits: T -> 0 gives today's vol; T -> infinity gives the long-run vol
+    near0 = volforecast.term_vol([1.0] * 3, 1e-6, kappa=kappa,
+                                 spot_vol=0.20, long_run=0.45)
+    far = volforecast.term_vol([1.0] * 3, 500.0, kappa=kappa,
+                               spot_vol=0.20, long_run=0.45)
+    assert abs(near0 - 0.20) < 1e-4 and abs(far - 0.45) < 1e-3
+    # and the result is always bracketed by the two inputs (never overshoots)
+    for T in (0.01, 0.1, 1.0, 10.0):
+        v = volforecast.term_vol([1.0] * 3, T, kappa=kappa, spot_vol=0.20, long_run=0.45)
+        assert 0.20 - 1e-12 <= v <= 0.45 + 1e-12
+
+
+def test_baseline_uses_the_term_structure_by_default():
+    # The headline behaviour change: the shipped forecaster must produce a SLOPING
+    # annualised vol, and the opt-out must restore the old flat behaviour.
+    import random
+    from models.baseline import BaselineDensityForecaster
+    rng = random.Random(5)
+    p = [100.0]
+    for _ in range(300):
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.038)))
+    for _ in range(120):
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.0126)))
+    sloped, flat = BaselineDensityForecaster(), BaselineDensityForecaster(
+        use_term_structure=False)
+    assert sloped.use_term_structure is True                 # ON by default
+
+    def vol_at(f, dte):
+        T = dte / 365.0
+        return f.forecast(p, T, spot=p[-1]).log_return_vol(p[-1], T)
+
+    assert vol_at(sloped, 334) > vol_at(sloped, 5) + 0.02    # genuinely slopes
+    assert abs(vol_at(flat, 334) - vol_at(flat, 5)) < 1e-9   # opt-out is flat
+
+
 def test_scanner_finds_injected_dislocation():
     md = SyntheticAdapter()
     chain = md.option_chain("X")

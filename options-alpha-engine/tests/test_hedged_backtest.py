@@ -110,6 +110,23 @@ def test_contract_mult_lets_a_crypto_level_path_trade():
     assert right.n_trades > 0
     assert right.metrics.sharpe == right.metrics.sharpe         # finite
 
+    # The multiplier must reach the P&L ARITHMETIC, not only the sizing. The right
+    # invariant is INVARIANCE: CVaR sizing targets a dollar risk budget, so
+    # doubling the contract size halves the contract count and total exposure
+    # (size x mult) is unchanged -- P&L must stay the same. A HALF-FIX (sizing
+    # threaded through but the P&L legs still hardcoded at 100) breaks exactly
+    # this: the count halves while the P&L multiplier does not, so P&L collapses
+    # to ~half. Asserting invariance therefore catches the half-fix that an
+    # only-trades>0 test cannot.
+    e = [x / 1000 for x in p]                                   # ~$64 underlying
+    a = run_hedged_backtest(e, dte=21, contract_mult=100)
+    b = run_hedged_backtest(e, dte=21, contract_mult=200)
+    assert a.n_trades == b.n_trades > 0
+    assert a.trade_pnl and any(abs(x) > 1e-9 for x in a.trade_pnl)
+    tot_a, tot_b = sum(a.trade_pnl), sum(b.trade_pnl)
+    assert abs(tot_a) > 1.0                                     # non-trivial
+    assert abs(tot_b - tot_a) < 0.05 * abs(tot_a)               # invariant (~half if broken)
+
 
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
