@@ -202,6 +202,16 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
                           "(usually a regime change,\n     not a model bias). Treat both "
                           "scans as wide error bars, not a decision.")
 
+    # 3c. THE CARD — collapse everything above into one decision object -----
+    if len(prices) >= 30:
+        from models.trade_card import build_card
+        card = build_card(chain, forecaster, prices, dte=dte,
+                          calibration=locals().get("cal"))
+        report["card"] = {"vol_side": card.vol_side, "direction": card.direction,
+                          "entry": card.entry, "target": card.target,
+                          "stop": card.stop, "expected_value": card.expected_value}
+        print("\n" + card.render())
+
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
