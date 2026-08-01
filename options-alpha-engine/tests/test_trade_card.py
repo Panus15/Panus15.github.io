@@ -119,6 +119,24 @@ def test_directional_leg_always_carries_its_health_warning():
     assert "UNVALIDATED" in card.render()
 
 
+def test_scheduled_event_blocks_the_vol_leg():
+    # THE single-stock trap: before earnings, implied vol is high for a REASON.
+    # The engine would otherwise see a huge VRP and shout RICH.
+    from models.events import EventCalendar, MarketEvent
+    rich = _chain(iv=0.40)                                   # market >> forecast
+    assert build_card(rich, F, PRICES, dte=DTE).vol_side == "SELL VOL"
+
+    cal = EventCalendar([MarketEvent("2026-08-05", "TEST", "earnings")])
+    gated = build_card(rich, F, PRICES, dte=DTE, calendar=cal)
+    assert gated.vol_side == "NO TRADE"
+    assert "earnings" in gated.vol_reason
+    assert any("scheduled jump" in w for w in gated.warnings)
+
+    # an event AFTER expiry must not block it
+    late = EventCalendar([MarketEvent("2027-01-01", "TEST", "earnings")])
+    assert build_card(rich, F, PRICES, dte=DTE, calendar=late).vol_side == "SELL VOL"
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

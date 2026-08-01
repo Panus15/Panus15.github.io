@@ -51,7 +51,8 @@ def default_contract_mult(source: str, chain: OptionChain) -> float:
 
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
-            american: bool = False, contract_mult: float = 100.0) -> dict:
+            american: bool = False, contract_mult: float = 100.0,
+            events_json: str | None = None) -> dict:
     """Run the full pipeline on a chain + price history. PURE (no network).
 
     ``american=True`` de-Americanizes the chain first (binomial American IV ->
@@ -205,8 +206,12 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     # 3c. THE CARD — collapse everything above into one decision object -----
     if len(prices) >= 30:
         from models.trade_card import build_card
+        calendar = None
+        if events_json:
+            from models.events import EventCalendar
+            calendar = EventCalendar.from_file(events_json)
         card = build_card(chain, forecaster, prices, dte=dte,
-                          calibration=locals().get("cal"))
+                          calibration=locals().get("cal"), calendar=calendar)
         report["card"] = {"vol_side": card.vol_side, "direction": card.direction,
                           "entry": card.entry, "target": card.target,
                           "stop": card.stop, "expected_value": card.expected_value}
@@ -276,6 +281,9 @@ def main(argv=None):
     p.add_argument("--no-backtest", dest="backtest", action="store_false")
     p.add_argument("--american", action="store_true",
                    help="de-Americanize the chain before Q extraction (US equity/ETF options)")
+    p.add_argument("--events-json", dest="events_json",
+                   help="event calendar (JSON/CSV of date,symbol,kind) — refuses the "
+                        "vol leg when a known event (earnings) lands before expiry")
     p.add_argument("--contract-mult", dest="contract_mult", type=float, default=None,
                    help="units per contract (1 for crypto, 100 for US equity/ETF); "
                         "default is inferred from the source and the chain symbol")
@@ -291,7 +299,7 @@ def main(argv=None):
         args.source, chain)
     analyze(chain, prices, dte=args.dte, label=args.source,
             run_backtest=args.backtest, run_gate=args.gate, american=args.american,
-            contract_mult=mult)
+            contract_mult=mult, events_json=args.events_json)
 
 
 if __name__ == "__main__":

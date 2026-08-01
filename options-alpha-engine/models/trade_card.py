@@ -140,12 +140,19 @@ def _momentum(prices, lookback: int = 21) -> float:
 def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
                min_vrp: float = 0.0, direction_threshold: float = 0.12,
                target_q: float = 0.75, stop_q: float = 0.25,
-               momentum_weight: float = 0.5, calibration=None) -> TradeCard:
+               momentum_weight: float = 0.5, calibration=None,
+               calendar=None) -> TradeCard:
     """Collapse the engine's output into one decision card for a single expiry.
 
     ``calibration`` is an optional models.calibration.CalibrationReport; when given,
     its verdict and vol scale are surfaced on the card (and a large bias becomes a
     warning, because it means the VRP below is overstated).
+
+    ``calendar`` is an optional models.events.EventCalendar. If a KNOWN event
+    (earnings, FDA, ...) falls inside the option's life, the vol leg is refused:
+    that implied vol is EVENT premium priced against a scheduled jump, not a
+    mispricing a HAR-RV forecast has spotted. This is the single most important
+    guard for SINGLE-STOCK options and has no analogue in crypto.
     """
     T = dte / 365.0
     spot = chain.spot
@@ -165,8 +172,14 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
 
     # --- volatility side (the validated one) ------------------------------
     stressed = regime_stressed(prices)
+    event_fired, event_reason = (False, "")
+    if calendar is not None:
+        from .events import event_gate
+        event_fired, event_reason = event_gate(calendar, chain.symbol, chain.asof, dte)
     vrp = (q_vol ** 2 - p_vol ** 2) if q_vol == q_vol else float("nan")
-    if q_vol != q_vol:
+    if event_fired:
+        vol_side, vol_reason = "NO TRADE", f"scheduled event: {event_reason}"
+    elif q_vol != q_vol:
         vol_side, vol_reason = "NO TRADE", "no usable Q — cannot compare P to the market"
     elif not coverage_ok:
         vol_side, vol_reason = "NO TRADE", "chain too sparse/truncated for a trustworthy Q"
@@ -234,6 +247,10 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
             warnings.append(
                 f"the P vol looks ~{(1 - calibration.vol_scale) * 100:.0f}% too HIGH here, "
                 f"so the VRP above is UNDERSTATED")
+    if event_fired:
+        warnings.append("a KNOWN event lands before expiry — the premium is priced "
+                        "against a scheduled jump; selling it is a bet on that jump "
+                        "being smaller than priced, not a variance-premium harvest")
     if direction != "NEUTRAL" and ev <= 0:
         warnings.append("the directional leg is NEGATIVE expected value under the "
                         "model's own density — the levels do not pay for the risk")
