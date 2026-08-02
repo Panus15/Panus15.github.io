@@ -45,6 +45,35 @@ def test_large_gaps_bleed_the_ungated_short_vol_book():
     assert "gap stress" in res.summary()
 
 
+def test_gaps_do_not_all_land_on_trade_boundaries():
+    """A jump only hurts a short-gamma book if the book is holding gamma into it.
+
+    The default every=42 against the default dte=21 put 100% of the gaps exactly
+    on entry/expiry boundaries, where remaining time is zero and gamma is dead —
+    the stress ran, reported a number, and measured almost nothing. Found by
+    audit: with the resonance removed the same 16 jumps cost 10 points more.
+    """
+    from engine.stress import evenly_spaced_gaps
+
+    raw = evenly_spaced_gaps(760, every=42, size=0.20, start=63)
+    assert {(i - 63) % 21 for i, _ in raw} == {0}, "fixture premise changed"
+
+    P = price_path_with_crash(760)
+    CH = synthetic_chain_series(dte=21)
+    F = BaselineDensityForecaster()
+    res = gap_stress(P, CH, F, dte=21, warmup=63, always_sell=True,
+                     every=42, size=0.20)
+    # the de-resonated schedule must actually bite
+    bleed = res.clean.metrics.total_return - res.gapped.metrics.total_return
+    assert bleed > 0.05, (
+        f"gaps at every=42/dte=21 cost only {bleed:.1%} — they are probably "
+        f"landing on expiry boundaries again")
+
+    # a non-resonant schedule is left exactly where the caller put it
+    off = evenly_spaced_gaps(760, every=40, size=0.20, start=63)
+    assert len({(i - 63) % 21 for i, _ in off}) > 1
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

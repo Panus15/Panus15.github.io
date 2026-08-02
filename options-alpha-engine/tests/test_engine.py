@@ -44,6 +44,66 @@ def test_put_delta_negative():
     assert -1.0 < g.delta < 0.0
 
 
+def test_greeks_match_finite_differences():
+    """The only test that pins Greek MAGNITUDES, not just signs.
+
+    Sign-and-bounds assertions are close to worthless here: an audit of this file
+    found that doubling gamma, dropping e^{-qT} from delta and vega, returning
+    theta per DAY instead of per year, and dropping the T factor from rho ALL
+    passed the entire test suite. Each is a plausible real slip and each would
+    silently mis-size every hedge and every CVaR number downstream.
+
+    Central differences of price() are an independent oracle: they use only the
+    pricer, never the closed-form Greek being checked. Every case runs with q > 0
+    so the dividend factors are actually exercised.
+    """
+    cases = [(100.0, 100.0, 0.50, 0.03, 0.02, 0.25),   # ATM
+             (100.0, 120.0, 0.25, 0.05, 0.03, 0.35),   # OTM call, high vol
+             (100.0,  85.0, 1.00, 0.02, 0.04, 0.18),   # ITM call, long dated
+             (100.0, 100.0, 0.08, 0.04, 0.01, 0.60)]   # short dated, very high vol
+
+    def px(S, K, T, r, q, v, kind):
+        return pricing.price(S, K, T, r, q, v, kind)
+
+    for S, K, T, r, q, vol in cases:
+        for kind in ("call", "put"):
+            g = pricing.greeks(S, K, T, r, q, vol, kind)
+            hS, hv, hT, hr = S * 1e-4, 1e-5, 1e-5, 1e-6
+
+            fd_delta = (px(S + hS, K, T, r, q, vol, kind)
+                        - px(S - hS, K, T, r, q, vol, kind)) / (2 * hS)
+            fd_gamma = (px(S + hS, K, T, r, q, vol, kind)
+                        - 2 * px(S, K, T, r, q, vol, kind)
+                        + px(S - hS, K, T, r, q, vol, kind)) / (hS * hS)
+            fd_vega = (px(S, K, T, r, q, vol + hv, kind)
+                       - px(S, K, T, r, q, vol - hv, kind)) / (2 * hv)
+            # theta is dV/dt = -dV/dT, PER YEAR
+            fd_theta = -(px(S, K, T + hT, r, q, vol, kind)
+                         - px(S, K, T - hT, r, q, vol, kind)) / (2 * hT)
+            fd_rho = (px(S, K, T, r + hr, q, vol, kind)
+                      - px(S, K, T, r - hr, q, vol, kind)) / (2 * hr)
+
+            ctx = f"{kind} S={S} K={K} T={T} q={q} vol={vol}"
+            for name, got, want, tol in (("delta", g.delta, fd_delta, 1e-5),
+                                         ("gamma", g.gamma, fd_gamma, 1e-4),
+                                         ("vega", g.vega, fd_vega, 1e-4),
+                                         ("theta", g.theta, fd_theta, 1e-3),
+                                         ("rho", g.rho, fd_rho, 1e-4)):
+                scale = max(abs(want), 1.0)
+                assert abs(got - want) / scale < tol, (
+                    f"{name} {ctx}: closed form {got:.8f} vs finite difference "
+                    f"{want:.8f} (rel err {abs(got - want) / scale:.2e})")
+
+
+def test_greeks_reject_a_bad_kind():
+    for fn in (pricing.price, pricing.greeks):
+        try:
+            fn(100, 100, 0.5, 0.03, 0.0, 0.2, "straddle")
+        except ValueError:
+            continue
+        raise AssertionError(f"{fn.__name__} accepted an invalid kind")
+
+
 def test_iv_roundtrip():
     # Price at a known vol, recover it from the price.
     S, K, T, r, q, true_vol = 100, 95, 0.25, 0.04, 0.0, 0.32

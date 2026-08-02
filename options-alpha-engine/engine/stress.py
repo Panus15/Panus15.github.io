@@ -40,12 +40,22 @@ def inject_gaps(prices, gaps):
     return out
 
 
-def evenly_spaced_gaps(n, *, every: int, size: float, start: int = 0):
+def evenly_spaced_gaps(n, *, every: int, size: float, start: int = 0,
+                       offset: int = 0):
     """Alternating ±``size`` (log) jumps every ``every`` bars — a simple, brutal
-    weekend-gap regime for stress runs. Deterministic (no RNG)."""
+    weekend-gap regime for stress runs. Deterministic (no RNG).
+
+    ``offset`` shifts the whole schedule. It exists because of a trap: the caller
+    also chooses ``dte``, and if ``every`` is a multiple of ``dte`` then EVERY gap
+    lands on a trade entry/expiry boundary, where remaining time — and therefore
+    gamma — is zero. The stress then measures nothing, because a short-gamma book
+    is only hurt by a jump it is holding gamma across. ``gap_stress`` guards
+    against this; if you call this function directly, pick ``every`` coprime with
+    your holding period or set ``offset``.
+    """
     gaps = []
     sign = 1.0
-    i = start + every
+    i = start + every + offset
     while i < n:
         gaps.append((i, sign * size))
         sign = -sign
@@ -75,11 +85,21 @@ def gap_stress(prices, chain_at, forecaster, *, every: int = 42, size: float = 0
     """Run the signal book on the clean path and on the same path with alternating
     ±``size`` gaps every ``every`` bars. Returns both so the gap-induced drawdown
     is explicit. Extra kwargs pass straight through to run_signal_backtest (dte,
-    warmup, always_sell, ...)."""
+    warmup, always_sell, ...).
+
+    A jump only hurts a short-gamma book if the book is HOLDING gamma when it
+    lands. The default ``every=42`` against the default ``dte=21`` puts all of
+    them on entry/expiry boundaries, where remaining time is zero and the stress
+    silently measures nothing — so when the schedule resonates with the holding
+    period the gaps are nudged half a cycle into the trade instead.
+    """
     from engine.signal_backtest import run_signal_backtest
 
+    warmup = bt_kwargs.get("warmup", 63)
+    dte = bt_kwargs.get("dte", 21)
+    offset = (dte // 2) if (dte and every % dte == 0) else 0
     gaps = evenly_spaced_gaps(len(prices), every=every, size=size,
-                              start=bt_kwargs.get("warmup", 63))
+                              start=warmup, offset=offset)
     gapped_prices = inject_gaps(prices, gaps)
     clean = run_signal_backtest(prices, chain_at, forecaster, **bt_kwargs)
     gapped = run_signal_backtest(gapped_prices, chain_at, forecaster, **bt_kwargs)
