@@ -18,13 +18,15 @@ Public surface:
     benchmark    same-path comparison: signal vs always-sell (income-ETF) vs buy-hold
     american     binomial American pricing + de-Americanization to a European chain
     stress       overnight-gap / jump stress — the short-gamma risk a smooth backtest hides
+    crowding_backtest  paired experiment: does selling a FUND-CROWDED strike pay or cost?
 """
 
-from . import (adapters, american, backtest, benchmark, data, deribit,
-               hedged_backtest, ibkr, iv, portfolio, pricing, signal,
-               signal_backtest, sizing, stress, tradier, volforecast)
+from . import (adapters, american, backtest, benchmark, crowding_backtest,
+               data, deribit, hedged_backtest, ibkr, iv, portfolio, pricing,
+               signal, signal_backtest, sizing, stress, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
-           "hedged_backtest", "signal_backtest", "benchmark", "american", "stress"]
+           "hedged_backtest", "signal_backtest", "benchmark", "american",
+           "stress", "crowding_backtest"]
 __version__ = "0.1.0"

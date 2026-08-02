@@ -150,6 +150,17 @@ honest, cost-inclusive verdict leaves on the right.
   backtest omits becomes a number. (A finding worth internalising: *small* gaps
   can help — you then sell elevated IV — but a *big* un-hedgeable move bleeds; the
   gate defends the tail, not the average.)
+- **`engine/crowding_backtest.py`** — the experiment behind `models/fund_flow.py`.
+  Knowing *where* the income ETFs concentrate their short calls is only worth
+  something if selling there actually pays differently, so this measures it: on
+  each date sell BOTH a crowded strike and the nearest uncrowded one, and read the
+  **paired** difference (same date, same expiry, so market beta cancels). Two
+  design choices carry the whole result — the control leg is **matched on
+  moneyness** (pairing a 6%-OTM crowded call against whatever uncrowded strike
+  came first puts the high-gamma near-the-money contract on the control side and
+  manufactures an effect: it produced a spurious *t* = −2.27 before the fix), and
+  the verdict **refuses to conclude** below 30 pairs or |*t*| < 2. The harness
+  ships tested in both directions; the answer needs real published holdings.
 
 ---
 

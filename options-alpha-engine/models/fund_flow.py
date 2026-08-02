@@ -27,8 +27,10 @@ What it is NOT:
     map, not an order feed. Every function here takes the file's own as-of date
     and refuses to pretend it knew earlier (see `FundBook.asof`).
   * Not proven to pay. Whether crowded supply means AVOID (you are late to a
-    crushed vol) or FOLLOW (the flow persists) is an empirical question this repo
-    has not answered. So the default is to WARN and annotate, never to auto-flip a
+    crushed vol) or FOLLOW (the flow persists) is an EMPIRICAL question, and
+    `engine/crowding_backtest.py` is the paired experiment that answers it — but
+    only once real published holdings are fed to it. Until that has been run on
+    your data, the default here is to WARN and annotate, never to auto-flip a
     verdict — `crowding_note` is information, `crowding_blocks_trade` is opt-in.
 """
 

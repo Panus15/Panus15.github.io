@@ -259,6 +259,27 @@ def main() -> None:
     print("  -> big un-hedgeable jumps bleed short gamma; THIS is what the regime\n"
           "     gate + kill-switch defend against, and why continuous-hedge Sharpe lies\n")
 
+    # 9. Does FUND CROWDING actually matter? — the paired experiment ------------
+    # models/fund_flow can see WHERE the income ETFs concentrate their short calls.
+    # Whether that knowledge is worth anything is an empirical question, so this is
+    # the experiment rather than an assertion: on each date sell BOTH a crowded
+    # strike and the nearest uncrowded one, and read the PAIRED difference. Note the
+    # control run: with no dent injected the study reports NOTHING, which is the
+    # property that makes the positive results worth reading at all.
+    from engine.crowding_backtest import (run_crowding_backtest,
+                                          synthetic_crowding_series)
+    cpath = price_path_with_crash(3000)
+    print("Does fund crowding matter? (paired, same-date, moneyness-matched):")
+    for label, dent in (("control  — fund present, supply moves nothing", 0.00),
+                        ("2 vol pt supply dent at the crowded strike   ", 0.02),
+                        ("5 vol pt supply dent at the crowded strike   ", 0.05)):
+        ch, su = synthetic_crowding_series(dte=21, dent=dent)
+        cr = run_crowding_backtest(cpath, ch, su, dte=21, warmup=63)
+        print(f"  {label}  n={cr.n_pairs:>4}  diff={cr.mean_diff:>+8.2f}  "
+              f"t={cr.t_stat:>+5.2f}  -> {cr.verdict.split(' —')[0]}")
+    print("  -> the harness is real; the ANSWER needs real published fund holdings,")
+    print("     which is the one input this repo cannot synthesise for you.\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 
