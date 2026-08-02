@@ -129,13 +129,20 @@ class PaperLedger:
     # --- record --------------------------------------------------------------
     def record(self, chain, prices, entry_index: int, forecaster, *,
                dte: int = 30, asof: str | None = None, min_vrp: float = 0.0,
-               news_feature=None, macro=None):
+               news_feature=None, macro=None, calendar=None):
         """Freeze one decision. Sees ONLY prices[:entry_index+1] — no look-ahead.
 
         ``news_feature`` (models.sentiment.SentimentFeature) composes the
         FORWARD-looking news gate with the price regime gate via
         models.news_signal.event_risk — a burst of negative/dispersed news
         vetoes the sell before the realised-vol spike shows up in prices.
+
+        ``calendar`` (models.events.EventCalendar) adds the SCHEDULED-event veto.
+        The other gates all react to risk nobody has dated; this one refuses the
+        trade when the jump is on a public calendar, because then the rich implied
+        vol is the market pricing a known event rather than a mispricing. On a
+        single name this is the difference between harvesting a premium and
+        selling event insurance at roughly fair value.
 
         Returns the entry dict (appended), or None if the chain can't yield Q
         moments at this expiry (nothing to grade).
@@ -159,6 +166,13 @@ class PaperLedger:
         if news_feature is not None or macro is not None:
             from models.news_signal import event_risk
             stressed, gate_reason = event_risk(stressed, news_feature, macro=macro)
+        if calendar is not None:
+            from models.events import event_gate
+            ev_hit, ev_why = event_gate(calendar, chain.symbol or "",
+                                        asof if asof is not None else chain.asof, dte)
+            if ev_hit:
+                stressed = True
+                gate_reason = ev_why
         iv, strike = _atm_iv(chain, dte, T)
 
         # The strategy: sell vol only when the market's Q variance is richer than
@@ -311,12 +325,13 @@ def paper_trade_series(prices, chain_at, forecaster, *, dte: int = 21, warmup: i
     settle everything that matured. This is the offline analogue of running the
     live recorder daily and settling at the end — deterministic, no network."""
     step = step or dte
+    calendar = ledger_kw.pop("calendar", None)
     led = PaperLedger(**ledger_kw)
     t = warmup
     while t < len(prices):
         chain = chain_at(t, prices[:t + 1])
         if chain is not None:
-            led.record(chain, prices, t, forecaster, dte=dte)
+            led.record(chain, prices, t, forecaster, dte=dte, calendar=calendar)
         t += step
     led.settle(prices)
     return led
@@ -387,8 +402,14 @@ def _cmd_record(args):
     if feat is not None:
         print(f"news gate: score={feat.score:+.2f} dispersion={feat.dispersion:.2f} "
               f"volume={feat.volume:.1f} ({feat.n_items} items)")
+    cal = None
+    if getattr(args, "events_json", None):
+        from models.events import EventCalendar
+        cal = EventCalendar.from_file(args.events_json)
+        print(f"event calendar: {len(cal.events)} dated events loaded")
     e = led.record(chain, journal, len(journal) - 1, BaselineDensityForecaster(),
-                   dte=args.dte, min_vrp=args.min_vrp, news_feature=feat)
+                   dte=args.dte, min_vrp=args.min_vrp, news_feature=feat,
+                   calendar=cal)
     with open(jpath, "w") as fh:
         json.dump(journal, fh)
     if e is None:
@@ -452,6 +473,10 @@ def main(argv=None):
     r.add_argument("--news-json", dest="news_json",
                    help="news file (JSON/CSV of date,symbol,headline[,body]) -> "
                         "forward-looking event-risk gate on today's entry")
+    r.add_argument("--events-json", dest="events_json",
+                   help="event calendar (JSON/CSV of date,symbol,kind[,note]) -> "
+                        "vetoes the entry when a KNOWN event (earnings/FDA) lands "
+                        "inside the option's life; essential on single names")
     r.set_defaults(func=_cmd_record)
 
     s = sub.add_parser("settle", help="grade every matured entry against the price journal")

@@ -120,6 +120,38 @@ def event_gate(calendar: EventCalendar | None, symbol: str, asof, dte: int,
                   f"({first.date}) — the implied vol is EVENT premium, not mispricing")
 
 
+def event_stress_at(calendar: EventCalendar | None, symbol: str, dates, dte: int,
+                    *, high_impact_only: bool = True):
+    """Build the ``event_at(t, trailing) -> bool`` veto the backtests accept.
+
+    The harnesses walk an integer bar index; a calendar walks dates. ``dates`` is
+    the bridge — either a list of ISO dates aligned 1:1 with the price series, or
+    a callable ``t -> date``. Anything the mapping cannot date returns False, on
+    the same principle as ``event_gate``: missing data is not evidence of a quiet
+    calendar, and the honest failure is to leave the veto off rather than to
+    invent a quiet day.
+
+    Returning None here (no calendar) is deliberate. It lets a caller pass the
+    result straight through to ``run_signal_backtest(event_at=...)`` and get
+    exactly the old behaviour when there is nothing to gate on.
+    """
+    if calendar is None:
+        return None
+
+    lookup = dates if callable(dates) else (
+        lambda t: dates[t] if 0 <= t < len(dates) else None)
+
+    def event_at(t, trailing=None) -> bool:
+        asof = lookup(t)
+        if asof is None:
+            return False
+        hit, _ = event_gate(calendar, symbol, asof, dte,
+                            high_impact_only=high_impact_only)
+        return hit
+
+    return event_at
+
+
 def earnings_iv_note(days_to_event: int | None) -> str:
     """The other half of the story, for a human reading the card."""
     if days_to_event is None:

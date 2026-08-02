@@ -133,6 +133,7 @@ def run_hedged_backtest(
     iv_deadband: float = 0.8,
     iv_shock_cap: float = 3.0,
     contract_mult: int = MULT,
+    event_at=None,
 ) -> HedgedBacktestResult:
     """Walk-forward delta-hedged short-straddle backtest over ``prices``.
 
@@ -202,6 +203,15 @@ def run_hedged_backtest(
 
         if regime_stressed(trailing):
             _skip("regime")
+            i0 += dte
+            continue
+
+        # Scheduled events (models.events.event_stress_at). The regime gate above
+        # is backward-looking — it reacts to vol that has ALREADY accelerated — so
+        # it is structurally blind to a jump whose date is public and whose
+        # premium is therefore already in the price.
+        if event_at is not None and event_at(i0, trailing):
+            _skip("event")
             i0 += dte
             continue
 

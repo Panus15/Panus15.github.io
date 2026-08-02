@@ -34,6 +34,43 @@ def _chain(dtes=(7, 30, 60)):
     return OptionChain("TEST", SPOT, 0.0, 0.0, quotes, asof=date(2026, 7, 19).isoformat())
 
 
+def test_the_simulation_does_not_pass_itself_off_as_a_chain_backtest():
+    """The most dangerous line this tool can print.
+
+    run_hedged_backtest receives ONLY `prices` — the fetched chain is not an
+    argument — so every trade is sold at an ASSUMED premium over the forecast.
+    Printed unlabelled under real Deribit moments it reads as if the live option
+    market produced it. Two properties keep that honest and both are pinned here:
+    the output must say what the number is, and the assumed premium must be taken
+    from the snapshot's own measured VRP rather than a hardcoded constant.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    prices = SyntheticAdapter(seed=4).price_history("X", 400)
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rep = analyze(_chain(), prices, dte=30, label="offline", run_backtest=True)
+    out = buf.getvalue()
+
+    bt = rep["backtest"]
+    assert bt["uses_fetched_chain"] is False
+    assert "measured on this chain" in bt["premium_source"], bt["premium_source"]
+    assert abs(bt["premium"] - 0.15) > 1e-9, "must not silently fall back to 0.15"
+
+    assert "not a backtest of the chain above" in out, out[-600:]
+    assert "no quote above is used" in out
+    # the Sharpe must not be printed on a line that reads like a measurement
+    for line in out.splitlines():
+        if "Sharpe=" in line:
+            assert "Backtest (" not in line, f"unlabelled as a backtest: {line}"
+
+    # with too little history to measure a premium, it says so instead of lying
+    short = SyntheticAdapter(seed=4).price_history("X", 120)
+    rep2 = analyze(_chain(), short, dte=30, label="short", run_backtest=True)
+    assert rep2["backtest"]["uses_fetched_chain"] is False
+
+
 def test_analyze_produces_full_report():
     prices = SyntheticAdapter(seed=4).price_history("X", 400)
     rep = analyze(_chain(), prices, dte=30, label="offline", run_backtest=True)

@@ -120,17 +120,39 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
         for s in board:
             print("  " + s.line())
 
-    # 3. Delta-hedged walk-forward backtest --------------------------------
+    # 3. Delta-hedged walk-forward SIMULATION -------------------------------
+    # Read the label carefully before believing this number. It is NOT a backtest
+    # of the option chain above: only `prices` goes in, so the chain the vendor
+    # just returned is not an input. Every trade is sold at
+    # har_rv_forecast(trailing) * (1 + premium) — a CONSTANT assumed premium
+    # applied to the real price history. Printed unlabelled directly beneath real
+    # Deribit moments, it reads like evidence the engine has found an edge on live
+    # data, which it is not. Two things keep it honest: the premium is taken from
+    # THIS snapshot's measured VRP instead of a hardcoded 0.15 where possible, and
+    # the header says what it is.
     if run_backtest and len(prices) >= 63 + dte + 5:
+        premium, prem_src = 0.15, "assumed default"
+        near = [s for s in (signals if len(prices) >= 30 else [])
+                if s.p_vol and s.p_vol > 0]
+        if near:
+            s0 = min(near, key=lambda s: abs(s.expiry_days - dte))
+            obs = s0.q_vol / s0.p_vol - 1.0
+            if -0.5 < obs < 2.0:
+                premium, prem_src = obs, f"measured on this chain at {s0.expiry_days}d"
         res = hedged_backtest.run_hedged_backtest(
-            prices, dte=dte, contract_mult=int(contract_mult))
+            prices, dte=dte, premium=premium, contract_mult=int(contract_mult))
         report["backtest"] = {"sharpe": res.metrics.sharpe,
                               "max_drawdown": res.metrics.max_drawdown,
                               "total_return": res.metrics.total_return,
-                              "trades": res.n_trades, "skipped": res.n_skipped}
+                              "trades": res.n_trades, "skipped": res.n_skipped,
+                              "premium": premium, "premium_source": prem_src,
+                              "uses_fetched_chain": False}
         reasons = "; ".join(f"{k}:{v}" for k, v in res.skip_reasons.items()) or "none"
-        print(f"Backtest (delta-hedged, {len(prices)}d history): "
-              f"Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
+        print(f"SIMULATION on {len(prices)}d of PRICE history — not a backtest of the "
+              f"chain above.")
+        print(f"  Every trade is sold at forecast_vol x (1 + {premium:+.0%}) "
+              f"[{prem_src}]; no quote above is used.")
+        print(f"  Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
               f"trades={res.n_trades} skipped={res.n_skipped} ({reasons})")
         if res.n_trades == 0 and res.skip_reasons:
             top = max(res.skip_reasons, key=res.skip_reasons.get)

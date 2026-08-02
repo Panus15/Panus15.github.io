@@ -116,12 +116,21 @@ honest, cost-inclusive verdict leaves on the right.
   E_P[loss] − cost` against the physical density, with break-evens and P(profit).
   You give up some premium to buy back the un-hedgeable tail — the honest way to
   actually harvest the premium the whole engine is built around.
-- **Gates** — three forward-looking vetoes that all OR into one `stressed` flag
+- **Gates** — four forward-looking vetoes that all OR into one `stressed` flag
   passed to `edge.compare`. Never directional; they only ever *stop* selling vol:
   - `edge.regime_stressed` — realised short-vol accelerating (backward-looking).
   - `models/news_signal.py` + `sentiment.py` — a burst of negative/dispersed news.
   - `models/macro.py` — yield-curve inversion, credit blowout, VIX-term
     backwardation, or a tightening shock.
+  - `models/events.py` — the only gate about **known** risk: a dated earnings or
+    FDA decision inside the option's life. It matters most on single names and
+    for the opposite reason to the others — pre-earnings IV is high *because* a
+    jump is coming, so the VRP the scanner reads as RICH is event premium the
+    market has priced correctly. Build the backtest veto with
+    `events.event_stress_at(calendar, symbol, dates, dte)` and pass it as
+    `event_at=` to `signal_backtest` / `hedged_backtest` / `spread_backtest`, or
+    `calendar=` to the paper ledger. It binds the *always-sell* baseline too:
+    exempting the baseline would hand it an edge the signal book is denied.
 
 ### Control
 - **`engine/portfolio.py`** — correlation-aware short-vega cap (N identical shorts
@@ -150,6 +159,19 @@ honest, cost-inclusive verdict leaves on the right.
   backtest omits becomes a number. (A finding worth internalising: *small* gaps
   can help — you then sell elevated IV — but a *big* un-hedgeable move bleeds; the
   gate defends the tail, not the average.)
+- **`engine/spread_backtest.py`** — realises the defined-risk structures
+  `models/spreads.py` only ever scored as an expected value, and pairs each one
+  against the delta-hedged naked straddle on the *same* dates. Its finding is
+  sharper than the claim it was built to confirm: on a clean path the condor loses
+  on **both** counts (−0.9% vs +4.5% return, and a worse worst trade, −559 vs
+  −87), because a working delta hedge already removes the directional damage the
+  wings are sold to cap. Inject ±18% gaps so the hedge cannot be maintained and it
+  inverts — the naked book's worst trade blows out to −2,901 while the spread's
+  stays capped at −694. **Buy the wings for the risk you cannot hedge, not the
+  risk you can.** P&L is marked daily (each leg's IV recovered from its own entry
+  price, then frozen) so the Sharpe comparison is not biased by one book being
+  lumpy and the other smooth; the daily marks telescope to the held-to-expiry
+  result exactly.
 - **`engine/crowding_backtest.py`** — the experiment behind `models/fund_flow.py`.
   Knowing *where* the income ETFs concentrate their short calls is only worth
   something if selling there actually pays differently, so this measures it: on

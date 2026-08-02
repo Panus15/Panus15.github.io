@@ -280,6 +280,32 @@ def main() -> None:
     print("  -> the harness is real; the ANSWER needs real published fund holdings,")
     print("     which is the one input this repo cannot synthesise for you.\n")
 
+    # 10. Do the WINGS earn their cost? — defined-risk vs naked, same dates ------
+    # models/spreads.py scores iron condors by expected value; this realises them.
+    # The result is sharper than "spreads cap the tail": against a book that can
+    # delta-hedge continuously the wings are a pure cost, and they only earn their
+    # price where the hedge fails. Injecting gaps flips the comparison outright.
+    from engine.spread_backtest import run_spread_backtest
+    from engine.stress import evenly_spaced_gaps as _gaps
+    from engine.stress import inject_gaps as _inject
+    LADDER = tuple(round(-0.20 + 0.025 * i, 3) for i in range(17))
+    sp_path = price_path_with_crash(900)
+    print("Defined-risk spreads vs the delta-hedged naked book (same dates):")
+    print(f"  {'path':20}{'spread tot':>12}{'naked tot':>11}"
+          f"{'spread worst':>14}{'naked worst':>13}")
+    for lbl, pth in (("clean", sp_path),
+                     ("with ±18% gaps", _inject(sp_path, _gaps(900, every=40,
+                                                               size=0.18, start=63)))):
+        sr = run_spread_backtest(pth, synthetic_chain_series(dte=21, ladder=LADDER,
+                                                             min_px=0.005),
+                                 BaselineDensityForecaster(), dte=21, warmup=63,
+                                 structure="iron_condor", always_sell=True)
+        print(f"  {lbl:20}{sr.metrics.total_return:>+11.1%}"
+              f"{sr.naked.total_return:>+11.1%}"
+              f"{sr.worst_trade:>+14,.0f}{sr.naked_worst:>+13,.0f}")
+    print("  -> a working delta hedge already removes what the wings are sold to cap,")
+    print("     so buy them for the risk you CANNOT hedge (gaps), not the risk you can\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 

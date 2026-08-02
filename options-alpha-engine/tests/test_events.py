@@ -85,6 +85,114 @@ def test_iv_crush_note_changes_with_timing():
     assert earnings_iv_note(None) == ""
 
 
+# --------------------------------------------------------------------------
+# the gate is only worth anything if it reaches a P&L harness
+# --------------------------------------------------------------------------
+
+def _dated(n, start="2024-01-02"):
+    """ISO dates aligned 1:1 with a price index."""
+    import datetime
+    d0 = datetime.date.fromisoformat(start)
+    return [(d0 + datetime.timedelta(days=i)).isoformat() for i in range(n)]
+
+
+def test_event_stress_at_builds_a_backtest_veto():
+    from models.events import EventCalendar, MarketEvent, event_stress_at
+
+    dates = _dated(400)
+    cal = EventCalendar([MarketEvent(dates[100], "X", "earnings")])
+    gate = event_stress_at(cal, "X", dates, 21)
+
+    assert gate(90, None) is True, "an earnings date 10d out must veto"
+    assert gate(100, None) is True, "the event day itself is inside the window"
+    assert gate(50, None) is False, "an event 50d out is beyond a 21d option"
+    assert gate(120, None) is False, "the event has passed"
+    assert gate(9_999, None) is False, "an undatable bar must not invent a veto"
+    # no calendar -> no callback, so callers get the ungated behaviour unchanged
+    assert event_stress_at(None, "X", dates, 21) is None
+
+
+def test_the_event_gate_actually_stops_trades_in_the_backtest():
+    """Plumbing tests are cheap; this asserts the gate changes the OUTCOME."""
+    from engine.hedged_backtest import price_path_with_crash
+    from engine.signal_backtest import run_signal_backtest, synthetic_chain_series
+    from models.baseline import BaselineDensityForecaster
+    from models.events import EventCalendar, MarketEvent, event_stress_at
+
+    prices = price_path_with_crash(900)
+    chains = synthetic_chain_series(dte=21)
+    fc = BaselineDensityForecaster()
+    dates = _dated(len(prices))
+
+    ungated = run_signal_backtest(prices, chains, fc, dte=21, warmup=63,
+                                  always_sell=True)
+    # an earnings print every ~6 weeks, the single-name reality
+    cal = EventCalendar([MarketEvent(dates[i], "X", "earnings")
+                         for i in range(80, len(prices), 42)])
+    gate = event_stress_at(cal, "X", dates, 21)
+    gated = run_signal_backtest(prices, chains, fc, dte=21, warmup=63,
+                                always_sell=True, event_at=gate)
+
+    assert gated.skip_reasons.get("event", 0) > 5, gated.skip_reasons
+    assert gated.n_sold < ungated.n_sold, (
+        f"the gate skipped {gated.skip_reasons.get('event')} dates but sold "
+        f"{gated.n_sold} vs {ungated.n_sold} — it is not reaching entry")
+    assert ungated.skip_reasons.get("event", 0) == 0
+
+    # and it binds the ALWAYS-SELL baseline too: exempting the baseline would
+    # hand it a free pass and make every benchmark comparison dishonest
+    sig = run_signal_backtest(prices, chains, fc, dte=21, warmup=63, event_at=gate)
+    assert sig.skip_reasons.get("event", 0) > 0
+
+
+def test_the_event_gate_reaches_the_hedged_backtest_too():
+    from engine.hedged_backtest import price_path_with_crash, run_hedged_backtest
+    from models.events import EventCalendar, MarketEvent, event_stress_at
+
+    prices = price_path_with_crash(900)
+    dates = _dated(len(prices))
+    base = run_hedged_backtest(prices, dte=21, warmup=63)
+    cal = EventCalendar([MarketEvent(dates[i], "", "earnings")
+                         for i in range(80, len(prices), 42)])
+    gated = run_hedged_backtest(prices, dte=21, warmup=63,
+                                event_at=event_stress_at(cal, "", dates, 21))
+    assert gated.skip_reasons.get("event", 0) > 5, gated.skip_reasons
+    assert gated.n_trades < base.n_trades
+
+
+def test_the_paper_ledger_records_the_event_veto():
+    from engine.hedged_backtest import price_path_with_crash
+    from engine.signal_backtest import synthetic_chain_series
+    from models.baseline import BaselineDensityForecaster
+    from models.events import EventCalendar, MarketEvent
+    from tools.paper_trade import PaperLedger
+
+    prices = price_path_with_crash(300)
+    chains = synthetic_chain_series(dte=21)
+    chain = chains(200, prices[:201])
+    assert chain is not None
+    asof = "2024-06-03"
+
+    led = PaperLedger()
+    free = led.record(chain, prices, 200, BaselineDensityForecaster(),
+                      dte=21, asof=asof)
+    led2 = PaperLedger()
+    cal = EventCalendar([MarketEvent("2024-06-12", chain.symbol, "earnings")])
+    held = led2.record(chain, prices, 200, BaselineDensityForecaster(),
+                       dte=21, asof=asof, calendar=cal)
+
+    assert free is not None and held is not None
+    assert held["regime_stressed"] is True
+    assert held["traded"] is False, "a dated earnings print must veto the entry"
+    assert "earnings" in (held["gate_reason"] or "")
+    # an event OUTSIDE the option's life must not veto anything
+    led3 = PaperLedger()
+    far = led3.record(chain, prices, 200, BaselineDensityForecaster(), dte=21,
+                      asof=asof, calendar=EventCalendar(
+                          [MarketEvent("2025-01-01", chain.symbol, "earnings")]))
+    assert far["traded"] == free["traded"]
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
