@@ -16,6 +16,7 @@ option-implied (risk-neutral) distribution. The gap is the tradeable edge.
     surface   SVI IV-surface fit -> densify sparse chains for robust Q extraction
     sentiment Phase-2 NLP: news -> sentiment feature (lexicon core, FinBERT optional)
     news_signal  forward-looking vol-regime gate from sentiment (feeds edge.stressed)
+    fund_flow  option footprint of the big income ETFs (supply map, crowding)
     events    scheduled-event gate: earnings/FDA inside the option's life
     macro     macro regime gate: curve/credit/VIX-term/tightening -> vol-risk veto
 
@@ -23,10 +24,10 @@ Production target: swap `baseline`'s parameter function for a TFT-encoder + MDN
 head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
-from . import (baseline, calibration, density, edge, events, macro, mdn,
-               news_signal, objective, rnd, sentiment, spreads, strike_scan,
-               surface, trade_card)
+from . import (baseline, calibration, density, edge, events, fund_flow, macro,
+               mdn, news_signal, objective, rnd, sentiment, spreads,
+               strike_scan, surface, trade_card)
 
 __all__ = ["density", "baseline", "mdn", "rnd", "edge", "objective",
            "sentiment", "news_signal", "surface", "strike_scan", "macro",
-           "spreads", "calibration", "trade_card", "events"]
+           "spreads", "calibration", "trade_card", "events", "fund_flow"]

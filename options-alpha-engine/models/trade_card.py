@@ -83,6 +83,8 @@ class TradeCard:
     # --- trust ------------------------------------------------------------
     calibration_note: str = ""
     warnings: list = field(default_factory=list)
+    crowding: float = 0.0          # share of mapped fund supply at our strike
+    crowding_note: str = ""
 
     @property
     def reward_risk(self) -> float:
@@ -114,6 +116,8 @@ class TradeCard:
                     f"   reward:risk {self.reward_risk:.2f}   "
                     f"expected value {self.expected_value:+,.2f} under P",
                     ""]
+        if self.crowding_note:
+            out += [f" FUND FLOW  crowding {self.crowding:.0%}   {self.crowding_note}", ""]
         if self.calibration_note:
             out += [f" TRUST  {self.calibration_note}", ""]
         for wmsg in self.warnings:
@@ -141,7 +145,7 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
                min_vrp: float = 0.0, direction_threshold: float = 0.12,
                target_q: float = 0.75, stop_q: float = 0.25,
                momentum_weight: float = 0.5, calibration=None,
-               calendar=None) -> TradeCard:
+               calendar=None, fund_books=None, atm_strike: float | None = None) -> TradeCard:
     """Collapse the engine's output into one decision card for a single expiry.
 
     ``calibration`` is an optional models.calibration.CalibrationReport; when given,
@@ -153,6 +157,12 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
     that implied vol is EVENT premium priced against a scheduled jump, not a
     mispricing a HAR-RV forecast has spotted. This is the single most important
     guard for SINGLE-STOCK options and has no analogue in crypto.
+
+    ``fund_books`` is an optional list of models.fund_flow.FundBook (the daily
+    published holdings of covered-call ETFs). When given, the card reports whether
+    the strike we would sell is one the big mechanical sellers already dominate —
+    information, not a veto: whether crowded supply means avoid or follow is an
+    empirical question this repo has not settled.
     """
     T = dte / 365.0
     spot = chain.spot
@@ -234,6 +244,17 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
         reward, risk = abs(target - entry), abs(stop - entry)
         ev = p_target * reward - p_stop * risk
 
+    # --- fund footprint: are we the marginal seller into someone else's flow? --
+    crowding = 0.0
+    crowding_note = ""
+    if fund_books:
+        from .fund_flow import crowding_score, supply_map
+        k = atm_strike if atm_strike else round(spot)
+        buckets = supply_map(fund_books, chain.symbol, spot)
+        crowding, crowding_note = crowding_score(k, "call", dte, chain.asof, buckets)
+        if crowding > 0.25 and vol_side == "SELL VOL":
+            warnings.append(f"CROWDED SUPPLY: {crowding_note}")
+
     # --- trust ------------------------------------------------------------
     note = ""
     if calibration is not None:
@@ -265,4 +286,5 @@ def build_card(chain: OptionChain, forecaster, prices, *, dte: int,
         entry=entry, target=target, stop=stop, p_target=p_target, p_stop=p_stop,
         reward=reward, risk=risk, expected_value=ev,
         calibration_note=note, warnings=warnings,
+        crowding=crowding, crowding_note=crowding_note,
     )
