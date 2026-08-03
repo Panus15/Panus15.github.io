@@ -230,6 +230,7 @@ def run_hedged_backtest(
             underlying="U", strike=K, expiry_days=dte, kind="put",
             quantity=-1, entry_price=pricing.price(spot, K, dte / 252, r, q, iv_entry, "put"),
             spot=spot, r=r, q=q, vol=iv_entry, multiplier=contract_mult,
+            days_per_year=252.0,      # `dte` here counts TRADING bars, not calendar days
         )
         size = portfolio.size_by_cvar(
             equity, template,
@@ -245,6 +246,7 @@ def run_hedged_backtest(
             underlying="U", strike=K, expiry_days=dte, kind="put",
             quantity=-size, entry_price=template.entry_price,
             spot=spot, r=r, q=q, vol=iv_entry, multiplier=contract_mult,
+            days_per_year=252.0,      # `dte` here counts TRADING bars, not calendar days
         )
         ok, reason = gov.can_add(short_straddle_leg, portfolio.Portfolio(), equity, drawdown)
         if not ok:

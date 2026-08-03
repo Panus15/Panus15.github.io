@@ -206,6 +206,29 @@ def test_to_defined_risk_bounds_worst_case_loss():
 # --------------------------------------------------------------------------- #
 # self-runner (same pattern as the other tests)
 # --------------------------------------------------------------------------- #
+def test_position_tenor_honours_the_callers_day_count():
+    """A backtest that counts TRADING bars must not be sized on a calendar tenor.
+
+    Position.T was hardcoded to expiry_days/365 while every simulation loop in
+    this repo prices the same position at dte/252, because their `dte` counts
+    trading bars. At 21 bars that is a 1.45x difference in T, and the governor was
+    therefore sizing on an option with ~17% less vega than the one being held —
+    it under-measured the risk of every position it approved.
+    """
+    kw = dict(underlying="U", strike=100.0, expiry_days=21, kind="put", quantity=-1,
+              entry_price=1.0, spot=100.0, r=0.03, q=0.0, vol=0.25, multiplier=100)
+    cal = Position(**kw)                      # default: calendar days
+    trd = Position(**kw, days_per_year=252.0)  # caller counts trading bars
+    assert abs(cal.T - 21 / 365.0) < 1e-12
+    assert abs(trd.T - 21 / 252.0) < 1e-12
+    v_cal = cal.contract_greeks().vega
+    v_trd = trd.contract_greeks().vega
+    assert v_trd > v_cal, (v_cal, v_trd)
+    assert 0.14 < 1 - v_cal / v_trd < 0.20, (
+        f"a 21-bar tenor on the wrong clock understates vega by "
+        f"{1 - v_cal / v_trd:.1%}; the measured figure was 16.8%")
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

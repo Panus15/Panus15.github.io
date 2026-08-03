@@ -77,12 +77,26 @@ class Position:
     q: float = 0.0            # dividend yield
     vol: float = 0.20         # implied vol at entry (annualised)
     multiplier: int = DEFAULT_MULTIPLIER
+    #: Days per year for this position's tenor. 365 is right for a CALENDAR expiry
+    #: ("30 days to expiry"); 252 is right when the caller counts TRADING bars.
+    #: Both conventions exist in this repo and mixing them silently was a real bug —
+    #: see the note on `T` below.
+    days_per_year: float = 365.0
 
     # --- time --------------------------------------------------------------- #
     @property
     def T(self) -> float:
-        """Time to expiry in YEARS (pricing convention)."""
-        return self.expiry_days / 365.0
+        """Time to expiry in YEARS.
+
+        This used to be hardcoded to ``expiry_days / 365``, while the simulation
+        loops in hedged_backtest / signal_backtest price the SAME position at
+        ``dte / 252`` because their ``dte`` counts trading bars. At a 21-bar tenor
+        that is a 1.45x difference in T, so the risk governor sized on an option
+        with 16.8% less vega than the one actually held — it under-measured the
+        risk of every position it approved. Callers that count bars must pass
+        ``days_per_year=252`` so the sizing sees the tenor being traded.
+        """
+        return self.expiry_days / self.days_per_year
 
     @property
     def is_short(self) -> bool:
