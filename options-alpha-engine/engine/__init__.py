@@ -21,15 +21,17 @@ Public surface:
     crowding_backtest  paired experiment: does selling a FUND-CROWDED strike pay or cost?
     spread_backtest  defined-risk structures realised: do the wings earn their cost?
     robustness   seed ensemble + block bootstrap — how wide is that Sharpe really?
+    rotation_backtest  does the sector rotation chart actually predict anything?
 """
 
 from . import (adapters, american, backtest, benchmark, crowding_backtest,
                data, deribit, hedged_backtest, ibkr, iv, portfolio, pricing,
-               robustness, signal, signal_backtest, sizing, spread_backtest,
-               stress, tradier, volforecast)
+               robustness, rotation_backtest, signal, signal_backtest, sizing,
+               spread_backtest, stress, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
            "hedged_backtest", "signal_backtest", "benchmark", "american",
-           "stress", "crowding_backtest", "spread_backtest", "robustness"]
+           "stress", "crowding_backtest", "spread_backtest", "robustness",
+           "rotation_backtest"]
 __version__ = "0.1.0"
