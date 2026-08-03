@@ -14,6 +14,12 @@ python3 tests/test_engine.py   # 7 correctness tests (put-call parity, IV round-
 
 ---
 
+
+> **Start here:** [`PIPELINE.md`](PIPELINE.md) — the whole system on one
+> page: the flow, every measured number, and how to run it.
+> [`PREREGISTRATION.md`](PREREGISTRATION.md) locks the parameters and the
+> decision rules *before* any real data is seen.
+
 ## TL;DR — คำตอบ 2 ข้อที่ถามมา
 
 ### 1) เริ่มจากอะไรก่อน: ท่อ Greeks/IV หรือ NLP ข่าว?
