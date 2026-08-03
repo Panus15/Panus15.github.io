@@ -88,8 +88,23 @@ def pit_values(forecaster, windows, *, r: float = 0.0, q: float = 0.0,
     return out
 
 
-def ks_uniform(u) -> tuple[float, float]:
-    """(KS distance from U(0,1), asymptotic p-value). Small D / large p = uniform."""
+def ks_uniform(u, *, n_effective: int | None = None) -> tuple[float, float]:
+    """(KS distance from U(0,1), asymptotic p-value). Small D / large p = uniform.
+
+    ``n_effective`` is the number of approximately INDEPENDENT observations behind
+    ``u``, and it matters more here than it looks. The Kolmogorov tail scales the
+    distance by sqrt(n), so feeding it overlapping windows — the default output of
+    ``objective.build_windows``, where consecutive windows share all but one bar of
+    context and all but one day of horizon — inflates the test statistic by roughly
+    sqrt(horizon). On a 30-day horizon that is a 5.5x overstatement of significance:
+    a p of 0.30 is reported as 0.005, and the density gets declared miscalibrated on
+    the strength of an assumption the data never satisfied. Pass
+    ``objective.effective_sample_size(windows, stride=...)``. Defaults to len(u),
+    which is correct only when the windows really are independent.
+
+    D itself is computed on ALL of ``u`` — more data still estimates the distance
+    better; it is only the p-value that must be told how much of it is real.
+    """
     n = len(u)
     if n == 0:
         raise ValueError("no PIT values")
@@ -97,8 +112,9 @@ def ks_uniform(u) -> tuple[float, float]:
     d = 0.0
     for i, x in enumerate(s):
         d = max(d, (i + 1) / n - x, x - i / n)
+    n_eff = max(1, int(n_effective if n_effective is not None else n))
     # Kolmogorov asymptotic tail: Q(t) = 2 * sum_{k>=1} (-1)^{k-1} e^{-2k^2 t^2}
-    t = (math.sqrt(n) + 0.12 + 0.11 / math.sqrt(n)) * d
+    t = (math.sqrt(n_eff) + 0.12 + 0.11 / math.sqrt(n_eff)) * d
     p = 2.0 * sum((-1) ** (k - 1) * math.exp(-2.0 * k * k * t * t) for k in range(1, 101))
     return d, min(1.0, max(0.0, p))
 
@@ -126,8 +142,14 @@ class CalibrationReport:
     centered_sd: float = UNIFORM_SD
     centered_coverage_90: float = 0.90
     realized_drift: float = 0.0  # annualised, hindsight — context, not a fault
+    n_effective: int = 0         # independent observations behind the p-value
 
     def summary(self) -> str:
+        eff = ""
+        if self.n_effective and self.n_effective < self.n:
+            eff = (f" on {self.n_effective} INDEPENDENT of them "
+                   f"(the windows overlap; n={self.n} would overstate significance "
+                   f"~{math.sqrt(self.n / max(self.n_effective, 1)):.1f}x)")
         return (f"PIT calibration over {self.n} out-of-sample windows\n"
                 f"  RAW      mean={self.mean:.3f} (0.500)  sd={self.sd:.3f} "
                 f"({UNIFORM_SD:.3f})  cover90={self.coverage_90:.1%}\n"
@@ -135,7 +157,8 @@ class CalibrationReport:
                 f"  cover90={self.centered_coverage_90:.1%}   <- judges the WIDTH\n"
                 f"  sample realised drift {self.realized_drift:+.1%}/yr "
                 f"(a direction-neutral forecast is EXPECTED to skew the raw PIT here)\n"
-                f"  KS D={self.ks_d:.3f} p={self.ks_p:.3f}   histogram {self.histogram}\n"
+                f"  KS D={self.ks_d:.3f} p={self.ks_p:.3f}{eff}\n"
+                f"  histogram {self.histogram}\n"
                 f"  -> {self.verdict}; suggested P-vol scale x{self.vol_scale:.2f}")
 
 
@@ -146,10 +169,30 @@ def pit_histogram(u, bins: int = 10) -> list:
     return counts
 
 
-def _verdict(mean: float, sd: float, tol_mean: float, tol_sd: float) -> str:
+#: Below this many INDEPENDENT windows the PIT cannot support a verdict. The
+#: standard error of a uniform's sd on n points is ~1/sqrt(12n): at n=10 that is
+#: 0.091, three times the 0.02 tolerance the verdict is decided on — so a "TOO
+#: NARROW" call there is a coin flip dressed as a diagnosis.
+MIN_EFFECTIVE_WINDOWS = 25
+
+
+def _verdict(mean: float, sd: float, tol_mean: float, tol_sd: float,
+             n_effective: int | None = None) -> str:
     """Judge the WIDTH from a CENTERED PIT. The location is reported separately:
     a direction-neutral forecast is supposed to be wrong about drift, and that
-    says nothing about the variance edge."""
+    says nothing about the variance edge.
+
+    A verdict is withheld when too few INDEPENDENT windows back it. This matters
+    because the verdict is load-bearing: it is what tells the operator the reported
+    VRP is overstated, and it used to be issued off a few hundred overlapping
+    windows that amounted to ten real observations.
+    """
+    if n_effective is not None and n_effective < MIN_EFFECTIVE_WINDOWS:
+        side = "narrow" if sd > UNIFORM_SD else "wide"
+        return (f"NOT ENOUGH INDEPENDENT DATA — {n_effective} independent windows "
+                f"(need >= {MIN_EFFECTIVE_WINDOWS}). The PIT leans {side} "
+                f"(sd={sd:.3f} vs {UNIFORM_SD:.3f}) but on this sample that is "
+                f"inside the noise; extend the history before acting on it")
     if sd > UNIFORM_SD + tol_sd:
         return ("TOO NARROW — outcomes land in the tails too often; the P vol is too "
                 "LOW, so any reported VRP is OVERSTATED by that bias")
@@ -238,8 +281,16 @@ def walk_forward_scale(forecaster, prices, *, dte: int, context: int = 63,
 
 def calibration_report(forecaster, windows, *, r: float = 0.0, q: float = 0.0,
                        bins: int = 10, tol_mean: float = 0.05,
-                       tol_sd: float = 0.02, with_scale: bool = True) -> CalibrationReport:
-    """Full PIT diagnosis of a forecaster on leak-free windows (objective.build_windows)."""
+                       tol_sd: float = 0.02, with_scale: bool = True,
+                       stride: int = 1) -> CalibrationReport:
+    """Full PIT diagnosis of a forecaster on leak-free windows (objective.build_windows).
+
+    ``stride`` must match the stride the windows were built with. It does not
+    change any estimate — only the p-value, which is computed on the number of
+    independent observations rather than the number of rows.
+    """
+    from models.objective import effective_sample_size
+
     u = pit_values(forecaster, windows, r=r, q=q)
     if not u:
         raise ValueError("no windows")
@@ -252,15 +303,18 @@ def calibration_report(forecaster, windows, *, r: float = 0.0, q: float = 0.0,
         return m, math.sqrt(v)
 
     n = len(u)
+    n_eff = effective_sample_size(windows, stride=stride)
     mean, sd = _ms(u)
     cmean, csd = _ms(uc)
-    d, p = ks_uniform(uc)          # uniformity of the WIDTH-relevant PIT
+    d, p = ks_uniform(uc, n_effective=n_eff)   # uniformity of the WIDTH-relevant PIT
     scale = suggest_vol_scale(forecaster, windows, r=r, q=q) if with_scale else 1.0
     return CalibrationReport(
         n=n, mean=mean, sd=sd, ks_d=d, ks_p=p,
         coverage_50=coverage(u, 0.50), coverage_90=coverage(u, 0.90),
-        verdict=_verdict(cmean, csd, tol_mean, tol_sd), vol_scale=scale,
+        verdict=_verdict(cmean, csd, tol_mean, tol_sd, n_effective=n_eff),
+        vol_scale=scale,
         histogram=pit_histogram(uc, bins),
         centered_mean=cmean, centered_sd=csd,
         centered_coverage_90=coverage(uc, 0.90), realized_drift=drift,
+        n_effective=n_eff,
     )

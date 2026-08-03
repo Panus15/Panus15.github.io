@@ -154,6 +154,19 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
               f"[{prem_src}]; no quote above is used.")
         print(f"  Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
               f"trades={res.n_trades} skipped={res.n_skipped} ({reasons})")
+        # A single-path Sharpe is the easiest number in this repo to over-read.
+        # Bootstrap the realised trades so the width of the claim is visible next
+        # to the claim itself, rather than left for the reader to imagine.
+        if len(res.trade_pnl) >= 5:
+            from engine.robustness import block_bootstrap
+            boot = block_bootstrap(res.trade_pnl, n_boot=1000, block=3)
+            mt = boot["mean_trade"]
+            report["bootstrap"] = {"mean_trade": mt.point, "lo": mt.lo, "hi": mt.hi,
+                                   "spans_zero": mt.spans_zero}
+            print(f"  bootstrap over {boot['n_trades']} trades: mean trade P&L "
+                  f"{mt.point:+,.2f}  90% [{mt.lo:+,.2f}, {mt.hi:+,.2f}]"
+                  + ("  <- SPANS ZERO: not distinguishable from luck"
+                     if mt.spans_zero else ""))
         if res.n_trades == 0 and res.skip_reasons:
             top = max(res.skip_reasons, key=res.skip_reasons.get)
             why = {
@@ -178,9 +191,10 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     # forecast is direction-neutral by design.
     if len(prices) >= 150:
         from models import calibration
-        windows = objective_windows(prices, dte)
+        windows, w_stride = objective_windows(prices, dte)
         if len(windows) >= 40:
-            cal = calibration.calibration_report(forecaster, windows)
+            cal = calibration.calibration_report(forecaster, windows,
+                                                 stride=w_stride)
             report["calibration"] = {"vol_scale": cal.vol_scale,
                                      "verdict": cal.verdict.split(" — ")[0],
                                      "coverage_90": cal.centered_coverage_90}
@@ -248,12 +262,29 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     return report
 
 
-def objective_windows(prices: list, dte: int, *, context: int = 63):
-    """Leak-free (context, horizon, outcome) windows at this horizon, capped so a
-    long history does not make the calibration scan crawl."""
+def objective_windows(prices: list, dte: int, *, context: int = 63,
+                      stride: int | None = None, cap: int = 250):
+    """Leak-free (context, horizon, outcome) windows at this horizon.
+
+    Returns ``(windows, stride)``. The stride is not decoration — the caller must
+    hand it to ``calibration_report`` so the p-value is computed on the number of
+    INDEPENDENT observations. Overlapping windows are kept for the point estimates
+    (mean, sd, coverage, the vol scale), which are merely inefficient under overlap
+    rather than wrong; it is only the significance claim that breaks.
+
+    The old body was ``w[::max(1, len(w) // 250)]``, which at typical history
+    lengths evaluates to a step of 1 and thins nothing — so ~300 windows sharing
+    all but one day of their horizon reached a KS test that believed they were
+    independent draws, and reported roughly 5x more significance than it had.
+    """
     from models import objective
-    w = objective.build_windows(prices, context=context, horizons=(dte,))
-    return w[::max(1, len(w) // 250)]
+    step = max(1, int(stride)) if stride else 1
+    w = objective.build_windows(prices, context=context, horizons=(dte,),
+                                stride=step)
+    if cap and len(w) > cap:
+        keep = max(1, len(w) // cap)
+        w, step = w[::keep], step * keep
+    return w, step
 
 
 def _promotion_gate(prices: list) -> dict:

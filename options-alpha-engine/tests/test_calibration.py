@@ -36,7 +36,13 @@ class FixedVolForecaster:
 
 
 def _windows(n=600, seed=0, vol=TRUE_VOL):
-    """Outcomes drawn from the TRUE log-normal: ln(S_T/S) ~ N(-v²T/2, v²T)."""
+    """Outcomes drawn from the TRUE log-normal: ln(S_T/S) ~ N(-v²T/2, v²T).
+
+    These are INDEPENDENT draws, not a rolling window over one price path, so they
+    carry n genuinely independent observations. Callers must say so with
+    ``stride=H`` — ``calibration_report`` conservatively assumes every-bar overlap
+    otherwise, and would count 600 of these as 20.
+    """
     rng = random.Random(seed)
     s = vol * math.sqrt(T)
     out = []
@@ -47,7 +53,7 @@ def _windows(n=600, seed=0, vol=TRUE_VOL):
 
 
 def test_correct_density_is_uniform_and_calibrated():
-    rep = calibration_report(FixedVolForecaster(TRUE_VOL), _windows())
+    rep = calibration_report(FixedVolForecaster(TRUE_VOL), _windows(), stride=H)
     assert abs(rep.mean - 0.5) < 0.05
     assert abs(rep.sd - UNIFORM_SD) < 0.02
     assert rep.ks_p > 0.05                              # cannot reject uniformity
@@ -58,7 +64,7 @@ def test_correct_density_is_uniform_and_calibrated():
 
 def test_too_narrow_forecast_is_diagnosed_and_scaled_up():
     # Forecast vol HALF the truth -> outcomes hit the tails -> U-shaped PIT.
-    rep = calibration_report(FixedVolForecaster(TRUE_VOL * 0.5), _windows())
+    rep = calibration_report(FixedVolForecaster(TRUE_VOL * 0.5), _windows(), stride=H)
     assert rep.verdict.startswith("TOO NARROW")
     assert rep.sd > UNIFORM_SD                          # mass pushed to the edges
     assert rep.vol_scale > 1.4                          # tells you to roughly double
@@ -68,7 +74,7 @@ def test_too_narrow_forecast_is_diagnosed_and_scaled_up():
 
 
 def test_too_wide_forecast_is_diagnosed_and_scaled_down():
-    rep = calibration_report(FixedVolForecaster(TRUE_VOL * 2.0), _windows())
+    rep = calibration_report(FixedVolForecaster(TRUE_VOL * 2.0), _windows(), stride=H)
     assert rep.verdict.startswith("TOO WIDE")
     assert rep.sd < UNIFORM_SD                          # mass pulled to the middle
     assert rep.vol_scale < 0.75
@@ -115,8 +121,8 @@ def test_calibrated_forecaster_applies_the_scale_and_fixes_the_pit():
     assert abs(d1.log_return_vol(SPOT, T) / d0.log_return_vol(SPOT, T) - 1.6) < 1e-6
 
     # and the correction actually calibrates it
-    before = calibration_report(biased, w, with_scale=False)
-    after = calibration_report(fixed, w, with_scale=False)
+    before = calibration_report(biased, w, with_scale=False, stride=H)
+    after = calibration_report(fixed, w, with_scale=False, stride=H)
     assert before.verdict.startswith("TOO NARROW")
     assert after.verdict.startswith("CALIBRATED")
     assert abs(after.centered_sd - UNIFORM_SD) < abs(before.centered_sd - UNIFORM_SD)
@@ -152,6 +158,97 @@ def test_walk_forward_scale_never_peeks_and_degrades_safely():
     # and the estimate is clamped to a sane band
     s = walk_forward_scale(FixedVolForecaster(TRUE_VOL / 1.5), prices, dte=21)
     assert 0.5 <= s <= 2.0
+
+
+# --------------------------------------------------------------------------
+# overlapping windows are not independent draws, and the p-value must know it
+# --------------------------------------------------------------------------
+
+def test_overlapping_windows_do_not_get_independent_credit():
+    """objective.build_windows emits a window per bar; they share almost everything.
+
+    Consecutive windows share context-1 of their context and h-1 of their horizon,
+    so ~300 of them carry roughly 10 independent observations. The Kolmogorov tail
+    scales by sqrt(n), so handing it the raw count overstates significance by about
+    sqrt(h) — measured here at 5.5x, turning p=1.00 into p=0.005.
+    """
+    from engine.data import SyntheticAdapter
+    from models import objective
+    from models.baseline import BaselineDensityForecaster
+
+    prices = SyntheticAdapter(seed=4).price_history("X", 400)
+    w = objective.build_windows(prices, context=63, horizons=(30,))
+    assert len(w) > 250, len(w)
+
+    n_eff = objective.effective_sample_size(w, stride=1)
+    assert 5 <= n_eff <= 15, f"~n/h expected, got {n_eff} from {len(w)}"
+
+    fc = BaselineDensityForecaster()
+    u = pit_values(fc, w, centered=True)
+    d_naive, p_naive = ks_uniform(u)
+    d_eff, p_eff = ks_uniform(u, n_effective=n_eff)
+    assert d_naive == d_eff, "the DISTANCE uses all the data; only p changes"
+    assert p_eff > p_naive * 10, (p_naive, p_eff)
+    assert p_naive < 0.05 < p_eff, (
+        f"the naive p claims significance ({p_naive:.4f}) that the effective "
+        f"sample does not support ({p_eff:.4f})")
+
+
+def test_non_overlapping_windows_get_full_credit():
+    from engine.data import SyntheticAdapter
+    from models import objective
+    prices = SyntheticAdapter(seed=4).price_history("X", 1200)
+    every = objective.build_windows(prices, context=63, horizons=(30,))
+    w = objective.build_windows(prices, context=63, horizons=(30,), stride=30)
+    # the stride must actually SPACE the windows, not just be recorded
+    expected = len(range(63, len(prices) - 30, 30))
+    assert len(w) == expected, f"stride=30 should give {expected} windows, got {len(w)}"
+    assert len(w) < len(every) / 20
+    assert objective.effective_sample_size(w, stride=30) == len(w)
+    # and the offsets carve out genuinely different sub-samples
+    a = objective.build_windows(prices, context=63, horizons=(30,), stride=30, offset=0)
+    b = objective.build_windows(prices, context=63, horizons=(30,), stride=30, offset=7)
+    assert [x[2] for x in a] != [x[2] for x in b]
+
+
+def test_a_verdict_is_withheld_when_too_few_independent_windows_back_it():
+    """The verdict tells the operator the VRP is overstated — it must be earned."""
+    from models.calibration import MIN_EFFECTIVE_WINDOWS
+
+    thin = calibration_report(FixedVolForecaster(TRUE_VOL * 0.5), _windows(n=600),
+                              with_scale=False, stride=1)          # -> n_eff = 20
+    assert thin.n_effective < MIN_EFFECTIVE_WINDOWS
+    assert "NOT ENOUGH INDEPENDENT DATA" in thin.verdict, thin.verdict
+    assert "leans narrow" in thin.verdict, "it should still say which way it leans"
+
+    fat = calibration_report(FixedVolForecaster(TRUE_VOL * 0.5), _windows(n=600),
+                             with_scale=False, stride=H)           # -> n_eff = 600
+    assert fat.n_effective >= MIN_EFFECTIVE_WINDOWS
+    assert fat.verdict.startswith("TOO NARROW"), fat.verdict
+    # the point estimates are identical either way — only the CLAIM changed
+    assert abs(thin.sd - fat.sd) < 1e-12 and abs(thin.ks_d - fat.ks_d) < 1e-12
+
+
+def test_the_run_live_window_helper_reports_its_own_stride():
+    """The old thinning computed to a step of 1 and thinned nothing."""
+    from engine.data import SyntheticAdapter
+    from tools.run_live import objective_windows
+    from models import objective
+
+    short = SyntheticAdapter(seed=4).price_history("X", 400)
+    w, stride = objective_windows(short, 30)
+    assert stride == 1 and len(w) > 250
+    assert objective.effective_sample_size(w, stride=stride) < 20
+
+    # a long history is thinned, and the stride it reports reflects the thinning —
+    # which is the whole point: thinning without saying so was the original bug
+    long_p = SyntheticAdapter(seed=4).price_history("X", 3000)
+    raw = objective.build_windows(long_p, context=63, horizons=(30,))
+    w2, stride2 = objective_windows(long_p, 30)
+    assert stride2 > 1 and len(w2) < len(raw) / 5
+    assert len(w2) * stride2 >= len(raw) - stride2, "thinning must not drop coverage"
+    assert objective.effective_sample_size(w2, stride=stride2) > \
+        objective.effective_sample_size(w, stride=stride)
 
 
 def _run_all():

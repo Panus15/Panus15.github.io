@@ -107,11 +107,18 @@ class HedgedBacktestResult:
     n_skipped: int
     skip_reasons: dict = field(default_factory=dict)
     trade_pnl: list = field(default_factory=list)
+    n_killed_midtrade: int = 0          # positions liquidated by the kill-switch
+    worst_intratrade_drawdown: float = 0.0
 
     def summary(self) -> str:
         skips = "; ".join(f"{k}:{v}" for k, v in self.skip_reasons.items()) or "none"
-        return (f"trades={self.n_trades}  skipped={self.n_skipped} ({skips})\n"
-                + self.metrics.summary())
+        out = (f"trades={self.n_trades}  skipped={self.n_skipped} ({skips})\n"
+               + self.metrics.summary())
+        if self.n_killed_midtrade:
+            out += (f"\nkill-switch LIQUIDATED {self.n_killed_midtrade} position(s) "
+                    f"mid-trade (worst intra-trade drawdown "
+                    f"{self.worst_intratrade_drawdown:.1%})")
+        return out
 
 
 def run_hedged_backtest(
@@ -134,6 +141,7 @@ def run_hedged_backtest(
     iv_shock_cap: float = 3.0,
     contract_mult: int = MULT,
     event_at=None,
+    kill_midtrade: bool = True,
 ) -> HedgedBacktestResult:
     """Walk-forward delta-hedged short-straddle backtest over ``prices``.
 
@@ -187,6 +195,8 @@ def run_hedged_backtest(
     trade_pnl: list[float] = []
     skip_reasons: dict[str, int] = {}
     n_trades = 0
+    n_killed = 0
+    killed_dd = 0.0
 
     i0 = warmup
     while i0 + dte < n:
@@ -272,6 +282,27 @@ def run_hedged_backtest(
             trade_total += day_pnl
             v_prev, hedge_prev = v_now, hedge_now
 
+            # --- INTRA-TRADE drawdown kill-switch --------------------------- #
+            # Equity used to be updated only after the whole holding period, and
+            # drawdown read once before entry — so a crash arriving on day 3 of a
+            # 21-day trade blew straight through the limit and the switch found
+            # out eighteen sessions later. A limit that is only checked when you
+            # are flat is not a limit. Mark equity every day, and when the limit
+            # breaks do what a real kill-switch does: LIQUIDATE, paying the exit
+            # spread and unwinding the hedge, rather than ride it to expiry.
+            if kill_midtrade and rem > 0:
+                eq_now = equity + trade_total
+                dd_now = max(0.0, 1.0 - eq_now / max(peak, eq_now))
+                if dd_now > limits.max_drawdown:
+                    exit_cost = (size * contract_mult * 0.5
+                                 * (spread_frac * v_now + 0.04)
+                                 + abs(hedge_now) * S * hedge_bps)
+                    pnl_by_day[s] -= exit_cost
+                    trade_total -= exit_cost
+                    n_killed += 1
+                    killed_dd = max(killed_dd, dd_now)
+                    break
+
         equity += trade_total
         peak = max(peak, equity)
         trade_pnl.append(trade_total)
@@ -286,4 +317,6 @@ def run_hedged_backtest(
         n_skipped=sum(skip_reasons.values()),
         skip_reasons=skip_reasons,
         trade_pnl=trade_pnl,
+        n_killed_midtrade=n_killed,
+        worst_intratrade_drawdown=killed_dd,
     )

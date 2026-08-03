@@ -20,15 +20,16 @@ Public surface:
     stress       overnight-gap / jump stress — the short-gamma risk a smooth backtest hides
     crowding_backtest  paired experiment: does selling a FUND-CROWDED strike pay or cost?
     spread_backtest  defined-risk structures realised: do the wings earn their cost?
+    robustness   seed ensemble + block bootstrap — how wide is that Sharpe really?
 """
 
 from . import (adapters, american, backtest, benchmark, crowding_backtest,
                data, deribit, hedged_backtest, ibkr, iv, portfolio, pricing,
-               signal, signal_backtest, sizing, spread_backtest, stress,
-               tradier, volforecast)
+               robustness, signal, signal_backtest, sizing, spread_backtest,
+               stress, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
            "hedged_backtest", "signal_backtest", "benchmark", "american",
-           "stress", "crowding_backtest", "spread_backtest"]
+           "stress", "crowding_backtest", "spread_backtest", "robustness"]
 __version__ = "0.1.0"

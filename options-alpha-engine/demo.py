@@ -306,6 +306,21 @@ def main() -> None:
     print("  -> a working delta hedge already removes what the wings are sold to cap,")
     print("     so buy them for the risk you CANNOT hedge (gaps), not the risk you can\n")
 
+    # 11. How much of any of this is the sample? --------------------------------
+    # Every number above came off ONE path. Holding the strategy fixed and changing
+    # only the seed, this fixture's Sharpe runs from about -0.02 to +3.9 — so a
+    # point estimate quoted without its width is the easiest way to fool yourself
+    # in this whole codebase. Two views: rerun the world, and resample the trades.
+    from engine.robustness import (block_bootstrap, bootstrap_summary,
+                                   seed_ensemble)
+    ens = seed_ensemble(lambda p: run_hedged_backtest(p),
+                        lambda s: price_path_with_crash(900, seed=s),
+                        seeds=range(1, 21))
+    print(ens.summary())
+    one = run_hedged_backtest(price_path_with_crash(900))
+    print(bootstrap_summary(block_bootstrap(one.trade_pnl)))
+    print("  -> read every Sharpe printed above through these intervals\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 

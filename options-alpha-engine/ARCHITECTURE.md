@@ -159,6 +159,18 @@ honest, cost-inclusive verdict leaves on the right.
   backtest omits becomes a number. (A finding worth internalising: *small* gaps
   can help — you then sell elevated IV — but a *big* un-hedgeable move bleeds; the
   gate defends the tail, not the average.)
+- **`engine/robustness.py`** — the width of every claim above. Holding the
+  strategy and every parameter fixed and changing only the RNG seed, this repo's
+  own fixture produces Sharpe −0.02, +0.42, +0.66, +1.27, +1.84, +1.85, +1.87,
+  +3.91. Those are the same strategy; a reader shown "Sharpe 1.85" concludes
+  something a reader shown "−0.02" would not, and neither number earns that. Two
+  instruments: a **seed ensemble** (rerun the world — the right question on a
+  synthetic fixture) and a **block bootstrap** over realised trade P&L (one path
+  is all you get on real data; contiguous blocks keep a losing streak a losing
+  streak instead of shuffling it into noise). On the shipped crash path the mean
+  trade P&L interval **spans zero** — the profit is not distinguishable from luck
+  at 33 trades, and the report says exactly that. Verified by a coverage oracle:
+  the 90% interval really does contain the truth ~90% of the time.
 - **`engine/spread_backtest.py`** — realises the defined-risk structures
   `models/spreads.py` only ever scored as an expected value, and pairs each one
   against the delta-hedged naked straddle on the *same* dates. Its finding is

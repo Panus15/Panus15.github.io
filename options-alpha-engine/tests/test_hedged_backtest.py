@@ -128,6 +128,87 @@ def test_contract_mult_lets_a_crypto_level_path_trade():
     assert abs(tot_b - tot_a) < 0.05 * abs(tot_a)               # invariant (~half if broken)
 
 
+# --------------------------------------------------------------------------
+# the drawdown kill-switch must work WHILE a position is open
+# --------------------------------------------------------------------------
+
+def _bleeding_path(n=400, start=100.0, vol=0.85, warm=63, seed=3):
+    """Calm, then a long grinding high-vol regime — loss ACCUMULATES day by day.
+
+    Deliberately NOT a gap: this is the regime a kill-switch can actually act in,
+    and price_path_with_crash cannot test it because its damage lands in one bar.
+    """
+    import math
+    import random
+    rng = random.Random(seed)
+    p = [start]
+    for i in range(1, n):
+        v = 0.10 if i < warm + 21 else vol
+        dv = v / math.sqrt(252)
+        p.append(p[-1] * math.exp(-0.5 * dv * dv + dv * rng.gauss(0, 1)))
+    return p
+
+
+def test_kill_switch_liquidates_a_position_that_is_bleeding():
+    """The fix: equity is marked DAILY, not only when the position closes.
+
+    Before this, drawdown was read once before entry and equity updated only after
+    the whole holding period, so a limit of 25% could be blown through by 60% and
+    the switch would not learn about it until the trade expired. A limit that is
+    only checked when you are flat is not a limit.
+    """
+    P = _bleeding_path()
+    lim = portfolio.RiskLimits(max_net_short_vega=1e9, max_drawdown=0.02)
+    kw = dict(prices=P, dte=42, warmup=63, limits=lim, cvar_limit=0.10,
+              model_vega_loss=True)
+    on = run_hedged_backtest(**kw)
+    off = run_hedged_backtest(**kw, kill_midtrade=False)
+
+    assert on.n_killed_midtrade >= 1, "the switch never fired on a bleeding path"
+    assert on.worst_intratrade_drawdown > lim.max_drawdown
+    assert min(on.trade_pnl) > min(off.trade_pnl) * 0.5, (
+        f"liquidating must materially cut the worst trade: "
+        f"{min(on.trade_pnl):,.0f} vs {min(off.trade_pnl):,.0f}")
+    assert on.metrics.total_return > off.metrics.total_return
+    assert "LIQUIDATED" in on.summary()
+
+
+def test_the_kill_switch_charges_the_cost_of_getting_out():
+    """Liquidating is not free — the exit crosses the spread and unwinds the hedge.
+
+    Checked on a path where the switch fires but the damage has ALREADY landed in a
+    single gap bar: there is nothing left to save, so the only difference between
+    the two runs is the exit cost, and it must make the killed run slightly worse.
+    A switch that looked free here would be one that forgot to charge for exiting.
+    """
+    lim = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.03)
+    kw = dict(prices=price_path_with_crash(900), limits=lim, model_vega_loss=True)
+    on = run_hedged_backtest(**kw)
+    off = run_hedged_backtest(**kw, kill_midtrade=False)
+    assert on.n_killed_midtrade == 1, on.n_killed_midtrade
+    assert min(on.trade_pnl) < min(off.trade_pnl), (
+        "a gap that already happened cannot be un-lost; exiting should COST a little")
+    assert abs(min(on.trade_pnl) - min(off.trade_pnl)) < 0.05 * abs(min(off.trade_pnl))
+
+    # The two ledgers must not drift apart. trade_pnl is the per-trade log and the
+    # metrics are built from the per-DAY array; if a cost is charged to one and not
+    # the other, the equity curve and the trade list quietly tell different stories.
+    for res in (on, off):
+        by_day = res.metrics.total_return * 100_000.0
+        assert abs(sum(res.trade_pnl) - by_day) < 1.0, (
+            f"per-trade total {sum(res.trade_pnl):,.2f} != per-day total {by_day:,.2f}")
+
+
+def test_disabling_the_switch_reproduces_the_old_behaviour_exactly():
+    """On a path where the limit never binds, the two runs must be identical."""
+    calm = SyntheticAdapter(seed=5).price_history("X", 620)
+    on = run_hedged_backtest(calm)
+    off = run_hedged_backtest(calm, kill_midtrade=False)
+    assert on.n_killed_midtrade == 0
+    assert on.trade_pnl == off.trade_pnl
+    assert on.metrics.sharpe == off.metrics.sharpe
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
