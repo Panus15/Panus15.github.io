@@ -159,6 +159,26 @@ honest, cost-inclusive verdict leaves on the right.
   backtest omits becomes a number. (A finding worth internalising: *small* gaps
   can help — you then sell elevated IV — but a *big* un-hedgeable move bleeds; the
   gate defends the tail, not the average.)
+- **`models/decision.py`** — the fusion, and the rule that makes it safe: an input
+  with no evidence behind it may only **reduce** size. Of the three things the repo
+  can see about a US equity — the variance edge, sector rotation, fund crowding —
+  exactly one rests on oracle-tested machinery. Letting either of the others *add*
+  conviction would let an unmeasured signal manufacture position size. So
+  `size_multiplier` starts at 1.0, only ever falls, and every reduction names the
+  input that caused it; agreement buys confidence to hold, never licence to press.
+- **`models/tail_fit.py`** — fits the six crash-tail shape constants that
+  `objective.left_tail_pinball` grades challengers against, so "the tail is a
+  guess" stops being an open worry. Walk-forward, the fit improves in-sample loss
+  every time and out-of-sample loss **never** (−0.8% at 5,000 bars, −1.6% at
+  9,000): the shape is not identifiable from a few hundred non-overlapping monthly
+  windows, so the hand-set defaults function as a regulariser.
+- **`engine/book_backtest.py`** — many positions open at once, which no other
+  harness does. That gap hid a real one: with non-overlapping trades the risk
+  governor is handed an **empty book** on every entry, so the correlation-aware
+  aggregation justifying `portfolio.py` had never run in a loop. Sized against an
+  empty book the run peaks at **17,562** of net short vega against a stated cap of
+  **8,000** — a 2.2× breach nothing notices, because no single position is near the
+  cap alone. A per-trade view understates the book by 54–77%.
 - **`engine/robustness.py`** — the width of every claim above. Holding the
   strategy and every parameter fixed and changing only the RNG seed, this repo's
   own fixture produces Sharpe −0.02, +0.42, +0.66, +1.27, +1.84, +1.85, +1.87,

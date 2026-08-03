@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 34 test files · **278 tests, all green** · ~10,300 lines · pure stdlib,
+**Scale:** 36 test files · **298 tests, all green** · ~10,700 lines · pure stdlib,
 no numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 ---
@@ -34,9 +34,13 @@ no numpy/scipy/pandas · every load-bearing change mutation-verified.
                     │        GATES ─────┤                      │
                     │        regime · news · macro · events    │
                     │                   ▼                      │
-                    └──── fund_flow ─→ trade_card ←────────────┘
-                          crowding      one decision screen
-                          warning
+                    └──── fund_flow ─→ trade_card              │
+                          crowding      one decision screen    │
+                             │               │                 │
+                             └───────────────┼─────────────────┘
+                                             ▼
+                                    decision.py  FUSE
+                                    unproven inputs may only CUT size
                                         │
                                         ▼
                               portfolio.py  govern
@@ -47,6 +51,8 @@ no numpy/scipy/pandas · every load-bearing change mutation-verified.
         ▼                ▼              ▼              ▼                ▼
    hedged/signal    book_backtest   spread_backtest  crowding_bt   rotation_bt
    one position     MANY at once    wings vs naked   fund crowding  does RRG work
+                    (governor sees                                  tail_fit: is the
+                     a real book)                                   tail prior any good?
         └────────────────┴──────┬───────┴──────────────┴────────────────┘
                                 ▼
                     robustness.py  seed ensemble + block bootstrap
@@ -221,8 +227,12 @@ Stated here rather than left to be discovered.
    reaches ~18 months. The harness is ready; the data is not.
 3. **The rotation result is synthetic.** Real sector history is free and complete —
    this is the cheapest real answer available and it has not been run.
-4. **The crash tail is a hand-set prior.** `baseline.py` fixes six shape constants
-   and `objective.left_tail_pinball` scores challengers *against that guess*.
+4. **The crash tail is a hand-set prior, but fitting cannot beat it.**
+   `models/tail_fit.py` fits all six shape constants walk-forward: in-sample loss
+   improves every time, out-of-sample **never** (−0.8% at 5,000 bars, −1.6% at
+   9,000). The shape is not identifiable from a few hundred non-overlapping
+   monthly windows, so the defaults act as a regulariser — but the promotion gate
+   still means "beat a prior nobody can beat by fitting", not "models crashes".
 5. **No parameter is walk-forward selected** except the calibration vol scale.
    That is why `PREREGISTRATION.md` locks them before real data arrives.
 6. **No margin, financing, borrow, market impact beyond a flat spread, latency, or

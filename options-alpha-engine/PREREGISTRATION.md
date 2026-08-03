@@ -140,18 +140,26 @@ grounds for either a longer sample under the *same* parameters, or for stopping.
 
 Stated up front so they are not later presented as surprises.
 
-1. **The crash tail is a hand-set prior.** `models/baseline.py` fixes
-   `stress_weight=0.15`, `stress_sd_mult=2.30`, `base_drop_mult=1.10`,
-   `leverage_exp=0.50`, `horizon_exp=0.25`, `realized_gain=1.5`, and
-   `objective.left_tail_pinball` scores challenger models *against that guess*.
-   Passing the tail gate means "beats a hand-tuned prior", not "models crashes".
-2. **The correlation-aware vega cap has never been exercised.** Every harness holds
-   one position at a time, so `RiskGovernor.can_add` always sees an empty book and
-   the N-vs-√N aggregation that justifies the module has never run.
-3. **`portfolio.Position.T` uses a 365 clock while the simulations run 252.**
-   Measured: vega understated 16.8% at a 21-bar tenor. At current contract
-   granularity the rounding absorbs it (3 contracts either way), so it is a
-   correctness defect rather than a live risk, but it is unfixed as of this writing.
+1. **The crash tail is a hand-set prior — now measured, and it holds.**
+   `models/baseline.py` fixes six shape constants and
+   `objective.left_tail_pinball` scores challengers *against that guess*.
+   `models/tail_fit.py` fits all six by coordinate descent on a walk-forward
+   split and finds that fitting improves TRAIN loss every time and TEST loss
+   never: **−0.8% out of sample at 5,000 bars, −1.6% at 9,000**. The shape is not
+   identifiable from a few hundred non-overlapping monthly windows even with
+   ~36 years of daily data. So the defaults act as a regulariser rather than as
+   an unexamined guess — but "beats a prior that cannot be beaten by fitting" is
+   still a weaker claim than "models crashes", and the gate should be read that
+   way.
+2. ~~The correlation-aware vega cap has never been exercised.~~ **CLOSED.**
+   `engine/book_backtest.py` now runs staggered positions across several
+   underlyings so the governor sees a live book. Sizing against an empty book —
+   how every single-position harness does it — peaks at **17,562 of net short
+   vega against a stated cap of 8,000**, a 2.2× breach nothing noticed, because
+   no single position is near the cap alone.
+3. ~~`portfolio.Position.T` uses a 365 clock while the simulations run 252.~~
+   **FIXED.** `Position` takes `days_per_year` and the bar-counting callers pass
+   252. The defect had understated vega by 16.8% at a 21-bar tenor.
 4. **No parameter is walk-forward selected** except the calibration vol scale.
    Everything in §2 is a judgement call, which is exactly why it is locked here.
 5. **Single-name option chains are American** and must be de-Americanized

@@ -20,16 +20,19 @@ option-implied (risk-neutral) distribution. The gap is the tradeable edge.
     events    scheduled-event gate: earnings/FDA inside the option's life
     macro     macro regime gate: curve/credit/VIX-term/tightening -> vol-risk veto
     rotation  sector relative-rotation (RRG): RS-Ratio / RS-Momentum quadrants
+    decision  fuses edge + rotation + crowding; unproven inputs may only CUT size
+    tail_fit  fits the crash-tail shape the promotion gate grades against
 
 Production target: swap `baseline`'s parameter function for a TFT-encoder + MDN
 head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
-from . import (baseline, calibration, density, edge, events, fund_flow, macro,
+from . import (baseline, calibration, decision, density, edge, events, fund_flow,
+               macro,
                mdn, news_signal, objective, rnd, rotation, sentiment, spreads,
-               strike_scan, surface, trade_card)
+               strike_scan, surface, tail_fit, trade_card)
 
 __all__ = ["density", "baseline", "mdn", "rnd", "edge", "objective",
            "sentiment", "news_signal", "surface", "strike_scan", "macro",
            "spreads", "calibration", "trade_card", "events", "fund_flow",
-           "rotation"]
+           "rotation", "decision", "tail_fit"]
