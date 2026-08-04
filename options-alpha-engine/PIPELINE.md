@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 37 test files · **308 tests, all green** · ~11,000 lines · pure stdlib,
+**Scale:** 38 test files · **317 tests, all green** · ~11,200 lines · pure stdlib,
 no numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 ---
@@ -186,14 +186,25 @@ clearly labelled as not being a backtest of the chain above.
 
 ### 3.3 Getting price history in
 
-There is no public data API for TradingView — the Charting Library is a renderer
-you feed, Pine runs on their servers and cannot hand data back, and scraping the
-feeds is against their terms. What IS supported is **Export chart data...** on the
-chart menu, which gives one CSV per symbol. That is the fastest legitimate route
-to the sector history the rotation study needs:
+One command, no key, no signup:
 
 ```bash
-# 12 exports (11 sector ETFs + SPY) -> the one wide CSV the tools read
+python3 -m tools.fetch_prices --out sectors.csv     # 11 sector ETFs + SPY, from stooq
+```
+
+Stooq serves plain daily CSV over a stable URL with no key and no quota, which
+makes it the one source that can sit in a script somebody actually re-runs. It is
+a convenience feed, not a survivorship-safe research database — it will not tell
+you about delistings and its adjustments are its own — so it is fine for deciding
+whether a rotation chart predicts anything on eleven large liquid ETFs, and not
+for a claim that money was made.
+
+If you would rather use chart exports: there is no public data API for TradingView
+(the Charting Library is a renderer you feed, Pine runs on their servers and
+cannot hand data back, and scraping the feeds is against their terms), but
+**Export chart data...** gives one CSV per symbol and this merges them:
+
+```bash
 python3 -m tools.merge_csv --dir tradingview_exports --out sectors.csv --require SPY
 ```
 
