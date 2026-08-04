@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 36 test files · **298 tests, all green** · ~10,700 lines · pure stdlib,
+**Scale:** 37 test files · **308 tests, all green** · ~11,000 lines · pure stdlib,
 no numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 ---
@@ -184,7 +184,31 @@ Prints: model-free Q vol + BKM moments, the P-vs-Q scan, the per-strike board, t
 PIT calibration with its effective sample size, the trade card — and a **simulation**
 clearly labelled as not being a backtest of the chain above.
 
-### 3.3 The dashboards
+### 3.3 Getting price history in
+
+There is no public data API for TradingView — the Charting Library is a renderer
+you feed, Pine runs on their servers and cannot hand data back, and scraping the
+feeds is against their terms. What IS supported is **Export chart data...** on the
+chart menu, which gives one CSV per symbol. That is the fastest legitimate route
+to the sector history the rotation study needs:
+
+```bash
+# 12 exports (11 sector ETFs + SPY) -> the one wide CSV the tools read
+python3 -m tools.merge_csv --dir tradingview_exports --out sectors.csv --require SPY
+```
+
+Rows are matched on the DATE, never on row number: symbols have different
+holidays and listing dates (XLRE lists 2015, XLC 2018), and a positional merge
+would pair one sector's Tuesday with another's Wednesday and corrupt every
+relative-strength number with nothing downstream able to notice. The merge prints
+each symbol's own span and names whichever one truncated the join.
+
+Real time is not the constraint here. The RRG needs 63 bars of history per point
+and the backtest wants 1,300+ bars for ~55 rebalance dates; one live tick changes
+nothing. TradingView also cannot supply an option chain at all, which is the core
+input for everything on the options side.
+
+### 3.4 The dashboards
 
 ```bash
 python3 -m tools.rotation_dashboard --csv sectors.csv --out rotation.html
@@ -192,7 +216,7 @@ python3 -m tools.rotation_dashboard --demo --out rotation.html      # no data ne
 python3 demo.py                                                     # the whole loop
 ```
 
-### 3.4 In Python
+### 3.5 In Python
 
 ```python
 from engine.book_backtest import run_book_backtest
@@ -209,7 +233,7 @@ print(run_crowding_backtest(prices, chain_at, supply_at, dte=21).summary())
 print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ```
 
-### 3.5 Tests
+### 3.6 Tests
 
 ```bash
 for t in tests/test_*.py; do python3 "$t"; done     # 278 tests, 34 files
