@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 38 test files · **317 tests, all green** · ~11,200 lines · pure stdlib,
+**Scale:** 39 test files · **326 tests, all green** · ~11,500 lines · pure stdlib,
 no numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 ---
@@ -158,15 +158,34 @@ entirely below 25 independent windows.
 
 ## 3. How to run it
 
-### 3.1 Every trading day — start these now
+### 3.1 Every trading day — one command, scheduled once
 
 ```bash
-# 1. capture the fund option books. They are overwritten daily and there is no
-#    history endpoint at any price; a day missed is a day gone.
-python3 -m tools.archive_holdings fetch --dir holdings
-python3 -m tools.archive_holdings status --dir holdings
+python3 -m tools.daily install --holdings holdings --ledger btc.jsonl
+# prints the cron / schtasks line for this machine; paste it and forget it
 
-# 2. freeze today's forecast + the market's Q, so a real track record accumulates
+python3 -m tools.daily run       # what the scheduler will run
+python3 -m tools.daily status    # how far along the clocks are
+```
+
+The largest risk to this project is not a modelling error, it is that nobody runs
+the daily job. A fund publishes today's option book and overwrites it, so a day
+missed is gone at any price, and `crowding_backtest` needs ~630 trading days of
+them. A routine that depends on remembering a command every morning does not
+happen, so this collapses it to one scheduled invocation that keeps going when a
+step fails and reports the clock in the only units that matter:
+
+```
+  fund holdings   [####................] 22%   144/630 trading days
+                  first 2026-01-05  latest 2026-07-23  missing 0
+                  the crowding study becomes possible around 2028-06-15
+  paper ledger    NOT STARTED — forward-test time only accrues once it does
+```
+
+The underlying tools still run standalone if you prefer:
+
+```bash
+python3 -m tools.archive_holdings fetch --dir holdings
 python3 -m tools.paper_trade record --source deribit --currency BTC \
         --dte 30 --ledger btc.jsonl --events-json earnings.json
 ```
