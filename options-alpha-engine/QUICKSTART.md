@@ -1,11 +1,34 @@
 # Quickstart — test the engine on real options data
 
-## 0. Right now, no network, no installs
+## 0. The one-command path (sector rotation, real prices)
+
+**Windows:** open the `options-alpha-engine` folder and **double-click `START.bat`**.
+
+**macOS / Linux:**
+
+```bash
+python3 -m tools.quickstart
+```
+
+It updates the checkout, downloads prices, renders the chart, opens it, and
+writes the two verdict lines to `RESULT.txt`. It runs every step **from its own
+folder**, so it does not matter where your shell is — and if the data step
+produces nothing it stops there and names the reason, instead of letting the
+next step die on a missing file.
+
+No network, or the vendor is blocking? `--demo` renders a generated world and
+downloads nothing:
+
+```bash
+python3 -m tools.quickstart --demo
+```
+
+## 0b. Everything else, no network, no installs
 
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 144 tests
+for t in tests/test_*.py; do python3 "$t"; done   # 350 tests
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

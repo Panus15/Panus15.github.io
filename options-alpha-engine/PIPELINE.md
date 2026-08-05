@@ -263,6 +263,42 @@ python3 -m tools.rotation_dashboard --demo --out rotation.html      # no data ne
 python3 demo.py                                                     # the whole loop
 ```
 
+**Or all of §3.3–3.4 at once** — update, fetch, render, open, and save the two
+verdict lines to `RESULT.txt`:
+
+```bash
+python3 -m tools.quickstart          # START.bat on Windows
+python3 -m tools.quickstart --demo   # generated world, no network
+```
+
+Worth saying why a launcher earns its place in a research repo. Every failure it
+removes was a shell mistake, not a modelling one: a placeholder path pasted
+literally, two commands merged onto one line, `cd options-alpha-engine` run from
+inside `options-alpha-engine`, and — the expensive one — a blocked vendor that
+wrote no CSV, so the *render* step failed with `FileNotFoundError: sectors.csv`
+and the actual cause had already scrolled off the screen. So the launcher runs
+every step from its own directory rather than the shell's, runs them in one
+process so they cannot be merged or reordered, and refuses to start a step until
+the previous one produced the file it promised. A run that cannot finish names
+the step that stopped it.
+
+It also pins the encoding, which is not cosmetic: the page and the verdicts are
+full of em dashes, and both `print()` and `open()` otherwise use whatever
+codepage the machine has. Run under an interpreter whose default encoding is
+ASCII, the old path raised `UnicodeEncodeError` from inside `print` at the moment
+the answer was ready — demonstrated in a subprocess, not observed in the wild;
+the codepages actually reported so far happen to carry an em dash. The page also
+declared no charset at all, so a browser opening it locally guessed. It now
+declares `<meta charset="utf-8">` and is written as utf-8, and the console is
+asked for utf-8 with `errors="replace"`, so a punctuation mark cannot end a run
+that has already computed its result.
+
+The launcher runs the **pre-registered** parameters (`window` 63, `mom_lag` 5,
+`tail` 12, `horizon` 21), and a test asserts they still equal both the CLI's
+defaults and the rows in `PREREGISTRATION.md` §2.1. A one-click path that
+quietly ran a different experiment would produce numbers that look official and
+cite a registration that does not describe them.
+
 ### 3.5 In Python
 
 ```python

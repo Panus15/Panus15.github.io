@@ -140,7 +140,10 @@ def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: i
     return payload
 
 
-TEMPLATE = """<title>Sector Rotation — @@ASOF@@</title>
+TEMPLATE = """<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sector Rotation — @@ASOF@@</title>
 <style>
 :root{
   --ground:#fbfaf7; --panel:#ffffff; --edge:#e3e0d8; --ink:#1c2026; --ink-2:#5b6069;
@@ -493,7 +496,11 @@ def main(argv=None):
 
     payload = build_payload(px, bench, dates, window=a.window, mom_lag=a.mom_lag,
                             tail=a.tail, horizon=a.horizon, run_test=not a.no_test)
-    with open(a.out, "w") as fh:
+    # utf-8 explicitly: the page carries em dashes and Python would otherwise
+    # write them in the machine's own codepage, which the browser has no way to
+    # know about. A dashboard that renders as mojibake on a non-English Windows
+    # is a bug that only shows up on someone else's desk.
+    with open(a.out, "w", encoding="utf-8") as fh:
         fh.write(render(payload))
     print(f"wrote {a.out}  ({len(payload['points'])} sectors, {payload['bars']} bars)")
     if payload["test"]:

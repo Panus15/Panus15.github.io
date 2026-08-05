@@ -12,6 +12,17 @@ python3 demo.py            # เดินครบ loop: data -> vol forecast ->
 python3 tests/test_engine.py   # 7 correctness tests (put-call parity, IV round-trip, ฯลฯ)
 ```
 
+**อยากเห็นผลจากราคาจริงเลย — คำสั่งเดียว:**
+
+```bash
+python3 -m tools.quickstart        # Windows: ดับเบิลคลิก START.bat
+python3 -m tools.quickstart --demo # ไม่มีเน็ต / โดนบล็อก: ใช้ข้อมูลจำลอง
+```
+
+โหลดราคา → วาดชาร์ต → เปิดในเบราว์เซอร์ → เขียนผล 2 บรรทัดลง `RESULT.txt`
+ทุกขั้นรันจากโฟลเดอร์ของตัวเอง ไม่ว่า shell จะอยู่ที่ไหนก็ได้ และถ้าขั้นไหนพัง
+มันจะหยุดตรงนั้นพร้อมบอกสาเหตุ แทนที่จะไปตายที่ขั้นถัดไป
+
 ---
 
 
