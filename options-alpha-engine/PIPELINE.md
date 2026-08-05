@@ -208,15 +208,32 @@ clearly labelled as not being a backtest of the chain above.
 One command, no key, no signup:
 
 ```bash
-python3 -m tools.fetch_prices --out sectors.csv     # 11 sector ETFs + SPY, from stooq
+python3 -m tools.fetch_prices --out sectors.csv     # 11 sector ETFs + SPY
+python3 -m tools.fetch_prices --source stooq --out sectors.csv    # pin one source
 ```
 
-Stooq serves plain daily CSV over a stable URL with no key and no quota, which
-makes it the one source that can sit in a script somebody actually re-runs. It is
-a convenience feed, not a survivorship-safe research database — it will not tell
-you about delistings and its adjustments are its own — so it is fine for deciding
-whether a rotation chart predicts anything on eleven large liquid ETFs, and not
-for a claim that money was made.
+Two sources, tried in order — Yahoo's chart JSON first, Stooq's daily CSV second.
+Both are keyless and quota-free, which is what lets this sit in a script somebody
+actually re-runs. Either is a convenience feed, not a survivorship-safe research
+database — neither will tell you about delistings and each adjusts prices its own
+way — so they are fine for deciding whether a rotation chart predicts anything on
+eleven large liquid ETFs, and not for a claim that money was made.
+
+**Why two.** Stooq put a JavaScript bot-check in front of its CSV endpoint and
+began answering every request with an HTML page saying *"This site requires
+JavaScript"* — **with HTTP 200**. Nothing raised. A fetcher that trusted the
+status code would have written twelve HTML files into the cache, reported
+success, and left a cache that looks real forever. So every response is validated
+by **parsing it**, never by its status code: a file that yields no date column and
+no close column is not cached, whatever the server said about it. A page where
+data was expected is reported as `BLOCKED: the vendor served a web page`, which
+names the cause instead of leaving a mystery, and the basket falls through to the
+next source. One dead ticker never aborts the other eleven.
+
+When every source is blocked the run says so and points at the chart-export path
+below; when every source fails with a network error it says *that* instead —
+different problems, different advice, and the tool does not dump the vendor's HTML
+into your terminal in either case.
 
 If you would rather use chart exports: there is no public data API for TradingView
 (the Charting Library is a renderer you feed, Pine runs on their servers and
