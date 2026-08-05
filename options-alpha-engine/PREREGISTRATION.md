@@ -1,6 +1,7 @@
 # Pre-registration — what we will run on real data, decided before we see it
 
-**Status: OPEN. Nothing in this document has been run on real market data yet.**
+**Status: §2.1 (sector rotation) has been RUN on real data and ANSWERED NO — see
+§7. Everything else is still open.**
 
 ## Why this file exists
 
@@ -179,3 +180,63 @@ Stated up front so they are not later presented as surprises.
 ## §6 — Amendments
 
 *(none — this document has not yet been run against real data)*
+
+## §7 — Results
+
+### 7.1 Sector rotation — **ANSWERED NO** (first real-data run, 2026-08-05)
+
+Run by the operator on real SPDR sector history via `tools/quickstart.py`, at the
+parameters locked in §2.1. Nothing was tuned; this was the first pass.
+
+| | |
+|---|---|
+| Rebalance dates | 91 (11 sectors × 91 = 1,001 observations) |
+| Horizon | 21 bars, non-overlapping |
+| Panel (before costs) | Leading − Lagging **+0.25%/period, t = +0.71** |
+| Leading | n=228, mean **+0.04%**, t = +0.14 |
+| Weakening | n=218, mean −0.44%, t = −1.43 |
+| Lagging | n=274, mean −0.21%, t = −0.88 |
+| Improving | n=281, mean −0.25%, t = −0.90 |
+| Long/short book | **−27.0%** net of costs, Sharpe **−1.9** |
+| Label-shuffled placebo | −18.4% |
+
+**Both halves of the primary question fail.** The panel needed |t| ≥ 2 and got
+0.71. The book needed to beat its placebo by 2× and instead lost more than it.
+Per §3 this is a negative result and it is recorded as one; per rule 1 the
+parameters are not being changed to look for a better one.
+
+**Two readings that are NOT rationalisations, because both are checkable:**
+
+1. **Most of the book's loss is the toll, not the call.** The harness charges
+   `2 × cost_bps` per rebalance (`cost = 4k·bps/10⁴/2k` = 20bp) and books a fixed
+   notional each period, so returns add rather than compound: **91 × 20bp =
+   −18.20% from costs alone**, verified by running the harness on a
+   cost-only return stream. The placebo's **−18.4%** is that number and
+   essentially nothing else — gross ≈ **−0.2%** — which is exactly what a
+   label-shuffled control should do: earn nothing, pay the toll. Backing the same
+   toll out of the real book leaves gross ≈ **−8.8%**. So the rotation call was
+   mildly negative on this sample; the rest of the −27.0% is the rebalancing
+   bill, and `cost_bps` = 10 on liquid sector ETFs is a deliberately generous
+   assumption charged 12 times a period.
+2. **Every quadrant mean is negative, and that is arithmetic, not a bug.** The
+   panel scores excess return vs **cap-weighted** SPY while the quadrants hold
+   equally-weighted sectors. In a concentration regime — and XLK's +18.0%
+   relative against every other sector negative says this sample is one — the
+   average sector loses to SPY by construction. The Leading − Lagging *spread*
+   differences this out, which is why the spread is the registered statistic and
+   the levels are not.
+
+**The pre-committed prediction is untested.** §2.1 predicted `rank_by='rs'` would
+match or beat `rank_by='both'`. The dashboard runs `both` only, so this has not
+been checked and is not being claimed either way.
+
+**What is NOT concluded.** That sector rotation cannot work; that the RRG is
+worthless; that a cheaper rebalance would rescue it. One sample, one parameter
+set, one cost assumption. What *is* concluded is the registered question:
+on this history, at these parameters, the chart did not predict and the book did
+not pay.
+
+**Amendment discipline.** The obvious next moves — a longer sample, a lower
+`cost_bps`, `rank_by='rs'`, a smaller `k` — are each a *new* question. Any of them
+run against this data is exploratory and gets labelled as such; none of them
+retroactively changes the answer above.

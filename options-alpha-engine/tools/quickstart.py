@@ -88,6 +88,53 @@ def update(cwd: str, branch: str = BRANCH) -> str:
     return ("updated: " + last) if rc == 0 else ("could not pull: " + last[:80])
 
 
+def result_report(payload: dict, *, demo: bool = False, span=None) -> str:
+    """Everything needed to record this run, in one paste-able block.
+
+    A result is only a result if you can say what it was measured on. Two
+    verdict lines alone forced the next question every time — over what dates,
+    how many bars, which parameters — so the file now carries the sample, the
+    parameters, and the pre-registered decision as the harness computed it. The
+    decision is copied from the engine rather than restated here, because a
+    criterion re-typed next to a result is a criterion that can drift toward it.
+    """
+    t = payload["test"] or {}
+    pre = t.get("prereg") or {}
+    out = ["SECTOR ROTATION — result",
+           f"  asof        {payload.get('asof', '?')}"]
+    if span:
+        out.append(f"  sample      {span[0]} .. {span[1]}  "
+                   f"({payload.get('bars', '?')} bars)")
+    else:
+        out.append(f"  sample      {payload.get('bars', '?')} bars")
+    out += [f"  sectors     {len(payload.get('points', []))} vs "
+            f"{payload.get('benchmark', '?')}",
+            f"  parameters  window={payload.get('window')} "
+            f"mom_lag={payload.get('momLag')} tail={payload.get('tail')} "
+            f"horizon={payload.get('horizon')}  (PREREGISTRATION.md 2.1)",
+            ""]
+    if demo:
+        out += ["  *** GENERATED DATA — this describes a fixture, not the market ***",
+                ""]
+    if t:
+        out += [f"  rebalances  {t.get('rebalances', '?')}",
+                f"  book        {t.get('bookReturn', 0.0):+.1%} net of costs, "
+                f"Sharpe {t.get('bookSharpe', 0.0):+.2f}",
+                f"  placebo     {t.get('placeboReturn'):+.1%}"
+                if t.get("placeboReturn") is not None else "  placebo     none",
+                "",
+                "panel: " + t.get("panelVerdict", "?"),
+                "book : " + t.get("bookVerdict", "?"),
+                ""]
+    if pre:
+        out += [pre.get("headline", ""),
+                f"  panel  {'PASS' if pre.get('panel_passed') else 'FAIL'} — "
+                f"{pre.get('why_panel', '')}",
+                f"  book   {'PASS' if pre.get('book_passed') else 'FAIL'} — "
+                f"{pre.get('why_book', '')}"]
+    return "\n".join(out) + "\n"
+
+
 def step(n: int, total: int, title: str) -> None:
     print(f"\n[{n}/{total}] {title}")
     print("-" * 60)
@@ -153,19 +200,27 @@ def main(argv=None):
 
     lines = []
     if payload["test"]:
-        lines = ["panel: " + payload["test"]["panelVerdict"],
-                 "book : " + payload["test"]["bookVerdict"]]
+        t = payload["test"]
+        lines = ["panel: " + t["panelVerdict"], "book : " + t["bookVerdict"]]
         with open(os.path.join(here, RESULT), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(lines) + "\n")
+            fh.write(result_report(payload, demo=a.demo,
+                                   span=(dates[0], dates[-1]) if dates else None))
 
     print("\n" + "=" * 60)
     print("  DONE")
     print("=" * 60)
     for ln in lines:
         print("  " + ln)
+    pre = (payload["test"] or {}).get("prereg")
+    if pre:
+        print("\n  " + pre["headline"])
+        print(f"    panel  {'PASS' if pre['panel_passed'] else 'FAIL'} — "
+              f"{pre['why_panel']}")
+        print(f"    book   {'PASS' if pre['book_passed'] else 'FAIL'} — "
+              f"{pre['why_book']}")
     if lines:
-        print(f"\n  These two lines are the result. They are also saved to")
-        print(f"  {RESULT} next to this project, so you can copy them from there.")
+        print(f"\n  The full result — sample, parameters, verdicts — is saved to")
+        print(f"  {RESULT} next to this project. Send that file, not the screen.")
     if a.demo:
         print("\n  (generated data — these numbers describe a fixture, "
               "not the market)")

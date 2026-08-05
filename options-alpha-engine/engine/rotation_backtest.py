@@ -54,6 +54,21 @@ class QuadrantPanel:
     min_obs: int = 30
     t_thresh: float = 2.0
 
+    def spread_t(self) -> tuple | None:
+        """(Leading − Lagging, its t). None when a quadrant is too thin to read.
+
+        Exposed rather than left inside ``verdict``'s prose so the pre-registered
+        criterion can be evaluated by a machine instead of by whoever is reading
+        the sentence after seeing the number.
+        """
+        lead = self.stats.get("Leading", {})
+        lag = self.stats.get("Lagging", {})
+        if not lead or not lag or min(lead["n"], lag["n"]) < self.min_obs:
+            return None
+        spread = lead["mean"] - lag["mean"]
+        se = math.sqrt(lead["sd"] ** 2 / lead["n"] + lag["sd"] ** 2 / lag["n"])
+        return spread, (spread / se if se > 1e-12 else 0.0)
+
     def verdict(self) -> str:
         lead = self.stats.get("Leading", {})
         lag = self.stats.get("Lagging", {})
@@ -62,9 +77,7 @@ class QuadrantPanel:
         if min(lead["n"], lag["n"]) < self.min_obs:
             return (f"NOT ENOUGH DATA — Leading n={lead['n']}, Lagging n={lag['n']} "
                     f"(need >= {self.min_obs} each)")
-        spread = lead["mean"] - lag["mean"]
-        se = math.sqrt(lead["sd"] ** 2 / lead["n"] + lag["sd"] ** 2 / lag["n"])
-        t = spread / se if se > 1e-12 else 0.0
+        spread, t = self.spread_t()
         if abs(t) < self.t_thresh:
             return (f"NO SIGNIFICANT EFFECT — Leading beats Lagging by "
                     f"{spread:+.2%} per period, t={t:+.2f}. The quadrant a sector "
@@ -231,3 +244,63 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
         placebo=_curve(fake_rets) if fake_rets else None,
         placebo_returns=fake_rets, picks=picks, cost_per_rebalance=cost,
     )
+
+
+# --------------------------------------------------------------------------
+# The pre-registered decision, evaluated mechanically
+# --------------------------------------------------------------------------
+
+# PREREGISTRATION.md §2.1: "does the quadrant panel report LEADING BEATS LAGGING
+# with |t| >= 2, AND does the long/short book beat its label-shuffled placebo by
+# more than 2x?" Both must hold.
+PREREG_T_THRESH = 2.0
+PREREG_PLACEBO_RATIO = 2.0
+
+
+def preregistered_verdict(panel: QuadrantPanel,
+                          book: RotationBacktestResult) -> dict:
+    """Answer §2.1's primary question with arithmetic, not with prose.
+
+    Written down as code because the failure mode here is not a wrong number, it
+    is a reader who has already seen the number deciding what the criterion
+    meant. "Beat the placebo by 2x" is exactly the phrase that becomes elastic
+    when the book loses money and the placebo loses more.
+
+    So: a book that lost money FAILS, whatever the placebo did. There is no
+    reading of §2.1 on which "lost 27% while a coin-flip lost 18%" is a pass, and
+    the ratio is only consulted once the book is above zero.
+    """
+    st = panel.spread_t()
+    if st is None:
+        panel_pass, why_panel = False, "the panel had too few observations to read"
+    else:
+        spread, t = st
+        panel_pass = spread > 0 and abs(t) >= PREREG_T_THRESH
+        why_panel = (f"Leading-Lagging {spread:+.2%}/period, t={t:+.2f} "
+                     f"(needs a positive spread at |t| >= {PREREG_T_THRESH:g})")
+
+    real = book.metrics.total_return
+    fake = book.placebo.total_return if book.placebo is not None else None
+    if book.n_rebalances < 12:
+        book_pass, why_book = False, f"only {book.n_rebalances} rebalances"
+    elif fake is None:
+        book_pass, why_book = False, "no placebo was run, so nothing is comparable"
+    elif real <= 0:
+        book_pass = False
+        why_book = (f"the book returned {real:+.1%} net of costs; a losing book "
+                    f"does not pass on the placebo's {fake:+.1%} being worse")
+    else:
+        book_pass = fake < real / PREREG_PLACEBO_RATIO
+        why_book = (f"book {real:+.1%} vs placebo {fake:+.1%} "
+                    f"(needs the placebo below {real / PREREG_PLACEBO_RATIO:+.1%})")
+
+    passed = panel_pass and book_pass
+    return {
+        "passed": passed,
+        "panel_passed": panel_pass,
+        "book_passed": book_pass,
+        "why_panel": why_panel,
+        "why_book": why_book,
+        "headline": ("PRE-REGISTERED QUESTION: ANSWERED YES" if passed else
+                     "PRE-REGISTERED QUESTION: ANSWERED NO"),
+    }

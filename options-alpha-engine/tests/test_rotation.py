@@ -15,13 +15,15 @@ Run: python3 tests/test_rotation.py
 
 import math
 import os
+import re
 import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine import rotation_backtest as rbt
-from engine.rotation_backtest import (RotationBacktestResult, quadrant_panel,
+from engine.rotation_backtest import (QuadrantPanel, RotationBacktestResult,
+                                      preregistered_verdict, quadrant_panel,
                                       run_rotation_backtest)
 from models.rotation import (IMPROVING, LAGGING, LEADING, SECTOR_ETFS, WEAKENING,
                              leaderboard, quadrant, quadrant_history,
@@ -276,6 +278,108 @@ def test_the_momentum_axis_carries_no_edge_of_its_own():
         f"the momentum axis should not rival relative strength: {mean}")
     assert min(sharpes["momentum"]) < 2.0, (
         "momentum alone must not look like a reliable edge on an AR(1) fixture")
+
+
+
+# --------------------------------------------------------------------------
+# The pre-registered criterion, which must not bend around a result
+# --------------------------------------------------------------------------
+
+def _panel(lead_mean, lag_mean, sd=0.05, n=250, n_lead=None, n_lag=None):
+    """A panel with a chosen Leading-Lagging spread and dispersion."""
+    st = {q: {"n": n, "mean": 0.0, "sd": sd, "t": 0.0}
+          for q in ("Leading", "Weakening", "Lagging", "Improving")}
+    st["Leading"].update(mean=lead_mean, n=n_lead or n)
+    st["Lagging"].update(mean=lag_mean, n=n_lag or n)
+    return QuadrantPanel(stats=st, n_dates=n // 11)
+
+
+# The first real-data run, as reported by the dashboard: 91 rebalance dates,
+# Leading n=228 mean +0.04%, Lagging n=274 mean -0.21%, spread +0.25%, t=+0.71.
+# sd is solved from those so the fixture reproduces the published t rather than
+# an invented one.
+def _real_panel():
+    return _panel(0.0004, -0.0021, sd=0.0393, n_lead=228, n_lag=274)
+
+
+class _Curve:
+    def __init__(self, total):
+        self.total_return = total
+        self.sharpe = 0.0
+
+
+def _book(real, fake, n=91):
+    return RotationBacktestResult(metrics=_Curve(real), n_rebalances=n,
+                                  placebo=_Curve(fake))
+
+
+def test_the_real_result_is_recorded_as_a_failure():
+    """The first real-data run, verbatim: t=+0.71 and a book that lost 27%
+    while the shuffled placebo lost 18.4%. Both criteria fail. The book losing
+    LESS badly than a coin flip is not a pass, and this is the exact shape of
+    result that invites the phrase "beat the placebo" to be reinterpreted."""
+    v = preregistered_verdict(_real_panel(), _book(-0.270, -0.184))
+    assert not v["passed"] and "ANSWERED NO" in v["headline"]
+    assert not v["panel_passed"] and not v["book_passed"], v
+
+
+def test_a_losing_book_never_passes_however_bad_the_placebo():
+    for fake in (-0.50, -0.99, 0.0):
+        v = preregistered_verdict(_panel(0.02, -0.02), _book(-0.05, fake))
+        assert not v["book_passed"], f"a losing book passed against placebo {fake}"
+
+
+def test_both_halves_are_required():
+    strong_panel, weak_panel = _panel(0.02, -0.02), _panel(0.0001, 0.0)
+    good_book, bad_book = _book(0.40, 0.05), _book(0.40, 0.30)
+    assert preregistered_verdict(strong_panel, good_book)["passed"]
+    assert not preregistered_verdict(weak_panel, good_book)["passed"]
+    assert not preregistered_verdict(strong_panel, bad_book)["passed"]
+
+
+def test_an_inverted_panel_is_not_a_pass():
+    """|t| >= 2 the WRONG way round means the chart is backwards, not working."""
+    v = preregistered_verdict(_panel(-0.02, 0.02), _book(0.40, 0.05))
+    assert not v["panel_passed"], v["why_panel"]
+
+
+def test_a_thin_panel_refuses_rather_than_guesses():
+    thin = _panel(0.02, -0.02, n=5)
+    v = preregistered_verdict(thin, _book(0.40, 0.05))
+    assert not v["panel_passed"] and "too few" in v["why_panel"]
+
+
+def test_the_thresholds_are_the_registered_ones_and_cannot_drift():
+    """The whole point of a pre-registration is that this constant does not move.
+
+    Relaxing |t| from 2 to 1 is the cheapest way to turn a failure into a
+    finding, it looks like a reasonable judgement call in a diff, and no test
+    about panels or books would notice. So the constants are checked against the
+    document itself, and a panel that clears 1 but not 2 must still fail.
+    """
+    doc = open(os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "PREREGISTRATION.md"), encoding="utf-8").read()
+    # parsed, not string-formatted: 2.0 vs "2" is a formatting difference, and a
+    # test that fails on formatting gets weakened rather than fixed
+    registered = re.findall(r"\|\s*`t_thresh`\s*\|\s*([0-9.]+)\s*\|", doc)
+    assert registered, "PREREGISTRATION.md has no t_thresh row"
+    assert float(registered[0]) == rbt.PREREG_T_THRESH, \
+        f"code has |t| >= {rbt.PREREG_T_THRESH}, §2.1 registered {registered[0]}"
+    assert "more than 2×" in doc and rbt.PREREG_PLACEBO_RATIO == 2.0
+
+    # spread solved to land at t ~ 1.4: significant at the 10-20% level, and
+    # therefore exactly the result that invites the threshold to be reconsidered
+    mid = _panel(0.0050, 0.0, sd=0.0393, n_lead=228, n_lag=274)
+    _, t = mid.spread_t()
+    assert 1.0 < abs(t) < 2.0, f"fixture t={t:+.2f} does not sit between 1 and 2"
+    assert not preregistered_verdict(mid, _book(0.40, 0.05))["panel_passed"], \
+        f"a panel at t={t:+.2f} passed a criterion registered at |t| >= 2"
+
+
+def test_the_reasons_carry_the_numbers_that_decided_it():
+    v = preregistered_verdict(_real_panel(), _book(-0.270, -0.184))
+    assert "t=+0.7" in v["why_panel"], v["why_panel"]
+    assert "-27.0%" in v["why_book"] and "-18.4%" in v["why_book"], v["why_book"]
 
 
 def _run_all():

@@ -269,21 +269,77 @@ def test_it_survives_a_console_that_cannot_represent_an_em_dash():
         shutil.rmtree(d)
 
 
-def test_the_verdicts_are_saved_where_they_can_be_copied_from():
-    """Reading two lines off a scrolled terminal is how results get mistyped."""
+def test_the_saved_result_says_what_it_was_measured_on():
+    """Reading numbers off a scrolled terminal is how results get mistyped, and
+    a verdict with no sample attached forces a round trip every time. The file
+    must carry the span, the bar count, the parameters, both verdicts, and the
+    pre-registered decision — enough to be recorded without asking anything."""
     d = tempfile.mkdtemp()
     saved = os.path.join(project_dir(), quickstart.RESULT)
     try:
         _run(["--demo", "--no-update", "--no-open",
               "--out", os.path.join(d, "r.html")], cwd=d)
         assert os.path.exists(saved), f"{quickstart.RESULT} was not written"
-        body = open(saved).read()
-        assert body.startswith("panel:") and "book :" in body, body
-        assert len(body.splitlines()) == 2, "the file should be exactly the result"
+        body = open(saved, encoding="utf-8").read()
+        for want in ("panel:", "book :", "bars", "window=63", "horizon=21",
+                     "rebalances", "placebo", "PRE-REGISTERED QUESTION"):
+            assert want in body, f"{want!r} missing from {quickstart.RESULT}"
     finally:
         if os.path.exists(saved):
             os.remove(saved)
         shutil.rmtree(d)
+
+
+def test_the_saved_result_marks_generated_data_as_such():
+    """The file is meant to be pasted. A fixture verdict that travels without
+    its warning becomes a market claim the moment it leaves this machine."""
+    d = tempfile.mkdtemp()
+    saved = os.path.join(project_dir(), quickstart.RESULT)
+    try:
+        _run(["--demo", "--no-update", "--no-open",
+              "--out", os.path.join(d, "r.html")], cwd=d)
+        assert "GENERATED DATA" in open(saved, encoding="utf-8").read()
+    finally:
+        if os.path.exists(saved):
+            os.remove(saved)
+        shutil.rmtree(d)
+
+
+def test_the_saved_result_does_not_cry_fixture_on_real_data():
+    d = tempfile.mkdtemp()
+    saved = os.path.join(project_dir(), quickstart.RESULT)
+    try:
+        _run(["--no-update", "--no-open", "--base-url", _mirror(d),
+              "--csv", os.path.join(d, "s.csv"),
+              "--out", os.path.join(d, "r.html")], cwd=d)
+        body = open(saved, encoding="utf-8").read()
+        assert "GENERATED DATA" not in body, body[:300]
+        assert ".." in body, "a real run must record the date span"
+    finally:
+        if os.path.exists(saved):
+            os.remove(saved)
+        shutil.rmtree(d)
+
+
+def test_the_saved_result_reports_the_engines_decision_not_its_own():
+    """The pass/fail must be the engine's arithmetic. If the launcher restated
+    the criterion it could drift toward whatever the run happened to produce."""
+    from engine.rotation_backtest import preregistered_verdict
+
+    payload = {"asof": "2026-01-01", "bars": 1300, "benchmark": "SPY",
+               "points": [], "window": 63, "momLag": 5, "tail": 12,
+               "horizon": 21,
+               "test": {"panelVerdict": "p", "bookVerdict": "b",
+                        "rebalances": 91, "bookReturn": -0.27,
+                        "bookSharpe": -1.9, "placeboReturn": -0.184,
+                        "prereg": {"headline": "PRE-REGISTERED QUESTION: ANSWERED NO",
+                                   "panel_passed": False, "book_passed": False,
+                                   "why_panel": "SENTINEL-PANEL",
+                                   "why_book": "SENTINEL-BOOK"}}}
+    body = quickstart.result_report(payload)
+    assert "SENTINEL-PANEL" in body and "SENTINEL-BOOK" in body, body
+    assert "ANSWERED NO" in body and body.count("FAIL") == 2, body
+    assert preregistered_verdict.__doc__, "the criterion must live in the engine"
 
 
 def test_demo_mode_says_the_numbers_are_not_the_market():

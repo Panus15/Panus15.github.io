@@ -28,7 +28,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engine.rotation_backtest import quadrant_panel, run_rotation_backtest
+from engine.rotation_backtest import (preregistered_verdict, quadrant_panel,
+                                      run_rotation_backtest)
 from models.rotation import (BENCHMARK, SECTOR_ETFS, leaderboard,
                              quadrant_history, relative_strength, rotation_map,
                              transitions)
@@ -136,6 +137,7 @@ def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: i
             "rebalances": book.n_rebalances,
             "placeboReturn": (round(book.placebo.total_return, 4)
                               if book.placebo else None),
+            "prereg": preregistered_verdict(panel, book),
         }
     return payload
 
