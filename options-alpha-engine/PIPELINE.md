@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 39 test files · **326 tests, all green** · ~11,500 lines · pure stdlib,
+**Scale:** 40 test files · **330 tests, all green** · ~11,700 lines · pure stdlib,
 no numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 ---
@@ -266,8 +266,14 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done     # 278 tests, 34 files
+for t in tests/test_*.py; do python3 "$t"; done
 ```
+
+`tests/test_wiring.py` is worth knowing about: it fails if any module is built,
+tested, and reachable from nothing a person runs. That is not hypothetical —
+`models/events.py` passed its own tests for weeks while being consumed by nothing
+but a display card, so every backtest number in the repo was produced with the
+scheduled-event gate silently off, and no unit test could see it.
 
 ---
 

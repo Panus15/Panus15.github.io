@@ -321,6 +321,23 @@ def main() -> None:
     print(bootstrap_summary(block_bootstrap(one.trade_pnl)))
     print("  -> read every Sharpe printed above through these intervals\n")
 
+    # 12. MANY positions at once — the case the risk governor exists for --------
+    # Every harness above holds ONE position at a time, so the governor is handed
+    # an empty book on every entry and its correlation-aware aggregation never
+    # runs. Stagger five underlyings and let it see the real book:
+    from engine.book_backtest import run_book_backtest
+    bk_px = {f"S{i}": price_path_with_crash(900, seed=i) for i in range(1, 6)}
+    print("Correlation-aware sizing vs the per-trade view (cap 8,000 net short vega):")
+    print(f"  {'sizing':34}{'peak vega':>11}{'maxDD':>9}{'total':>9}{'blocked':>9}")
+    for lbl, kw in (("governed (sees the live book)", {}),
+                    ("ungoverned (empty book)", {"govern": False})):
+        bk = run_book_backtest(bk_px, **kw)
+        print(f"  {lbl:34}{bk.peak_net_short_vega:>11,.0f}"
+              f"{bk.metrics.max_drawdown:>9.1%}{bk.metrics.total_return:>+9.1%}"
+              f"{bk.n_blocked_by_vega_cap:>9}")
+    print("  -> sizing each trade as if it were the only one BREACHES the stated cap;")
+    print("     a per-trade view understates the book's short vega by 54-77%\n")
+
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")
 

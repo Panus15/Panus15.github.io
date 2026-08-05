@@ -21,6 +21,7 @@ core is pure and unit-tested offline; only `fetch` touches the network.
 from __future__ import annotations
 
 import argparse
+import os
 
 from engine import hedged_backtest
 from engine.data import OptionChain
@@ -52,7 +53,8 @@ def default_contract_mult(source: str, chain: OptionChain) -> float:
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
             american: bool = False, contract_mult: float = 100.0,
-            events_json: str | None = None) -> dict:
+            events_json: str | None = None, sectors_csv: str = "",
+            holdings_dir: str = "") -> dict:
     """Run the full pipeline on a chain + price history. PURE (no network).
 
     ``american=True`` de-Americanizes the chain first (binomial American IV ->
@@ -253,9 +255,36 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
                           "stop": card.stop, "expected_value": card.expected_value}
         print("\n" + card.render())
 
+        # 3d. THE FUSED DECISION — the card plus the two context signals ------
+        # Both context inputs are optional and both default to "no data", which
+        # the decision states rather than treats as benign. Neither can raise the
+        # size; that asymmetry is the whole reason this is safe to print.
+        from models.decision import build_decision
+        rot_pt = _rotation_point(sectors_csv, chain.symbol)
+        crowd = _crowding(holdings_dir, chain, card)
+        decision = build_decision(card, rotation_point=rot_pt, crowding=crowd)
+        report["decision"] = {
+            "action": decision.action,
+            "size_multiplier": decision.size_multiplier,
+            "weakest_evidence": decision.weakest_evidence,
+            "inputs": [{"name": i.name, "status": i.status, "effect": i.effect}
+                       for i in decision.inputs]}
+        print("\n" + decision.render())
+
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
+        # The gate scores challengers against baseline.py's hand-set crash tail.
+        # Print how good that prior actually is on THIS underlying, so "passed the
+        # tail gate" is read for what it is rather than for what it sounds like.
+        try:
+            from models.tail_fit import fit_tail_shape
+            tf = fit_tail_shape(prices, horizons=(dte,), rounds=1, grid=4)
+            report["tail_prior"] = {"test_improvement": tf.test_improvement,
+                                    "n_test": tf.n_test}
+            print("\n" + tf.summary())
+        except (ValueError, ZeroDivisionError, ArithmeticError) as e:
+            print(f"\ntail-prior check skipped: {e}")
 
     print("\nReminder: a single snapshot is a spot check. A real edge claim needs an\n"
           "honest OUT-OF-SAMPLE, cost-inclusive equity curve over many dates + a crash.")
@@ -285,6 +314,48 @@ def objective_windows(prices: list, dte: int, *, context: int = 63,
         keep = max(1, len(w) // cap)
         w, step = w[::keep], step * keep
     return w, step
+
+
+def _rotation_point(sectors_csv: str, symbol: str):
+    """The RotationPoint for this underlying, or None when we simply do not know.
+
+    Returns None rather than a neutral placeholder for anything it cannot answer —
+    a missing sector map is missing DATA, and `decision.py` prints that as such
+    instead of quietly treating the sector as fine.
+    """
+    if not sectors_csv or not os.path.exists(sectors_csv):
+        return None
+    try:
+        from models.rotation import rotation_map
+        from tools.rotation_dashboard import load_csv
+        series, bench, _ = load_csv(sectors_csv)
+        sym = (symbol or "").upper()
+        if sym not in series:
+            return None
+        pts = rotation_map(series, bench)
+        return next((p for p in pts if p.symbol == sym), None)
+    except (OSError, ValueError, KeyError, SystemExit):
+        return None
+
+
+def _crowding(holdings_dir: str, chain, card):
+    """(share, note) for the strike the card would sell, or None with no archive."""
+    if not holdings_dir or not os.path.isdir(holdings_dir):
+        return None
+    try:
+        from models.fund_flow import crowding_score, supply_map
+        from tools.archive_holdings import load_archive
+        books = load_archive(holdings_dir)
+        if not books:
+            return None
+        asof = books[-1][0]
+        latest = [b for d, b in books if d == asof]
+        buckets = supply_map(latest, chain.symbol, chain.spot)
+        strike = getattr(card, "entry", 0.0) or chain.spot
+        return crowding_score(strike, "call", chain.quotes[0].expiry_days,
+                              chain.asof, buckets)
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
 
 
 def _promotion_gate(prices: list) -> dict:
@@ -331,6 +402,12 @@ def main(argv=None):
     p.add_argument("--price-json", dest="price_json")
     p.add_argument("--dump", help="save the fetched chain to this JSON path")
     p.add_argument("--gate", action="store_true", help="also run the MDN promotion gate")
+    p.add_argument("--sectors-csv", dest="sectors_csv", default="",
+                   help="wide price CSV (tools.fetch_prices) -> the sector-rotation "
+                        "context on the fused decision")
+    p.add_argument("--holdings", dest="holdings_dir", default="",
+                   help="archive dir (tools.archive_holdings) -> the fund-crowding "
+                        "context on the fused decision")
     p.add_argument("--no-backtest", dest="backtest", action="store_false")
     p.add_argument("--american", action="store_true",
                    help="de-Americanize the chain before Q extraction (US equity/ETF options)")
@@ -352,6 +429,7 @@ def main(argv=None):
         args.source, chain)
     analyze(chain, prices, dte=args.dte, label=args.source,
             run_backtest=args.backtest, run_gate=args.gate, american=args.american,
+            sectors_csv=args.sectors_csv, holdings_dir=args.holdings_dir,
             contract_mult=mult, events_json=args.events_json)
 
 
