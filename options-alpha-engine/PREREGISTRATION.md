@@ -179,7 +179,38 @@ Stated up front so they are not later presented as surprises.
 
 ## §6 — Amendments
 
-*(none — this document has not yet been run against real data)*
+### 6.1 The placebo becomes a distribution, not one shuffle (2026-08-05)
+
+**What changed.** §2.1's rule "beat the label-shuffled placebo by more than 2×"
+compares the book to **one** shuffle. That control was measured and it does not
+work. On a fixture world built with **no signal at all**, the single-draw
+placebo's own total swung from **−16.6% to +7.9%** purely on its seed, and the
+harness declared an edge in **6 of 20 seeds** — a 30% false-positive rate on a
+null world.
+
+**The rule now also requires a permutation p ≤ 0.10** over 200 shuffles: the
+fraction of shuffled books that matched or beat the real one. Measured after the
+change, null worlds fire 2/10 (the nominal rate) and signal worlds 10/10.
+
+**Why this is a tightening and not a rescue.** The registered 2× rule is kept
+in full and the new requirement is added on top with `and`, so every book that
+failed before still fails. `test_the_amendment_can_only_make_passing_harder`
+asserts exactly that across a grid of returns and p-values — if any combination
+could pass under the amendment but not under the original, the test fails.
+
+**Effect on §7.1: none.** That book returned −27.0%, and a book that lost money
+fails on the first clause regardless of any placebo.
+
+**A second defect found in the same pass.** Charging each shuffled book its own
+turnover made the real book systematically cheaper than its control — ranked
+picks are stickier (66% churn) than random ones (77%) — which is a cost
+advantage, not a predictive one. It dragged the null world's median p to 0.079.
+The control is now **matched on turnover**, paying the real book's fee, so the
+only thing the shuffle changes is the labels. The p-value is now invariant to
+`cost_bps`, which is the check that it differences out.
+
+*(Amendment discipline: 6.1 changes a control that was demonstrably broken. It
+does not change any parameter in §2, and no §7 verdict moves because of it.)*
 
 ## §7 — Results
 
@@ -198,12 +229,22 @@ parameters locked in §2.1. Nothing was tuned; this was the first pass.
 | Lagging | n=274, mean −0.21%, t = −0.88 |
 | Improving | n=281, mean −0.25%, t = −0.90 |
 | Long/short book | **−27.0%** net of costs, Sharpe **−1.9** |
-| Label-shuffled placebo | −18.4% |
+| Label-shuffled placebo | −18.4% (**one** shuffle — see the correction below) |
+| Permutation p | not run; the harness had no null distribution until §6.1 |
 
 **Both halves of the primary question fail.** The panel needed |t| ≥ 2 and got
-0.71. The book needed to beat its placebo by 2× and instead lost more than it.
-Per §3 this is a negative result and it is recorded as one; per rule 1 the
-parameters are not being changed to look for a better one.
+0.71. The book returned −27.0% — a book that lost money fails whatever the
+placebo did. Per §3 this is a negative result and it is recorded as one; per
+rule 1 the parameters are not being changed to look for a better one.
+
+> **Correction (2026-08-05, same day).** This section first read "the book lost
+> more than its placebo" as though that comparison carried weight. It does not.
+> That placebo was a **single shuffle**, and §6.1 then measured the single-draw
+> control firing on 6 of 20 null worlds. **−27.0% vs −18.4% is one draw against
+> one draw and supports no claim about chance.** The failure stands entirely on
+> the book losing money and the panel's t=+0.71. The `−18.4%` figure below is
+> retained only because it is almost exactly the cost toll, which is a fact
+> about the fee schedule rather than about the placebo.
 
 **Two readings that are NOT rationalisations, because both are checkable:**
 
@@ -218,6 +259,12 @@ parameters are not being changed to look for a better one.
    mildly negative on this sample; the rest of the −27.0% is the rebalancing
    bill, and `cost_bps` = 10 on liquid sector ETFs is a deliberately generous
    assumption charged 12 times a period.
+
+   *Since amended:* the fee was billed at 100% turnover every rebalance whether
+   or not the leaderboard moved. Measured churn is ~63%, so the toll on a re-run
+   will be nearer **−11%** and the book nearer **−20%**. Still a failure, which
+   is why fixing it is a correction rather than a rescue — a misspecification
+   that flatters the result would not have been touched before publishing this.
 2. **Every quadrant mean is negative, and that is arithmetic, not a bug.** The
    panel scores excess return vs **cap-weighted** SPY while the quadrants hold
    equally-weighted sectors. In a concentration regime — and XLK's +18.0%

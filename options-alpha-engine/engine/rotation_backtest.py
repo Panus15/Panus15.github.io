@@ -146,6 +146,54 @@ class RotationBacktestResult:
     placebo_returns: list = field(default_factory=list)
     picks: list = field(default_factory=list)
     cost_per_rebalance: float = 0.0
+    mean_turnover: float = 0.0
+    placebo_totals: list = field(default_factory=list)   # one per shuffle draw
+
+    def permutation_p(self) -> float | None:
+        """Fraction of shuffled books that did at least as well as the real one.
+
+        The whole point of a control is to say how often chance produces what we
+        are looking at, and ONE shuffle cannot say that. Measured on a fixture
+        world built with no signal at all, a single-draw placebo swung from −16.6%
+        to +7.9% purely on its seed and declared an edge in 6 of 20 seeds — a
+        control that fires on a third of null worlds is not a control.
+
+        So the null is a DISTRIBUTION over many shuffles and this is the position
+        of the real book inside it. The +1 in numerator and denominator is the
+        standard correction: with 200 draws the smallest reportable p is 1/201,
+        never 0, because a finite number of shuffles cannot prove impossibility.
+        """
+        if not self.placebo_totals:
+            return None
+        real = self.metrics.total_return
+        beat = sum(1 for x in self.placebo_totals if x >= real)
+        return (1.0 + beat) / (1.0 + len(self.placebo_totals))
+
+    def edge_interval(self, *, level: float = 0.90, n_boot: int = 2000,
+                      block: int = 3, seed: int = 0):
+        """Interval on the book's edge OVER its placebo, per rebalance.
+
+        This is the number the headline actually rests on, and quoting the two
+        totals side by side hides it. The book and the placebo trade the SAME
+        dates, so the comparison is paired: bootstrap the per-period DIFFERENCE,
+        not the two curves separately, which would inflate the spread with market
+        variation that cancels between them.
+
+        Returns None when there is no placebo or too little to resample. If the
+        interval spans zero, "the book did worse than a coin flip" is not a
+        finding — it is one draw of a difference that could have gone either way.
+        """
+        if not self.placebo_returns:
+            return None
+        pairs = [r - f for r, f in zip(self.period_returns, self.placebo_returns)]
+        if len(pairs) < 2:
+            return None
+        from engine.robustness import block_bootstrap
+        boot = block_bootstrap(pairs, n_boot=n_boot, block=block, seed=seed,
+                               level=level, starting_equity=1.0)
+        iv = boot["mean_trade"]
+        iv.label = "edge over placebo"
+        return iv
 
     def verdict(self) -> str:
         if self.n_rebalances < 12:
@@ -155,16 +203,31 @@ class RotationBacktestResult:
         if self.placebo is None:
             return f"total {real:+.1%} over {self.n_rebalances} rebalances (no placebo run)"
         fake = self.placebo.total_return
+        p = self.permutation_p()
+        n_draws = len(self.placebo_totals)
+        vs = (f" Against {n_draws} shuffled books, {p:.1%} did at least as well "
+              f"(permutation p)." if p is not None else "")
         if real <= 0:
             return (f"NO EDGE — the rotation book returned {real:+.1%} net of costs. "
-                    f"The chart may describe the past well and still not pay.")
-        if fake >= real * 0.5:
-            return (f"REJECTED BY THE PLACEBO — shuffling the sector labels earned "
-                    f"{fake:+.1%} against the real book's {real:+.1%}. Most of this "
-                    f"is not the rotation call.")
-        return (f"the rotation book returned {real:+.1%} net of costs vs the "
-                f"label-shuffled placebo's {fake:+.1%} — worth a longer sample and "
-                f"a live forward test, not a position")
+                    f"The chart may describe the past well and still not pay." + vs)
+        if p is None:
+            # only one shuffle exists: the weak old rule, said to be weak
+            if fake >= real * 0.5:
+                return (f"REJECTED BY THE PLACEBO — shuffling the sector labels "
+                        f"earned {fake:+.1%} against the real book's {real:+.1%}. "
+                        f"Most of this is not the rotation call.")
+            return (f"the rotation book returned {real:+.1%} net of costs vs the "
+                    f"label-shuffled placebo's {fake:+.1%} — but that is ONE "
+                    f"shuffle, which cannot say how often chance does this. Run "
+                    f"with placebo_draws to get a null distribution.")
+        if p > 0.10:
+            return (f"INDISTINGUISHABLE FROM CHANCE — the book returned {real:+.1%}, "
+                    f"but {p:.1%} of {n_draws} label-shuffled books matched or beat "
+                    f"it. A total that looks good next to ONE shuffle can sit in "
+                    f"the middle of the null.")
+        return (f"the rotation book returned {real:+.1%} net of costs and beat "
+                f"{1.0 - p:.1%} of {n_draws} shuffled books — worth a longer "
+                f"sample and a live forward test, not a position.")
 
     def summary(self) -> str:
         lines = [f"Rotation long/short: top-k vs bottom-k of the leaderboard, "
@@ -183,6 +246,7 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
                           warmup: int | None = None, cost_bps: float = 10.0,
                           starting_equity: float = 100_000.0,
                           placebo_seed: int | None = 0,
+                          placebo_draws: int = 200,
                           rank_by: str = "both") -> RotationBacktestResult:
     """Long the leaderboard's top ``k``, short its bottom ``k``, equal weight.
 
@@ -197,9 +261,21 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
     rng = random.Random(placebo_seed if placebo_seed is not None else 0)
 
     rets: list[float] = []
-    fake_rets: list[float] = []
     picks: list = []
-    cost = 4.0 * k * cost_bps / 10_000.0 / (2.0 * k)   # per-unit-of-book, round trip
+    # Charged on the legs that actually CHANGE. The previous model billed a full
+    # round trip every rebalance whether or not the leaderboard had moved, which
+    # on a slow-turning signal is a fee for a trade nobody placed. This is a
+    # misspecification, not a parameter: `cost_bps` is untouched and still charged
+    # in full on every leg genuinely traded. The placebo pays the same rule on its
+    # OWN churn, so a shuffle that happens to sit still cannot look good for a
+    # reason that has nothing to do with the labels.
+    full_cost = 4.0 * k * cost_bps / 10_000.0 / (2.0 * k)   # at 100% turnover
+    prev_long: set = set()
+    prev_short: set = set()
+    turnovers: list[float] = []
+    draws = max(1, int(placebo_draws)) if placebo_seed is not None else 0
+    prev_f = [(set(), set()) for _ in range(draws)]
+    draw_rets: list[list[float]] = [[] for _ in range(draws)]
 
     t = warm
     while t + horizon < n:
@@ -212,25 +288,39 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
         longs = [p.symbol for p in board[:k]]
         shorts = [p.symbol for p in board[-k:]]
 
-        def _book(long_syms, short_syms):
-            lo = [_excess(prices_by_symbol[s], benchmark, t, horizon) for s in long_syms]
-            sh = [_excess(prices_by_symbol[s], benchmark, t, horizon) for s in short_syms]
-            if any(x is None for x in lo + sh):
-                return None
-            return (sum(lo) / len(lo) - sum(sh) / len(sh)) / 2.0 - cost
-
-        real = _book(longs, shorts)
-        if real is None:
+        # every symbol's forward excess, computed ONCE — this is what makes a few
+        # hundred shuffles cost about as much as one
+        fwd = {p.symbol: _excess(prices_by_symbol[p.symbol], benchmark, t, horizon)
+               for p in pts}
+        if any(v is None for v in fwd.values()):
             t += horizon
             continue
+
+        def _book(long_syms, short_syms, cost):
+            return (sum(fwd[s] for s in long_syms) / len(long_syms)
+                    - sum(fwd[s] for s in short_syms) / len(short_syms)) / 2.0 - cost
+
+        turn = (len(set(longs) - prev_long)
+                + len(set(shorts) - prev_short)) / (2.0 * k)
+        real = _book(longs, shorts, full_cost * turn)
+        prev_long, prev_short = set(longs), set(shorts)
+        turnovers.append(turn)
         rets.append(real)
 
         if placebo_seed is not None:
             syms = [p.symbol for p in pts]
-            rng.shuffle(syms)
-            fake = _book(syms[:k], syms[-k:])
-            if fake is not None:
-                fake_rets.append(fake)
+            for d in range(draws):
+                rng.shuffle(syms)
+                # THE CONTROL IS MATCHED ON TURNOVER, and this is load-bearing.
+                # A ranked book keeps names it already holds (66% churn measured);
+                # a shuffled book re-draws (77%). Billing each its own churn makes
+                # the real book cheaper than every draw for a reason that has
+                # nothing to do with whether the labels predict, and the null
+                # world's median p fell to 0.079 on that alone. Charging the real
+                # book's cost to the control differences the fee out, so what is
+                # left is the only thing the shuffle changed: the labels.
+                fake = _book(syms[:k], syms[-k:], full_cost * turn)
+                draw_rets[d].append(fake)
 
         picks.append({"t": t, "long": longs, "short": shorts, "ret": real})
         t += horizon
@@ -239,10 +329,18 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
         pnl = [x * starting_equity for x in seq]
         return backtest.run_backtest(pnl, starting_equity=starting_equity)
 
+    # draw 0 stays the reported single placebo, so the curve, the Sharpe and the
+    # paired interval all refer to one reproducible shuffle; the other draws exist
+    # to say how unusual the real book is against the whole null.
+    fake_rets = draw_rets[0] if draw_rets else []
+    totals = [sum(dr) for dr in draw_rets if dr]
+
     return RotationBacktestResult(
         metrics=_curve(rets), n_rebalances=len(rets), period_returns=rets,
         placebo=_curve(fake_rets) if fake_rets else None,
-        placebo_returns=fake_rets, picks=picks, cost_per_rebalance=cost,
+        placebo_returns=fake_rets, picks=picks, cost_per_rebalance=full_cost,
+        mean_turnover=(sum(turnovers) / len(turnovers)) if turnovers else 0.0,
+        placebo_totals=totals,
     )
 
 
@@ -255,6 +353,11 @@ def run_rotation_backtest(prices_by_symbol: dict, benchmark, *, window: int = 63
 # more than 2x?" Both must hold.
 PREREG_T_THRESH = 2.0
 PREREG_PLACEBO_RATIO = 2.0
+#: Amendment 6.1: the registered "2x the placebo" rule compares to ONE shuffle,
+#: and one shuffle was measured firing on 6 of 20 null worlds. The permutation p
+#: is required IN ADDITION, never instead — it can only make passing harder, so
+#: it cannot rescue a result, and the recorded 7.1 answer is unchanged by it.
+PREREG_MAX_P = 0.10
 
 
 def preregistered_verdict(panel: QuadrantPanel,
@@ -290,9 +393,17 @@ def preregistered_verdict(panel: QuadrantPanel,
         why_book = (f"the book returned {real:+.1%} net of costs; a losing book "
                     f"does not pass on the placebo's {fake:+.1%} being worse")
     else:
-        book_pass = fake < real / PREREG_PLACEBO_RATIO
+        beats_ratio = fake < real / PREREG_PLACEBO_RATIO
+        p = book.permutation_p()
+        book_pass = beats_ratio and (p is not None and p <= PREREG_MAX_P)
         why_book = (f"book {real:+.1%} vs placebo {fake:+.1%} "
                     f"(needs the placebo below {real / PREREG_PLACEBO_RATIO:+.1%})")
+        if p is None:
+            why_book += "; no null distribution was run, so chance is unmeasured"
+        else:
+            why_book += (f"; permutation p={p:.1%} over "
+                         f"{len(book.placebo_totals)} shuffles "
+                         f"(needs <= {PREREG_MAX_P:.0%})")
 
     passed = panel_pass and book_pass
     return {

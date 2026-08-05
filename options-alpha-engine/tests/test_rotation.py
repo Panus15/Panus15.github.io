@@ -183,13 +183,30 @@ def test_the_panel_finds_the_effect_when_strength_really_persists():
 
 
 def test_the_long_short_book_separates_the_two_worlds():
+    """Separation is judged on the permutation p, not on the sign of the total.
+
+    The sign was always a proxy: in the null world the book's total is whatever
+    costs and one sample happen to make it, so the test passed or failed on the
+    cost assumption rather than on whether the harness can tell signal from
+    noise. The p-value asks the question directly.
+
+    Judged on MEDIANS over several worlds, not on one of each. A calibrated test
+    fires on about one null world in ten by design, so a single null world
+    landing under the threshold is the test working, not failing — asserting on
+    one would make this flaky for the very reason the harness is correct.
+    """
+    def med(phi):
+        # nine worlds, so the median is an actual observation and one unlucky
+        # draw cannot decide the test; five was not enough and gave 0.099
+        ps = sorted(run_rotation_backtest(*_world(n=1300, phi=phi, seed=s),
+                                          placebo_draws=100).permutation_p()
+                    for s in range(9))
+        return ps[len(ps) // 2]
+
     real = run_rotation_backtest(*_world(phi=0.98))
-    null = run_rotation_backtest(*_world(phi=0.0))
-    assert real.n_rebalances > 50 and null.n_rebalances > 50
-    assert real.metrics.total_return > 0 > null.metrics.total_return
-    assert "NO EDGE" in null.verdict(), null.verdict()
-    assert real.placebo is not None
-    assert real.metrics.total_return > real.placebo.total_return * 2
+    assert real.n_rebalances > 50
+    assert med(0.98) <= 0.10 < med(0.0), (med(0.98), med(0.0))
+    assert "worth a longer sample" in real.verdict(), real.verdict()
 
 
 def test_costs_are_charged_every_rebalance():
@@ -225,6 +242,118 @@ def test_the_map_is_built_strictly_from_the_past():
     assert seen["calls"] == res.n_rebalances > 20
 
 
+def test_the_control_fires_at_its_nominal_rate_on_null_worlds():
+    """The control must be CALIBRATED, not merely present.
+
+    This is the defect that made the rewrite necessary. Comparing to ONE shuffled
+    book, the placebo's own total swung from -16.6% to +7.9% purely on its seed,
+    and on a fixture world built with no signal at all it declared an edge in 6
+    of 20 seeds. A control that fires on a third of null worlds cannot support
+    the sentence "the book beat the placebo".
+
+    A permutation p over a distribution of shuffles should fire at its nominal
+    rate: about 1 world in 10 at p <= 0.10. Ten worlds is a small check, so the
+    bound is generous — it is here to catch a control that is broken, not to
+    measure it to two decimals.
+    """
+    fired = 0
+    for seed in range(10):
+        r = run_rotation_backtest(*_world(n=1300, phi=0.0, seed=seed), cost_bps=0.0)
+        if r.permutation_p() <= 0.10 and r.metrics.total_return > 0:
+            fired += 1
+    assert fired <= 3, (f"{fired}/10 null worlds declared an edge at p<=0.10; "
+                        f"the control is not calibrated")
+
+
+def test_the_permutation_p_is_invariant_to_the_fee():
+    """The sharpest check that the control is MATCHED.
+
+    Costs are identical for the book and every shuffle, so they cancel in the
+    comparison and the p-value must not move when the fee changes. If a shuffle
+    paid its own turnover instead, the ranked book — which is stickier, 66% churn
+    against 77% — would get cheaper than its own control as the fee rose, and the
+    p-value would drift down for a reason that is not prediction. Measured that
+    way, the null world's median p fell to 0.079.
+    """
+    w = _world(n=1300, phi=0.0, seed=3)
+    ps = [run_rotation_backtest(*w, cost_bps=bps, placebo_draws=200).permutation_p()
+          for bps in (0.0, 10.0, 50.0)]
+    assert len(set(ps)) == 1, f"p moved with the fee: {ps} — the control is unmatched"
+
+
+def test_costs_are_charged_on_the_legs_that_actually_change():
+    """Billing a full round trip when nothing moved is a fee for a trade nobody
+    placed. What is charged must equal the fee times the measured churn."""
+    w = _world(n=1300, phi=0.9, seed=2)
+    free = run_rotation_backtest(*w, cost_bps=0.0)
+    paid = run_rotation_backtest(*w, cost_bps=10.0)
+    assert 0.0 < paid.mean_turnover < 1.0, paid.mean_turnover
+    charged = free.metrics.total_return - paid.metrics.total_return
+    expect = paid.cost_per_rebalance * paid.mean_turnover * paid.n_rebalances
+    assert abs(charged - expect) < 1e-9, (charged, expect)
+    flat = paid.cost_per_rebalance * paid.n_rebalances
+    assert charged < flat * 0.95, "turnover made no difference to the bill"
+
+
+def test_no_number_of_shuffles_can_prove_impossibility():
+    """p must never be 0. A finite null cannot rule anything out, and a printed
+    0.0% would read as certainty the resampling cannot deliver."""
+    r = RotationBacktestResult(metrics=_Curve(9.99), n_rebalances=91,
+                               placebo=_Curve(0.0), placebo_totals=[-1.0] * 200)
+    p = r.permutation_p()
+    assert p == 1.0 / 201.0, p
+    assert p > 0.0
+
+
+def test_a_shuffle_that_ties_counts_against_the_finding():
+    """`>=`, not `>`. A shuffle that merely MATCHED the book is evidence that
+    chance reaches this result, so it belongs in the numerator. Counting only
+    strict betters is the convention that flatters, and with a discrete return
+    grid — or a shuffle that happens to pick the same names — ties are not rare
+    enough to wave away."""
+    tied = RotationBacktestResult(metrics=_Curve(0.25), n_rebalances=91,
+                                  placebo=_Curve(0.0),
+                                  placebo_totals=[0.25] * 30 + [-1.0] * 170)
+    assert tied.permutation_p() == 31.0 / 201.0, tied.permutation_p()
+    assert tied.permutation_p() > 0.10, "30 ties were not counted against it"
+    assert "INDISTINGUISHABLE" in tied.verdict(), tied.verdict()
+
+
+def test_the_verdict_refuses_a_book_sitting_in_its_null():
+    """A positive total that a fifth of shuffles match is not a finding, and the
+    sentence the user reads has to say so."""
+    mid = RotationBacktestResult(metrics=_Curve(0.40), n_rebalances=91,
+                                 placebo=_Curve(0.01),
+                                 placebo_totals=[0.9] * 40 + [-0.9] * 160)
+    v = mid.verdict()
+    assert "INDISTINGUISHABLE FROM CHANCE" in v, v
+    assert "worth a longer sample" not in v, v
+
+
+def test_the_control_still_finds_a_real_signal():
+    """Calibration is worthless if it is bought by never firing at all."""
+    found = sum(run_rotation_backtest(*_world(n=1300, phi=0.98, seed=s),
+                                      cost_bps=0.0).permutation_p() <= 0.10
+                for s in range(5))
+    assert found >= 4, f"only {found}/5 signal worlds were detected"
+
+
+def test_one_shuffle_is_reported_as_one_shuffle():
+    """The degenerate path must not quietly speak as if it had a null."""
+    class _M:
+        def __init__(self, tr):
+            self.total_return, self.sharpe, self.max_drawdown = tr, 1.0, -0.1
+
+        def summary(self):
+            return ""
+
+    one = RotationBacktestResult(metrics=_M(0.40), n_rebalances=60, placebo=_M(0.02))
+    v = one.verdict()
+    assert one.permutation_p() is None
+    assert "ONE shuffle" in v, v
+    assert "% of" not in v, f"it quoted a null distribution it does not have: {v}"
+
+
 def test_a_result_the_placebo_matches_is_rejected():
     """If shuffling the labels earns the same, the harness measured something else."""
     class _M:
@@ -235,8 +364,9 @@ def test_a_result_the_placebo_matches_is_rejected():
             return ""
 
     good = RotationBacktestResult(metrics=_M(0.40), n_rebalances=60,
-                                  placebo=_M(0.02))
-    assert "worth a longer sample" in good.verdict()
+                                  placebo=_M(0.02),
+                                  placebo_totals=[0.02] * 100)
+    assert "worth a longer sample" in good.verdict(), good.verdict()
     fake = RotationBacktestResult(metrics=_M(0.40), n_rebalances=60,
                                   placebo=_M(0.35))
     assert "REJECTED BY THE PLACEBO" in fake.verdict(), fake.verdict()
@@ -308,9 +438,12 @@ class _Curve:
         self.sharpe = 0.0
 
 
-def _book(real, fake, n=91):
+def _book(real, fake, n=91, p=0.01, draws=200):
+    """A book whose permutation p can be dialled by stacking the null totals."""
+    beat = max(0, int(round(p * (1 + draws))) - 1)
+    totals = [real + 1.0] * beat + [real - 1.0] * (draws - beat)
     return RotationBacktestResult(metrics=_Curve(real), n_rebalances=n,
-                                  placebo=_Curve(fake))
+                                  placebo=_Curve(fake), placebo_totals=totals)
 
 
 def test_the_real_result_is_recorded_as_a_failure():
@@ -335,6 +468,42 @@ def test_both_halves_are_required():
     assert preregistered_verdict(strong_panel, good_book)["passed"]
     assert not preregistered_verdict(weak_panel, good_book)["passed"]
     assert not preregistered_verdict(strong_panel, bad_book)["passed"]
+
+
+def test_a_book_that_sits_inside_its_null_never_passes():
+    """Amendment 6.1. Beating one shuffle by 8x means nothing if a fifth of the
+    shuffles do the same — which is the case a single-draw placebo cannot see."""
+    strong = _panel(0.02, -0.02)
+    assert preregistered_verdict(strong, _book(0.40, 0.05, p=0.01))["passed"]
+    v = preregistered_verdict(strong, _book(0.40, 0.05, p=0.20))
+    assert not v["book_passed"], v["why_book"]
+    assert "permutation p=19" in v["why_book"], v["why_book"]
+
+
+def test_a_book_with_no_null_distribution_cannot_pass():
+    from engine.rotation_backtest import RotationBacktestResult as R
+    naked = R(metrics=_Curve(0.40), n_rebalances=91, placebo=_Curve(0.05))
+    v = preregistered_verdict(_panel(0.02, -0.02), naked)
+    assert not v["book_passed"] and "chance is unmeasured" in v["why_book"]
+
+
+def test_the_amendment_can_only_make_passing_harder():
+    """A stricter rule added after a result is safe; a looser one is not.
+
+    Every book that fails the registered 2x rule must still fail with the
+    permutation requirement bolted on, whatever its p. If any combination could
+    pass under the amendment but not under the original, the amendment would be
+    a rescue rather than a tightening.
+    """
+    panel = _panel(0.02, -0.02)
+    for real, fake in ((0.40, 0.30), (-0.05, -0.50), (0.10, 0.09), (0.0, -0.9)):
+        for p in (0.001, 0.05, 0.10, 0.50):
+            b = _book(real, fake, p=p)
+            registered = real > 0 and fake < real / 2.0
+            got = preregistered_verdict(panel, b)["book_passed"]
+            assert got <= registered, (
+                f"real={real} fake={fake} p={p}: passed under the amendment "
+                f"but not under the registered rule")
 
 
 def test_an_inverted_panel_is_not_a_pass():

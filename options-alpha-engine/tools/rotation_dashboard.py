@@ -137,6 +137,10 @@ def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: i
             "rebalances": book.n_rebalances,
             "placeboReturn": (round(book.placebo.total_return, 4)
                               if book.placebo else None),
+            "placeboDraws": len(book.placebo_totals),
+            "permutationP": (round(book.permutation_p(), 4)
+                             if book.permutation_p() is not None else None),
+            "turnover": round(book.mean_turnover, 3),
             "prereg": preregistered_verdict(panel, book),
         }
     return payload

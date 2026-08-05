@@ -52,8 +52,16 @@ class Interval:
     def spans_zero(self) -> bool:
         return self.lo <= 0.0 <= self.hi
 
-    def line(self, pct: str = "") -> str:
+    def line(self, pct: bool = False) -> str:
+        """One row. ``pct=True`` for intervals whose units are returns, not cash.
+
+        A return of 0.0049 printed at two decimals reads as +0.00 — the interval
+        would look empty and the reader would conclude the opposite of the truth.
+        """
         flag = "   <- spans zero" if self.spans_zero else ""
+        if pct:
+            return (f"  {self.label:22}{self.point:>+9.2%}   "
+                    f"[{self.lo:>+7.2%}, {self.hi:>+7.2%}]  n={self.n}{flag}")
         return (f"  {self.label:22}{self.point:>+9.2f}   "
                 f"[{self.lo:>+7.2f}, {self.hi:>+7.2f}]  n={self.n}{flag}")
 

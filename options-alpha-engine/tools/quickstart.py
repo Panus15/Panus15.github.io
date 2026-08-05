@@ -120,8 +120,13 @@ def result_report(payload: dict, *, demo: bool = False, span=None) -> str:
         out += [f"  rebalances  {t.get('rebalances', '?')}",
                 f"  book        {t.get('bookReturn', 0.0):+.1%} net of costs, "
                 f"Sharpe {t.get('bookSharpe', 0.0):+.2f}",
-                f"  placebo     {t.get('placeboReturn'):+.1%}"
-                if t.get("placeboReturn") is not None else "  placebo     none",
+                f"  turnover    {t.get('turnover', 0.0):.0%} of the book per rebalance",
+                (f"  placebo     {t['placeboReturn']:+.1%} "
+                 f"(1 of {t.get('placeboDraws', 0)} shuffles)"
+                 if t.get("placeboReturn") is not None else "  placebo     none"),
+                (f"  permutation {t['permutationP']:.1%} of shuffled books did as "
+                 f"well or better" if t.get("permutationP") is not None
+                 else "  permutation not run"),
                 "",
                 "panel: " + t.get("panelVerdict", "?"),
                 "book : " + t.get("bookVerdict", "?"),
