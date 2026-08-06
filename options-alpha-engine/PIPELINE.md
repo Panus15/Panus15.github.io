@@ -41,6 +41,7 @@ no numpy/scipy/pandas · every load-bearing change mutation-verified.
                                              ▼
                                     decision.py  FUSE
                                     unproven inputs may only CUT size
+                                    DISPROVEN inputs do not move it at all
                                         │
                                         ▼
                               portfolio.py  govern

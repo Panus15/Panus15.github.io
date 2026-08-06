@@ -7,19 +7,30 @@ up and fuses the three things the repo can actually see about a US equity:
     sector rotation     is the market currently paying this sector or selling it?
     fund crowding       are the mechanical option sellers already parked here?
 
-THE RULE THAT MAKES THIS SAFE TO USE, and it is the whole design:
+TWO RULES, and together they are the whole design:
 
-    an input with no evidence behind it may only REDUCE size. It can never flip
-    a direction, create a trade, or raise conviction.
+    1. an input with no evidence behind it may only REDUCE size. It can never
+       flip a direction, create a trade, or raise conviction.
+    2. an input that has been TESTED AND FAILED does not move size at all.
 
-That asymmetry is not conservatism for its own sake. Of the three inputs exactly
-one — the variance edge — rests on machinery this repo has verified against
-oracles. The rotation signal has been tested only on fixtures the author wrote.
+Rule 1 is the familiar asymmetry: of the three inputs exactly one — the variance
+edge — rests on machinery this repo has verified against oracles, and letting an
+unmeasured thing manufacture position size is precisely how a research codebase
+turns into a loss. Letting it subtract costs, at worst, some trades that would
+have been fine.
+
+Rule 2 is the one that is easy to skip, and it now applies to sector rotation.
+The RRG quadrant used to cut size in Lagging and Weakening. Then it was measured
+on real sector history and the quadrant predicted nothing (t=+0.71 on a test that
+charges no costs at all — PREREGISTRATION.md §7.1). Keeping the cut would not be
+prudence. Under rule 1 an untested input is treated as a risk we cannot see; a
+DISPROVEN one is different in kind — it spends real position size on noise, and
+it leaves the printed decision looking like it reasons about the sector when the
+number underneath is empty. The quadrant is still shown, as context for a human.
+It is no longer arithmetic.
+
 The crowding signal has never been tested at all, because the archive that would
-feed it is days old. Letting either of those two ADD conviction would let an
-unmeasured thing manufacture position size, which is precisely how a research
-codebase turns into a loss. Letting them subtract costs, at worst, some trades
-that would have been fine.
+feed it is days old, so it stays under rule 1.
 
 So `Decision.size_multiplier` starts at 1.0 and only ever goes down, and every
 reduction names the input that caused it. If all three agree, you get the same
@@ -41,8 +52,9 @@ from dataclasses import dataclass, field
 VALIDATED = "validated"        # verified machinery; still unproven on live markets
 FIXTURE_ONLY = "fixture-only"  # tested, but only against data we generated
 NO_DATA = "no data"            # wired up and empty — absence of evidence, not of risk
+TESTED_NO_EDGE = "tested: no edge"   # run on real data and it did not predict
 
-_RANK = {VALIDATED: 0, FIXTURE_ONLY: 1, NO_DATA: 2}
+_RANK = {VALIDATED: 0, FIXTURE_ONLY: 1, NO_DATA: 2, TESTED_NO_EDGE: 3}
 
 
 @dataclass
@@ -98,8 +110,10 @@ class Decision:
                "",
                " INPUTS"]
         out += [i.line() for i in self.inputs]
-        if self.size_multiplier < 1.0:
-            cut = ", ".join(i.name for i in self.inputs if i.effect < 1.0)
+        # keyed on what actually cut, not on the multiplier: a NO TRADE zeroes the
+        # size through a different path, and the line then named nobody at all
+        cut = ", ".join(i.name for i in self.inputs if i.effect < 1.0)
+        if cut:
             out += ["", f" size reduced by: {cut}"]
         out += ["", f" weakest evidence acting on this decision: "
                     f"{self.weakest_evidence}"]
@@ -110,7 +124,28 @@ class Decision:
 
 
 def _rotation_input(rotation_point, *, lagging_cut: float, weakening_cut: float):
-    """Sector rotation as a size modifier only — never a direction."""
+    """Sector rotation: REPORTED, never acted on. It was tested and it failed.
+
+    This used to cut size in Lagging and Weakening on the reasoning that realised
+    vol runs hot where the market is dumping. That reasoning was never measured;
+    it was a story about a chart. It has now been measured on real SPDR sector
+    history (PREREGISTRATION.md §7.1) and the quadrant carries no forward
+    information: Leading beat Lagging by +0.25% per period at t=+0.71, on the
+    kindest test available — the panel charges no costs at all.
+
+    So the quadrant no longer moves size. Cutting on a disproven signal is not
+    harmless caution: it spends real position size on noise, and worse, it makes
+    the printed decision look like it is reasoning about the sector when the
+    number it is reasoning from has been shown to be empty. A repo that runs a
+    test, gets NO, and leaves the signal wired into sizing has not run the test.
+
+    The reading is still printed, because knowing which quadrant a name sits in
+    is worth seeing even when it predicts nothing — it is context for a human,
+    not an input to the arithmetic. ``lagging_cut`` and ``weakening_cut`` are
+    accepted and deliberately ignored; they stay in the signature so a caller
+    that still passes them is not silently broken, and they become live again
+    only if some future sample produces a positive registered result.
+    """
     if rotation_point is None:
         return Input("sector rotation", "no sector map supplied", NO_DATA,
                      note="absence of a rotation map is absence of DATA, not "
@@ -118,19 +153,10 @@ def _rotation_input(rotation_point, *, lagging_cut: float, weakening_cut: float)
     q = rotation_point.quadrant
     reading = (f"{rotation_point.symbol} {q} "
                f"(RS {rotation_point.rs_ratio:.1f} / Mom {rotation_point.rs_momentum:.1f})")
-    # Selling vol into a sector the market is actively dumping is the case where
-    # realised vol is most likely to run past the forecast, so that is where size
-    # comes down. Leading gets NO bonus — the rule only subtracts.
-    if q == "Lagging":
-        return Input("sector rotation", reading, FIXTURE_ONLY, lagging_cut,
-                     note="the sector is weak AND still weakening; realised vol "
-                          "tends to run hot here")
-    if q == "Weakening":
-        return Input("sector rotation", reading, FIXTURE_ONLY, weakening_cut,
-                     note="strength is fading — a smaller size until it settles")
-    return Input("sector rotation", reading, FIXTURE_ONLY, 1.0,
-                 note="no reduction; a favourable quadrant never ADDS size, "
-                      "because the rotation signal has only been tested on fixtures")
+    return Input("sector rotation", reading, TESTED_NO_EDGE, 1.0,
+                 note="context only — on real sector history the quadrant did "
+                      "not predict forward returns (t=+0.71, §7.1), so it moves "
+                      "size in neither direction")
 
 
 def _crowding_input(share, note, *, crowded_cut: float, crowded_at: float):

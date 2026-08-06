@@ -287,3 +287,13 @@ not pay.
 `cost_bps`, `rank_by='rs'`, a smaller `k` — are each a *new* question. Any of them
 run against this data is exploratory and gets labelled as such; none of them
 retroactively changes the answer above.
+
+**Acted on.** `models/decision.py` used to cut position size when the underlying's
+sector sat in Lagging (×0.5) or Weakening (×0.75). That cut rested on a story
+about the chart, not a measurement, and the measurement has now been taken. The
+quadrant no longer moves size in either direction; it is printed as context and
+carries the status `tested: no edge`, which ranks below `no data` — an untested
+input might yet be true, a disproven one has had its turn. Cutting size on a
+signal shown to be empty is not caution: it spends real position size on noise
+and prints a sentence that looks like reasoning. **A study whose result does not
+change the system is a study that was not run.**
