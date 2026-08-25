@@ -10,15 +10,19 @@ Run: python3 tests/test_archive_holdings.py
 """
 
 import datetime
+import io
 import json
 import os
+import subprocess
 import shutil
 import sys
 import tempfile
+from contextlib import redirect_stdout
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.archive_holdings import (coverage, fetch_one, load_archive,
+from tools.archive_holdings import (KNOWN_SOURCES, NEEDS_URL, coverage,
+                                    fetch_one, load_archive, main,
                                     supply_at_from_archive)
 
 ROWS = ("underlying,expiry,strike,type,quantity\n"
@@ -212,6 +216,163 @@ def test_sources_can_be_overridden_without_editing_code():
         assert set(KNOWN_SOURCES) >= {"QQQI", "JEPQ"}
     finally:
         shutil.rmtree(d)
+
+
+
+def test_the_archive_is_not_gitignored():
+    """The one dataset here that cannot be re-bought must be under version control.
+
+    `.gitignore` carried a blanket `*.csv` under a "never commit vendor data"
+    heading. Fund holdings ARE vendor data, so the rule was defensible in the
+    abstract and catastrophic in particular: holdings are published daily and
+    overwritten, so a day not captured is gone at any price, and the crowding
+    study wants ~18 months of them. The effect was that the only irreplaceable
+    data in the repo was the only data with no history and no backup.
+
+    A blanket ignore is also exactly the kind of rule someone re-adds while
+    tidying, so this asserts on `git check-ignore` rather than on the file text.
+    """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.isdir(os.path.join(root, ".git")) and not os.path.isfile(
+            os.path.join(root, ".gitignore")):
+        return                                   # not a checkout; nothing to assert
+
+    probe = os.path.join(root, "holdings", "QQQI", "2099-01-01.csv")
+    os.makedirs(os.path.dirname(probe), exist_ok=True)
+    made = not os.path.exists(probe)
+    if made:
+        with open(probe, "w") as fh:
+            fh.write("date,strike\n")
+    try:
+        # -q, NOT -v: with -v the exit code is 0 whenever any rule MATCHES,
+        # including a negation, so `-v` would read "!holdings/**/*.csv matched"
+        # as "ignored" and the test would fail on the very fix it defends.
+        # Bare check-ignore is the one that means what it says: 0 = ignored.
+        q = subprocess.run(["git", "check-ignore", "-q", probe], cwd=root,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        why = subprocess.run(["git", "check-ignore", "-v", probe], cwd=root,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        assert q.returncode != 0, (
+            "the holdings archive is gitignored by "
+            + why.stdout.decode("utf-8", "replace").strip()
+            + " -- point-in-time fund books cannot be re-fetched, so an ignored "
+              "archive is a dataset with no backup")
+    finally:
+        if made:
+            os.remove(probe)
+        for d in (os.path.dirname(probe), os.path.join(root, "holdings")):
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+
+
+def test_secrets_and_scratch_data_are_still_ignored():
+    """The un-ignore must be surgical. A negation broad enough to sweep in .env
+    or a downloaded price cache would trade one disaster for a worse one."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if not os.path.isfile(os.path.join(root, ".gitignore")):
+        return
+    for rel in (".env", "data/vendor.csv", "sectors.csv", "_prices/SPY.csv"):
+        path = os.path.join(root, rel)
+        p = subprocess.run(["git", "check-ignore", "-q", path], cwd=root,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        assert p.returncode == 0, f"{rel} is no longer ignored"
+
+
+
+def _cfg(tmp, mapping):
+    p = os.path.join(tmp, "sources.json")
+    with open(p, "w") as fh:
+        json.dump(mapping, fh)
+    return p
+
+
+def _fetch(tmp, mapping):
+    """Run the CLI exactly as the scheduler would, capturing what it prints."""
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["fetch", "--dir", os.path.join(tmp, "arc"),
+                   "--sources", _cfg(tmp, mapping), "--asof", "2026-08-01"])
+    return rc, buf.getvalue()
+
+
+def test_a_run_that_captured_nothing_exits_nonzero():
+    """A green exit on an empty run is the most expensive lie this tool can tell.
+
+    Holdings are published daily and overwritten. A scheduled job that reports
+    success on a day it captured nothing loses that day permanently, and the
+    operator finds out eighteen months later when the study will not run.
+    """
+    d = tempfile.mkdtemp()
+    try:
+        rc, out = _fetch(d, {"NOPE": "file:///nonexistent/none.csv"})
+        assert rc == 1, f"a run that archived nothing exited 0:\n{out}"
+        assert "NOTHING CAPTURED" in out, out
+    finally:
+        shutil.rmtree(d)
+
+
+def test_a_day_already_on_disk_is_success_not_failure():
+    """`already have it` is the idempotent case: a re-run, or a weekend with no
+    new file. Today's data exists, so the run has done its job and must not cry
+    wolf — an alarm that fires on normal days gets muted."""
+    d = tempfile.mkdtemp()
+    try:
+        m = {"QQQI": _serve(ROWS.encode(), d)}
+        assert _fetch(d, m)[0] == 0
+        rc, out = _fetch(d, m)
+        assert rc == 0, f"the second, idempotent run reported failure:\n{out}"
+    finally:
+        shutil.rmtree(d)
+
+
+def test_a_partial_capture_exits_zero_but_says_what_failed():
+    """Two funds have no URL and have not for weeks. Failing daily on a known
+    gap trains the operator to ignore the alarm, and then the day QQQI itself
+    breaks goes unnoticed. Report it loudly, exit 0."""
+    d = tempfile.mkdtemp()
+    try:
+        rc, out = _fetch(d, {"QQQI": _serve(ROWS.encode(), d),
+                             "NOPE": "file:///nonexistent/none.csv"})
+        assert rc == 0, f"a partial capture failed the whole run:\n{out}"
+        assert "1 fund(s) did not archive" in out, out
+    finally:
+        shutil.rmtree(d)
+
+
+def test_a_fund_with_no_url_says_so_instead_of_fetching_a_web_page():
+    """JEPI/JEPQ pointed at am.jpmorgan.com product PAGES. The HTML was saved as
+    .csv, parsed to zero option lines and rejected — every day, while the run
+    still reported success. Now the gap is named before anything is downloaded."""
+    d = tempfile.mkdtemp()
+    try:
+        r = fetch_one("JEPQ", NEEDS_URL, os.path.join(d, "arc"))
+        assert "NO URL CONFIGURED" in r["status"], r["status"]
+        assert not os.path.exists(os.path.join(d, "arc", "JEPQ")), \
+            "it created a directory for a fund it cannot fetch"
+    finally:
+        shutil.rmtree(d)
+
+
+
+def test_every_built_in_url_is_shaped_like_a_data_file():
+    """The table said JEPQ was covered when it could not possibly work.
+
+    No network call: a product landing page is identifiable by its shape alone.
+    The rule is that a source is either a real data file — an extension the
+    parser dispatches on — or an explicit, visible admission that we have none.
+    """
+    for fund, url in KNOWN_SOURCES.items():
+        if url == NEEDS_URL:
+            continue
+        low = url.lower().split("?")[0]
+        assert low.startswith("https://"), (fund, url)
+        assert low.endswith((".csv", ".json")), (
+            f"{fund} points at {url!r}, which has no data-file extension. "
+            f"FundBook.from_file dispatches on the extension, so a landing page "
+            f"is saved as .csv and rejected daily while the run looks fine. "
+            f"Either use the direct-download URL or set it to NEEDS_URL.")
 
 
 def _run_all():

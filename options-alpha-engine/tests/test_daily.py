@@ -12,11 +12,16 @@ Run: python3 tests/test_daily.py
 import datetime
 import json
 import os
+import platform
+import io
 import shutil
 import sys
+from contextlib import redirect_stdout
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from tools import daily
 
 from tools.daily import (TRADING_DAYS_NEEDED, _step, install_line, main, run,
                          status)
@@ -196,6 +201,144 @@ def test_a_totally_failed_run_exits_nonzero_but_a_partial_one_does_not():
         assert "daily run" in out
     finally:
         shutil.rmtree(d)
+
+
+
+# --------------------------------------------------------------------------
+# install: the scheduler must get a PATH, and it must carry every flag
+# --------------------------------------------------------------------------
+
+def _cfg(**kw):
+    base = {"holdings": "holdings", "ledger": "", "prices": "", "events": "",
+            "sources": "", "source": "deribit", "dte": 30, "currency": "BTC",
+            "symbol": "SPX"}
+    base.update(kw)
+    return base
+
+
+def test_every_configured_flag_reaches_the_scheduled_command():
+    """The defect class, pinned. The old builder listed five flags by hand and
+    appended two more, which dropped --symbol: a job configured for SPY
+    scheduled itself without it and fell back to SPX at record time, forever,
+    silently recording a different underlying than the operator chose.
+
+    So this asserts on the WHOLE table rather than on the one flag that broke —
+    a seventh flag added tomorrow and forgotten fails here.
+    """
+    cfg = _cfg(ledger="paper.jsonl", prices="sectors.csv", events="ev.json",
+               sources="src.json", source="tradier", symbol="SPY", dte=45)
+    cmd = daily.job_command(cfg, python="/usr/bin/python3")
+    for flag, value in (("--holdings", "holdings"), ("--ledger", "paper.jsonl"),
+                        ("--prices", "sectors.csv"), ("--events", "ev.json"),
+                        ("--sources", "src.json"), ("--source", "tradier"),
+                        ("--dte", "45"), ("--symbol", "SPY")):
+        assert f"{flag} {value}" in cmd, f"{flag} missing from: {cmd}"
+    assert "--currency" not in cmd, "a deribit-only flag leaked into a tradier job"
+
+
+def test_the_underlying_flag_matches_the_source():
+    assert "--currency BTC" in daily.job_command(_cfg(source="deribit"))
+    assert "--symbol" not in daily.job_command(_cfg(source="deribit"))
+    assert "--symbol SPY" in daily.job_command(_cfg(source="tradier", symbol="SPY"))
+    assert "--currency" not in daily.job_command(_cfg(source="tradier"))
+
+
+def test_a_space_in_the_interpreter_path_survives():
+    """The verified Windows failure. A default install puts python under
+    C:\\Program Files\\, cmd split at the space, and the task failed every day
+    while schtasks still reported it registered — a clock the operator believed
+    was running."""
+    cmd = daily.job_command(_cfg(), python=r"C:\Program Files\Python313\python.exe")
+    assert cmd.startswith('"C:\\Program Files\\Python313\\python.exe"'), cmd
+
+
+def test_the_scheduler_gets_one_quoted_path_and_no_compound_command():
+    """schtasks takes its payload in /tr as a single double-quoted string with
+    no way to escape an inner quote, so `cd X && python ...` was structurally
+    unquotable. A wrapper script reduces the payload to one path."""
+    real = platform.system
+    platform.system = lambda: "Windows"
+    try:
+        line = daily.scheduler_command(r"C:\Users\First Last\repo\daily-job.bat")
+    finally:
+        platform.system = real
+    assert "&&" not in line, line
+    assert '/tr "C:\\Users\\First Last\\repo\\daily-job.bat"' in line, line
+
+
+def test_the_wrapper_logs_on_every_platform():
+    """Windows had no log redirect while Linux and macOS both did — on the one
+    OS where the command was broken, there was no record that it ran."""
+    real = platform.system
+    for osname, suffix in (("Windows", ".bat"), ("Linux", ".sh")):
+        platform.system = lambda o=osname: o
+        d = tempfile.mkdtemp()
+        try:
+            path = daily.write_wrapper(_cfg(), python="/usr/bin/python3",
+                                       path=os.path.join(d, "job" + suffix))
+            body = open(path).read()
+            assert "daily.log" in body, (osname, body)
+            assert "2>&1" in body, (osname, body)
+            assert "tools.daily run" in body, (osname, body)
+        finally:
+            platform.system = real
+            shutil.rmtree(d)
+
+
+def test_install_writes_the_wrapper_but_schedules_nothing_without_apply():
+    """Registering a scheduled task is a side effect on the machine, and on
+    Windows it needs elevation this shell may not have. Writing a file is not."""
+    called = []
+    real_call = daily.subprocess.call
+    daily.subprocess.call = lambda *a, **k: called.append(a) or 0
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            rc = daily.main(["install"])
+    finally:
+        daily.subprocess.call = real_call
+        for f in ("daily-job.sh", "daily-job.bat"):
+            p = os.path.join(daily.ROOT, f)
+            if os.path.exists(p):
+                os.remove(p)
+    assert rc == 0
+    assert not called, "install scheduled a task without --apply"
+    out = buf.getvalue()
+    assert "daily-job" in out and "--apply" in out, out
+
+
+
+def test_a_space_in_a_configured_path_survives():
+    """Not only the interpreter. A ledger under "C:\\My Data\\" is ordinary, and
+    an unquoted value splits the same way the interpreter path did."""
+    cmd = daily.job_command(_cfg(ledger=r"C:\My Data\paper.jsonl",
+                                 sources=r"C:\My Data\src.json"),
+                            python="/usr/bin/python3")
+    assert '--ledger "C:\\My Data\\paper.jsonl"' in cmd, cmd
+    assert '--sources "C:\\My Data\\src.json"' in cmd, cmd
+
+
+def test_the_wrapper_enters_the_repo_before_running():
+    """`python -m tools.daily` resolves the module from the working directory,
+    and a scheduler starts in its own — C:\\Windows\\System32 for schtasks. A
+    wrapper that does not cd fails with ModuleNotFoundError every night, in a
+    log nobody reads, while the task itself reports success."""
+    real = platform.system
+    for osname, suffix in (("Windows", ".bat"), ("Linux", ".sh")):
+        platform.system = lambda o=osname: o
+        d = tempfile.mkdtemp()
+        try:
+            body = open(daily.write_wrapper(
+                _cfg(), python="/usr/bin/python3",
+                path=os.path.join(d, "job" + suffix))).read()
+            assert daily.ROOT in body, (osname, body)
+            assert body.count("cd") >= 1, (osname, body)
+            first = [l for l in body.splitlines()
+                     if l.strip() and not l.lstrip().startswith(("#", "@", "REM"))][0]
+            assert "cd" in first, f"{osname}: first real line is not a cd: {first}"
+        finally:
+            platform.system = real
+            shutil.rmtree(d)
 
 
 def _run_all():

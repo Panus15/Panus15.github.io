@@ -14,16 +14,27 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import numpy as np
+# The repo's contract is that the core runs on the standard library ALONE, so an
+# optional dependency must produce a SKIP, not a red suite. This file needs numpy
+# and said so in its docstring while importing it unguarded, which meant every
+# stdlib-only machine — including the operator's — saw a hard failure.
+try:
+    import numpy as np
+    HAVE_NUMPY = True
+except ImportError:
+    HAVE_NUMPY = False
 
-from models import objective
-from models.baseline import BaselineDensityForecaster
-from models.gru import GRUMDNForecaster, _seq_features
+if HAVE_NUMPY:
+    from models import objective
+    from models.baseline import BaselineDensityForecaster
+    from models.gru import GRUMDNForecaster, _seq_features
 
-_rng = np.random.default_rng(0)
-PRICES = [100.0]
-for _ in range(400):
-    PRICES.append(PRICES[-1] * math.exp(_rng.normal(0.0002, 0.012)))
+    _rng = np.random.default_rng(0)
+    PRICES = [100.0]
+    for _ in range(400):
+        PRICES.append(PRICES[-1] * math.exp(_rng.normal(0.0002, 0.012)))
+else:
+    PRICES = []
 
 
 def test_bptt_gradients_match_finite_difference():
@@ -87,6 +98,13 @@ def test_plugs_into_the_promotion_gate():
 
 
 def _run_all():
+    if not HAVE_NUMPY:
+        # printing PASS for a test that returned without asserting anything is
+        # the same lie the rest of this repo has been hunting: work that did not
+        # happen must not look like work that succeeded
+        print("SKIP (numpy not installed) — the GRU-MDN forecaster is optional")
+        print("\n0/0 passed")
+        return 0
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
     for t in tests:

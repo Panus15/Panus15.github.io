@@ -40,13 +40,19 @@ from models.fund_flow import FundBook, supply_map
 
 #: Daily-holdings files for the funds whose books are dominated by option selling.
 #: These URLs move; ``--sources my.json`` overrides the lot without editing code.
+#: Funds we want but have no working direct-download URL for. Listed rather than
+#: dropped so the gap is visible: JEPQ in particular is a headline target for the
+#: crowding study, and silently omitting it would read as "we chose not to".
+#: Both previously pointed at am.jpmorgan.com product PAGES, which return HTML;
+#: that HTML was saved as .csv, parsed to zero option lines, and rejected every
+#: day while the run still reported success. A named gap beats a fake source.
+NEEDS_URL = "<no direct-download URL known — supply one with --sources>"
+
 KNOWN_SOURCES = {
     "QQQI": "https://www.neosfunds.com/wp-content/fund-holdings/QQQI_holdings.csv",
     "SPYI": "https://www.neosfunds.com/wp-content/fund-holdings/SPYI_holdings.csv",
-    "JEPI": "https://am.jpmorgan.com/us/en/asset-management/adv/products/"
-            "j-p-morgan-equity-premium-income-etf-46641q332/holdings",
-    "JEPQ": "https://am.jpmorgan.com/us/en/asset-management/adv/products/"
-            "j-p-morgan-nasdaq-equity-premium-income-etf-46654q302/holdings",
+    "JEPI": NEEDS_URL,
+    "JEPQ": NEEDS_URL,
 }
 
 
@@ -62,6 +68,10 @@ def fetch_one(fund: str, url: str, outdir: str, *, asof: str | None = None,
     stop the others from being archived that day.
     """
     import urllib.request
+
+    if url == NEEDS_URL or not url:
+        return {"fund": fund, "status": "NO URL CONFIGURED — supply one with "
+                                        "--sources; this fund is not being archived"}
 
     asof = asof or _today()
     dest_dir = os.path.join(outdir, fund)
@@ -204,9 +214,25 @@ def _cmd_fetch(a):
         print(f"  {mark}{r['fund']:6} {r['status']}{extra}")
         ok += r["status"] == "archived"
     print(f"\n{ok}/{len(rows)} newly archived into {a.dir}/")
-    if ok == 0:
-        print("  NOTE: holdings URLs change often. Point --sources at a JSON of\n"
-              "        {\"FUND\": \"url\"} rather than editing the module.")
+
+    # Exit code policy. Holdings are published daily and overwritten, so a day
+    # not captured is gone at any price — which makes a green exit on an empty
+    # run the most expensive lie this tool can tell. But "already have it" is a
+    # SUCCESS (a re-run on the same day, or a weekend with no new file), so the
+    # line to draw is not "did anything change" but "does today's data exist".
+    #
+    # Partial success exits 0 deliberately. Two of the four funds have no URL
+    # and have not for weeks; failing every day on a known gap trains the
+    # operator to ignore the alarm, and then the day QQQI breaks goes unnoticed.
+    held = sum(r["status"] in ("archived", "already have it") for r in rows)
+    if held == 0:
+        print("  NOTHING CAPTURED. Holdings are overwritten daily, so today is\n"
+              "  gone unless this succeeds. URLs move: point --sources at a JSON\n"
+              '  of {"FUND": "url"} rather than editing the module.')
+        return 1
+    if held < len(rows):
+        print(f"  {len(rows) - held} fund(s) did not archive — see the !! lines "
+              f"above. Exiting 0 because {held} did.")
     return 0
 
 
