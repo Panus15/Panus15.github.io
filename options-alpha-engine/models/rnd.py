@@ -79,6 +79,32 @@ def _coverage_ok(chain: OptionChain, strikes) -> bool:
     return strikes[0] <= 0.90 * chain.spot and strikes[-1] >= 1.10 * chain.spot
 
 
+def snap_to_listed_expiry(chain: OptionChain, dte: int):
+    """Move a requested tenor onto an expiry the vendor actually lists.
+
+    ``_slice`` matches ``expiry_days`` EXACTLY, so a requested 30d against a
+    chain listing 7/14/35 yields an empty slice and every Q extractor raises. On
+    a vendor that returns only the nearest few expiries — Tradier fetches three,
+    and SPY/QQQ expire near-daily — the requested tenor is essentially never
+    listed, so "no usable Q" was the permanent state rather than the exception.
+
+    Returns ``(snapped_dte, note)``. ``note`` is None when the requested tenor
+    was listed and a sentence describing the move when it was not. The note is
+    NOT optional decoration: a silent snap from 30d to 3d would fill a ledger
+    with entries at a tenor nobody chose, and every VRP in it would be measured
+    against a forecast horizon it does not match. Callers must surface it and
+    record the realised tenor alongside the requested one.
+    """
+    available = sorted({q.expiry_days for q in chain.quotes})
+    if not available or dte in available:
+        return dte, None
+    snapped = min(available, key=lambda d: abs(d - dte))
+    shown = ", ".join(str(d) for d in available[:10])
+    return snapped, (f"no {dte}d expiry listed; snapped to the nearest: "
+                     f"{snapped}d (available: {shown}"
+                     f"{'...' if len(available) > 10 else ''})")
+
+
 def model_free_implied_vol(chain: OptionChain, T: float, dte: int | None = None) -> float:
     """Model-free (VIX-style) risk-neutral volatility for one expiry.
 

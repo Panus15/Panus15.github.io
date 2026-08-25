@@ -164,7 +164,22 @@ Stated up front so they are not later presented as surprises.
 4. **No parameter is walk-forward selected** except the calibration vol scale.
    Everything in §2 is a judgement call, which is exactly why it is locked here.
 5. **Single-name option chains are American** and must be de-Americanized
-   (`--american`); index and crypto chains are not affected.
+   (`--american`); index and crypto chains are not affected. ~~`paper_trade
+   record` had no such flag, so the ledger this rule exists to protect was the
+   one place it could not be applied.~~ **FIXED** — `record --american`, and the
+   entry records `de_americanized` so a ledger mixing both is detectable rather
+   than merely wrong.
+6. **The forward ledger could not record at all, and that was invisible.**
+   Tradier fetched the 3 soonest expiries; SPY/QQQ list them near-daily, so the
+   reachable tenors were 1-4 DTE, where ±10% wings are worth ~0, are dropped by
+   the zero-bid filter, and fail `rnd._coverage_ok`. The tenors that pass
+   coverage (30-45d) were never fetched, and `rnd._slice` matched `expiry_days`
+   EXACTLY, so `--dte 30` also found nothing even when it was listed. **FIXED**
+   — expiries are now chosen by distance from the requested tenor rather than by
+   soonest, and the tenor snaps to the nearest listed expiry with the move
+   recorded in the entry (`requested_dte`, `expiry_snapped`). Found while
+   verifying an operator runbook, not by a test; §5.2 had been "start the
+   ledger" for weeks and starting it would have banked nothing.
 
 ## §5 — Order of execution
 

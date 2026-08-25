@@ -127,7 +127,7 @@ def test_analyze_snaps_to_the_nearest_listed_expiry():
     with contextlib.redirect_stdout(buf):
         rep = run_live.analyze(chain, prices, dte=30, run_backtest=False)
     out = buf.getvalue()
-    assert "snapping to the nearest: 33d" in out          # 30 -> 33 (nearer than 19)
+    assert "nearest: 33d" in out                         # 30 -> 33 (nearer than 19)
     assert rep["dte"] == 33                               # the report records what was USED
     assert "q_vol" in rep                                 # Q extraction now succeeds
 
@@ -135,7 +135,7 @@ def test_analyze_snaps_to_the_nearest_listed_expiry():
     buf2 = io.StringIO()
     with contextlib.redirect_stdout(buf2):
         rep2 = run_live.analyze(chain, prices, dte=19, run_backtest=False)
-    assert "snapping" not in buf2.getvalue() and rep2["dte"] == 19
+    assert "nearest" not in buf2.getvalue() and rep2["dte"] == 19
 
 
 def test_replayed_crypto_chain_keeps_its_unit_contract_size():

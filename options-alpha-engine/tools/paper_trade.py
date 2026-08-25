@@ -129,7 +129,8 @@ class PaperLedger:
     # --- record --------------------------------------------------------------
     def record(self, chain, prices, entry_index: int, forecaster, *,
                dte: int = 30, asof: str | None = None, min_vrp: float = 0.0,
-               news_feature=None, macro=None, calendar=None):
+               news_feature=None, macro=None, calendar=None,
+               american: bool = False):
         """Freeze one decision. Sees ONLY prices[:entry_index+1] — no look-ahead.
 
         ``news_feature`` (models.sentiment.SentimentFeature) composes the
@@ -151,6 +152,14 @@ class PaperLedger:
             raise ValueError("entry_index beyond price series")
         trailing = prices[:entry_index + 1]
         spot = chain.spot
+
+        # Snap BEFORE anything is computed. rnd._slice matches expiry_days
+        # exactly, and a vendor that returns only its nearest few expiries — as
+        # Tradier does, three by default, against SPY/QQQ expiring near-daily —
+        # essentially never lists the requested tenor. Unsnapped, this method
+        # returned None on every call and the ledger stayed empty forever.
+        requested_dte = dte
+        dte, snap_note = rnd.snap_to_listed_expiry(chain, dte)
         T = dte / CAL_DAYS
         try:
             q_vol = rnd.model_free_implied_vol(chain, T, dte)
@@ -187,7 +196,16 @@ class PaperLedger:
             "asof": asof if asof is not None else chain.asof,
             "entry_index": entry_index,
             "entry_spot": spot,
+            # both tenors, always. A ledger holding only the realised one cannot
+            # be audited later for whether the snap wandered somewhere the
+            # forecast horizon does not match, and a ledger holding only the
+            # requested one would misprice every settlement.
             "dte": dte,
+            "requested_dte": requested_dte,
+            "expiry_snapped": snap_note,
+            # a ledger that mixes converted and unconverted chains cannot be
+            # analysed later: the two are not the same measurement
+            "de_americanized": bool(american),
             "r": self.r,
             "q": self.q,
             "hedge_bps": self.hedge_bps,     # frozen per-entry so save->load settles
@@ -391,6 +409,18 @@ def _news_feature(args, chain):
 def _cmd_record(args):
     from tools.run_live import fetch
     chain, hist = fetch(args.source, args)
+
+    # De-Americanization, on the same terms run_live uses it. PREREGISTRATION.md
+    # §4.5 says single-name and ETF chains are American and MUST be converted
+    # before the Q extractors, which assume European options, are allowed near
+    # them. run_live had the flag; record did not, so every SPY/QQQ forecast
+    # this ledger froze would have violated the repo's own stated rule while
+    # looking identical to a correct one.
+    if getattr(args, "american", False):
+        from engine.american import de_americanize_chain
+        chain = de_americanize_chain(chain)
+        print(f"de-Americanized {len(chain.quotes)} quotes "
+              f"(required for US single-name / ETF options)")
     jpath = _journal_path(args)
     journal = _load_json(jpath, [])
     if not journal:
@@ -409,13 +439,19 @@ def _cmd_record(args):
         print(f"event calendar: {len(cal.events)} dated events loaded")
     e = led.record(chain, journal, len(journal) - 1, BaselineDensityForecaster(),
                    dte=args.dte, min_vrp=args.min_vrp, news_feature=feat,
-                   calendar=cal)
+                   calendar=cal, american=bool(getattr(args, "american", False)))
     with open(jpath, "w") as fh:
         json.dump(journal, fh)
     if e is None:
+        listed = sorted({q.expiry_days for q in chain.quotes})
         print(f"record: chain gave no usable Q at {args.dte}d — nothing added "
               f"(journal={len(journal)} bars)")
+        print(f"        expiries on this chain: "
+              f"{', '.join(str(d) for d in listed[:12]) or 'none'}"
+              f"{'...' if len(listed) > 12 else ''}")
     else:
+        if e.get("expiry_snapped"):
+            print(f"expiry: {e['expiry_snapped']}")
         print(f"record: id={e['id']} asof={e['asof']} spot={e['entry_spot']:,.2f} "
               f"dte={e['dte']} traded={e['traded']} vrp={e['vrp']:+.4f} q_vol={e['q_vol']:.1%} "
               f"(journal={len(journal)} bars; matures at index {e['entry_index'] + e['dte']})")
@@ -462,6 +498,15 @@ def main(argv=None):
     r.add_argument("--currency", default="BTC")
     r.add_argument("--symbol", default="SPX")
     r.add_argument("--dte", type=int, default=30)
+    r.add_argument("--american", action="store_true",
+                   help="de-Americanize first. REQUIRED for US single-name and "
+                        "ETF options (SPY, QQQ, ...); a near no-op for already-"
+                        "European chains (SPX, XSP, BTC). PREREGISTRATION.md §4.5")
+    r.add_argument("--max-expirations", dest="max_expirations", type=int,
+                    default=6,
+                    help="how many expiries to fetch AROUND --dte. The 3 "
+                         "soonest on a daily-expiry ETF are all too short "
+                         "to carry usable wings.")
     r.add_argument("--days", type=int, default=400)
     r.add_argument("--chain-json", dest="chain_json")
     r.add_argument("--price-json", dest="price_json")

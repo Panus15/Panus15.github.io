@@ -277,6 +277,105 @@ def test_cli_record_settle_report_offline():
         shutil.rmtree(d)
 
 
+
+# --------------------------------------------------------------------------
+# The deadlock: reachable tenors and tradeable tenors had no overlap
+# --------------------------------------------------------------------------
+
+def _prices():
+    """A price path scaled to the ETF spot the ladder is built around."""
+    return [680.0 * p / PRICES[0] for p in PRICES[:400]]
+
+
+def _ladder(spot=680.0, dtes=(1, 2, 3, 23, 30, 35), iv=0.16):
+    """A realistic ETF book: near-daily expiries plus a monthly, penny quotes.
+
+    The wings matter. At 1-3 DTE a strike 10% out is worth fractions of a cent
+    and the zero-bid filter drops it, so rnd._coverage_ok (needs +/-10% cover)
+    fails there and only there.
+    """
+    from engine import pricing
+    from engine.data import OptionChain, OptionQuote
+    quotes = []
+    for dte in dtes:
+        t = dte / 365.0
+        for k in [round(spot * m, 1) for m in
+                  (0.85, 0.88, 0.90, 0.95, 1.0, 1.05, 1.10, 1.12, 1.15)]:
+            for kind in ("call", "put"):
+                px = pricing.price(spot, k, t, 0.04, 0.0, iv, kind)
+                if px < 0.01:                    # the vendor's zero-bid wings
+                    continue
+                quotes.append(OptionQuote(dte, k, kind,
+                                          round(px * 0.995, 2), round(px * 1.005, 2)))
+    return OptionChain("SPY", spot, 0.04, 0.0, quotes, asof="2026-08-25")
+
+
+def test_a_requested_tenor_that_is_not_listed_still_records():
+    """THE blocker. rnd._slice matches expiry_days exactly, so `--dte 30`
+    against a chain listing 1/2/3/23/35 yielded an empty slice, every Q
+    extractor raised, record() returned None and the ledger stayed empty
+    forever. The forward test — the only thing that can answer whether this
+    engine predicts anything — could never start."""
+    chain = _ladder(dtes=(1, 2, 3, 23, 35))
+    led = PaperLedger()
+    e = led.record(chain, _prices(), 200, BaselineDensityForecaster(), dte=30)
+    assert e is not None, "an unlisted tenor still records nothing"
+    assert e["dte"] == 35 or e["dte"] == 23, e["dte"]
+    assert e["requested_dte"] == 30
+
+
+def test_the_snap_is_recorded_not_silent():
+    """A silent move from 30d to 3d would fill the ledger with entries at a
+    tenor nobody chose, every VRP measured against a forecast horizon it does
+    not match, and nothing in the file to reveal it afterwards."""
+    chain = _ladder(dtes=(1, 2, 3, 23, 35))
+    e = PaperLedger().record(chain, _prices(), 200, BaselineDensityForecaster(),
+                             dte=30)
+    assert e["expiry_snapped"], "the snap left no trace in the entry"
+    assert "30d" in e["expiry_snapped"] and str(e["dte"]) in e["expiry_snapped"]
+
+    exact = PaperLedger().record(_ladder(dtes=(30,)), _prices(), 200,
+                                 BaselineDensityForecaster(), dte=30)
+    assert exact["expiry_snapped"] is None, "it announced a snap that never happened"
+    assert exact["requested_dte"] == exact["dte"] == 30
+
+
+def test_the_ledger_records_whether_the_chain_was_converted():
+    """A ledger mixing de-Americanized and raw chains is unanalysable later:
+    they are not the same measurement. PREREGISTRATION.md §4.5."""
+    chain = _ladder(dtes=(30,))
+    plain = PaperLedger().record(chain, _prices(), 200,
+                                 BaselineDensityForecaster(), dte=30)
+    conv = PaperLedger().record(chain, _prices(), 200,
+                                BaselineDensityForecaster(), dte=30, american=True)
+    assert plain["de_americanized"] is False
+    assert conv["de_americanized"] is True
+
+
+def test_record_accepts_the_american_flag_that_the_registration_requires():
+    """run_live had --american; record did not, so every SPY/QQQ forecast this
+    ledger froze violated the repo's own stated rule while looking correct.
+
+    Asserted through the CLI's own help rather than by introspecting a parser
+    object: --american lives on the `record` SUBparser, and a check that reads
+    the top-level parser passes whether or not the flag was ever wired up.
+    """
+    import contextlib
+    import io
+    from tools.paper_trade import main as pt_main
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            pt_main(["record", "--help"])
+    except SystemExit:
+        pass
+    out = buf.getvalue()
+    assert "--american" in out, f"record still has no --american flag:\n{out}"
+    assert "--max-expirations" in out, "record cannot widen the expiry window"
+    assert "SPY" in out or "ETF" in out, "the flag does not say when it is required"
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

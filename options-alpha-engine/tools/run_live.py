@@ -64,13 +64,9 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     # Vendors list their OWN expiries; a requested --dte 30 usually does not exist
     # (Deribit quotes 5/12/19/33/61/152/243/334, say). Snap to the nearest listed
     # expiry instead of silently failing Q extraction on an empty slice.
-    available = sorted({q.expiry_days for q in chain.quotes})
-    if available and dte not in available:
-        snapped = min(available, key=lambda d: abs(d - dte))
-        print(f"[expiry] no {dte}d expiry listed; snapping to the nearest: {snapped}d "
-              f"(available: {', '.join(str(d) for d in available[:10])}"
-              f"{'...' if len(available) > 10 else ''})")
-        dte = snapped
+    dte, note = rnd.snap_to_listed_expiry(chain, dte)
+    if note:
+        print(f"[expiry] {note}")
     T = dte / 365.0
     if american:
         from engine.american import de_americanize_chain
@@ -381,8 +377,12 @@ def fetch(source: str, args) -> tuple:
         return ad.option_chain(), ad.price_history(days=args.days)
     if source == "tradier":
         from engine.tradier import TradierAdapter
-        ad = TradierAdapter()
-        return ad.option_chain(args.symbol), ad.price_history(args.symbol, args.days)
+        ad = TradierAdapter(max_expirations=getattr(args, "max_expirations", 6))
+        # pass the tenor we actually want: the adapter fetches a budgeted number
+        # of expiries AROUND it rather than the soonest few, which on a
+        # near-daily-expiry ETF are all too short to carry usable wings
+        return (ad.option_chain(args.symbol, target_dte=getattr(args, "dte", None)),
+                ad.price_history(args.symbol, args.days))
     if source == "replay":
         from engine.adapters import JsonFileAdapter
         ad = JsonFileAdapter(price_json=args.price_json, chain_json=args.chain_json)
@@ -397,6 +397,11 @@ def main(argv=None):
     p.add_argument("--currency", default="BTC")
     p.add_argument("--symbol", default="SPX")
     p.add_argument("--dte", type=int, default=30)
+    p.add_argument("--max-expirations", dest="max_expirations", type=int,
+                    default=6,
+                    help="how many expiries to fetch AROUND --dte. The 3 "
+                         "soonest on a daily-expiry ETF are all too short "
+                         "to carry usable wings.")
     p.add_argument("--days", type=int, default=400)
     p.add_argument("--chain-json", dest="chain_json")
     p.add_argument("--price-json", dest="price_json")
