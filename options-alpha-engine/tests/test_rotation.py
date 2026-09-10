@@ -551,6 +551,38 @@ def test_the_reasons_carry_the_numbers_that_decided_it():
     assert "-27.0%" in v["why_book"] and "-18.4%" in v["why_book"], v["why_book"]
 
 
+
+def test_every_computed_payload_field_reaches_the_page():
+    """A number computed and never shown is worse than one never computed.
+
+    The permutation p, the turnover and the pre-registered verdict were all
+    added to build_payload and none of them were rendered, so the dashboard went
+    on telling the OLD story — "the book beat one shuffled placebo" — which is
+    the exact statistic that had just been shown not to work. The page looked
+    current and was reporting a superseded claim.
+
+    test_wiring.py catches an unreachable MODULE; this catches an unreachable
+    FIELD, which is the same defect one level down.
+    """
+    from tools import rotation_dashboard as rd
+
+    px, bench, dates = rd.demo_world(n=700)
+    payload = rd.build_payload(px, bench, dates, window=63, mom_lag=5, tail=12,
+                               horizon=21)
+    template = rd.TEMPLATE
+    # keys the page has no reason to print, with the reason stated per entry
+    INTERNAL = {
+        "quadrants": "expanded into table rows, not referenced by name",
+        "dates": "shown via the panel verdict sentence",
+    }
+    missing = [k for k in payload["test"]
+               if k not in INTERNAL and k not in template]
+    assert not missing, (
+        f"computed into the payload but never rendered: {missing}. Either show "
+        f"them or stop computing them — a page that omits the current statistic "
+        f"while still printing the superseded one is actively misleading.")
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

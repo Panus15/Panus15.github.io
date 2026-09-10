@@ -400,9 +400,38 @@ function drawTest(){
           Total <b class="num" style="color:var(--ink)">${(t.bookReturn*100).toFixed(1)}%</b>
           over ${t.rebalances} rebalances &middot;
           Sharpe <b class="num" style="color:var(--ink)">${t.bookSharpe}</b>${
-          t.placeboReturn===null?"":` &middot; label-shuffled placebo
-          <b class="num" style="color:var(--ink)">${(t.placeboReturn*100).toFixed(1)}%</b>`}</p>
+          t.turnover===undefined?"":` &middot; ${(t.turnover*100).toFixed(0)}% of the
+          book traded per rebalance`}</p>
+        ${t.permutationP===null||t.permutationP===undefined ? `
+        <p style="margin:8px 0 0;font-size:14px;color:var(--ink-2)">
+          No null distribution was run, so how often chance produces this is
+          unmeasured.</p>` : `
+        <p style="margin:8px 0 0;font-size:14px;color:var(--ink-2)">
+          Against <b class="num" style="color:var(--ink)">${t.placeboDraws}</b>
+          label-shuffled books,
+          <b class="num" style="color:${t.permutationP<=0.10?'var(--lead)':'var(--lag)'}">
+          ${(t.permutationP*100).toFixed(1)}%</b> did as well or better
+          <span style="opacity:.75">(permutation p)</span>${
+          t.placeboReturn===null?"":` &middot; one of them returned
+          <b class="num" style="color:var(--ink)">${(t.placeboReturn*100).toFixed(1)}%</b>
+          <span style="opacity:.75">&mdash; a single shuffle, shown for scale only;
+          it is the distribution above that carries the claim</span>`}</p>`}
         <p class="hint">${t.bookVerdict}</p>
+        ${!t.prereg ? "" : `
+        <div style="margin-top:12px;padding:10px 12px;border:1px solid var(--edge);
+                    border-radius:8px;background:var(--ground)">
+          <div class="eyebrow" style="color:${t.prereg.passed?'var(--lead)':'var(--lag)'}">
+            ${t.prereg.headline}</div>
+          <p class="hint" style="margin:6px 0 0">
+            <b>panel</b> ${t.prereg.panel_passed?"PASS":"FAIL"} &mdash;
+            ${t.prereg.why_panel}<br>
+            <b>book</b> ${t.prereg.book_passed?"PASS":"FAIL"} &mdash;
+            ${t.prereg.why_book}</p>
+          <p class="hint" style="margin:6px 0 0;opacity:.75">
+            Criteria locked in PREREGISTRATION.md &sect;2.1 before any real data
+            was seen, and evaluated by the engine rather than by a reader who has
+            already seen the numbers.</p>
+        </div>`}
       </div></div>
     <p class="hint">${good
       ? "The panel is the kindest possible test &mdash; no costs, no slippage. A signal that survives it still has to survive the long/short book beside it."
