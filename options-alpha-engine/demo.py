@@ -193,17 +193,25 @@ def main() -> None:
     # 4. Position sizing -----------------------------------------------------
     if ideas:
         best = ideas[0]
-        n = sizing.position_size(
-            account_equity=100_000,
-            contract_price=best.quote.mid,
-            win_prob=0.58,          # placeholder; comes from your model in prod
-            payoff_odds=1.0,
-            kelly_scale=0.25,
-            max_risk_frac=0.02,
-        )
+        # Sized on the LOSS, not the premium. Selling the option means the price
+        # is what we RECEIVE; the cap has to bind on what we can lose, or it
+        # loosens exactly as the strike gets further out and cheaper.
+        short = best.verdict.upper().startswith(("WRITE", "SELL"))
+        qty = -1 if short else 1
+        loss = sizing.max_loss_per_contract_for(
+            best.quote.kind, best.quote.strike, quantity=qty,
+            entry_price=best.quote.mid)
+        n = sizing.position_size(100_000, max_loss_per_contract=loss,
+                                 max_risk_frac=0.02)
         print(f"Top idea: {best.verdict} {best.quote.kind} "
               f"{best.quote.strike:.0f} / {best.quote.expiry_days}d")
-        print(f"Sized position (0.25 Kelly, 2% cap): {n} contracts\n")
+        if loss == sizing.UNBOUNDED:
+            print("Sized position: 0 contracts — a naked short call has no finite\n"
+                  "  max loss, so there is nothing for a 2% cap to bind on. Buy a\n"
+                  "  wing to make it a spread and it becomes sizeable.\n")
+        else:
+            print(f"Sized position (2% of equity at risk): {n} contracts, "
+                  f"max loss ${loss * n:,.0f} on $100,000\n")
 
     # 5. Delta-hedged WALK-FORWARD backtest — governed + crash-aware ----------
     # The real proof: sell the straddle, delta-hedge daily, size via CVaR, and

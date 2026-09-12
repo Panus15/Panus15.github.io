@@ -19,6 +19,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from engine import portfolio
+
 from engine.portfolio import (
     Portfolio,
     Position,
@@ -227,6 +229,60 @@ def test_position_tenor_honours_the_callers_day_count():
     assert 0.14 < 1 - v_cal / v_trd < 0.20, (
         f"a 21-bar tenor on the wrong clock understates vega by "
         f"{1 - v_cal / v_trd:.1%}; the measured figure was 16.8%")
+
+
+
+def test_cvar_alpha_must_actually_move_the_number():
+    """The knob named `alpha` did nothing at shipped defaults.
+
+    With a two-point scenario set there is ONE loss state carrying tail_prob of
+    the mass, so every alpha whose tail falls at or below it averages the same
+    single state: 0.90, 0.95, 0.99 and 0.999 all returned 2,443.31. The engine
+    advertised "CVaR at 95% confidence" while reporting the loss in one
+    hand-written scenario. On a richer set the level must resolve and RISE.
+    """
+    t = portfolio.Position(underlying="SPY", strike=700.0, expiry_days=30,
+                           kind="put", quantity=-1, entry_price=1.10, spot=765.0,
+                           r=0.04, q=0.0, vol=0.16, multiplier=100,
+                           days_per_year=252.0)
+    rich = [portfolio.Scenario(spot_mult=1.00, vol_shift=0.00, prob=0.90),
+            portfolio.Scenario(spot_mult=0.95, vol_shift=0.05, prob=0.07),
+            portfolio.Scenario(spot_mult=0.88, vol_shift=0.15, prob=0.025),
+            portfolio.Scenario(spot_mult=0.75, vol_shift=0.40, prob=0.005)]
+    lo = portfolio.cvar_per_contract(t, rich, 0.90)
+    mid = portfolio.cvar_per_contract(t, rich, 0.95)
+    hi = portfolio.cvar_per_contract(t, rich, 0.99)
+    assert lo < mid < hi, (lo, mid, hi)
+
+
+def test_a_confidence_level_the_scenarios_cannot_resolve_is_refused():
+    """Returning a number that looks like a 99% figure and is not is worse than
+    refusing, because the number gets quoted."""
+    t = portfolio.Position(underlying="SPY", strike=700.0, expiry_days=30,
+                           kind="put", quantity=-1, entry_price=1.10, spot=765.0,
+                           r=0.04, q=0.0, vol=0.16, multiplier=100,
+                           days_per_year=252.0)
+    two = portfolio.vol_spike_scenarios()          # tail_prob = 0.10
+    portfolio.cvar_per_contract(t, two, 0.90)      # exactly resolvable: fine
+    for bad in (0.95, 0.99, 0.999):
+        try:
+            portfolio.cvar_per_contract(t, two, bad)
+        except ValueError as e:
+            assert "cannot resolve" in str(e) or "same" in str(e), str(e)
+        else:
+            raise AssertionError(f"alpha={bad} returned a number it cannot support")
+
+
+def test_the_shipped_default_alpha_is_one_the_default_scenarios_can_answer():
+    """A default that raises on its own default scenario set is a broken default."""
+    import inspect
+    sig = inspect.signature(portfolio.size_by_cvar)
+    alpha = sig.parameters["alpha"].default
+    t = portfolio.Position(underlying="SPY", strike=700.0, expiry_days=30,
+                           kind="put", quantity=-1, entry_price=1.10, spot=765.0,
+                           r=0.04, q=0.0, vol=0.16, multiplier=100,
+                           days_per_year=252.0)
+    portfolio.cvar_per_contract(t, portfolio.vol_spike_scenarios(), alpha)
 
 
 def _run_all():
