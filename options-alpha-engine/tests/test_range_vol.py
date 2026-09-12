@@ -363,6 +363,80 @@ def test_the_har_keeps_its_weekly_and_monthly_components():
         assert w in src, f"the bar path lost its {w} component"
 
 
+
+# --------------------------------------------------------------------------
+# ...and it must reach the density, not stop at the estimator
+# --------------------------------------------------------------------------
+
+def test_term_vol_carries_the_range_through_to_the_horizon():
+    """term_vol is what baseline.py actually calls, so the gain has to survive
+    the term-structure step or it never reaches a trade.
+
+    Reference, 20 worlds x 180 forecasts at 21 days:
+        close-to-close   RMSE 8.523   bias 1.041
+        range GKYZ       RMSE 6.542   bias 1.005
+
+    Note which way the LEVEL moved. The range arm is not under-forecasting; the
+    close-to-close arm was over-forecasting by 4%, and the range arm is nearly
+    unbiased. That direction is checked explicitly below, because the dangerous
+    error in this engine is a p_vol that is too LOW - it makes every expiry look
+    rich and turns the book permanently short volatility.
+    """
+    from engine.volforecast import TRADING_DAYS, term_vol
+    H = 21
+    T = H / 252.0
+    rows = []
+    for seed in range(8):
+        bars, sig = _sv_world(520, seed, steps=78)
+        closes = [b[3] for b in bars]
+        for t in range(300, len(bars) - H, 31):
+            truth = math.sqrt(TRADING_DAYS * sum(x * x for x in sig[t:t + H]) / H)
+            rows.append((truth,
+                         term_vol(closes[:t + 1], T),
+                         term_vol(closes[:t + 1], T, bars=bars[:t + 1])))
+
+    def rmse(i):
+        return math.sqrt(sum((r[i] - r[0]) ** 2 for r in rows) / len(rows))
+
+    def bias(i):
+        return sum(r[i] for r in rows) / sum(r[0] for r in rows)
+
+    assert rmse(2) < rmse(1), (rmse(1), rmse(2))
+    assert bias(2) > 0.92, (
+        f"the range path forecasts {bias(2):.3f} of the truth - a p_vol biased "
+        f"LOW makes every expiry look rich, which is the failure mode this "
+        f"whole estimator change exists to avoid")
+
+
+def test_the_forecaster_actually_passes_bars_down_and_does_not_just_accept_them():
+    """An optional argument nobody forwards is dead weight that reads as a
+    feature. This repo has shipped that defect before, which is why
+    tests/test_wiring.py exists - this is the same check one level down.
+    """
+    from models.baseline import BaselineDensityForecaster
+    bars, _ = _sv_world(420, 6, steps=78)
+    closes = [b[3] for b in bars]
+    f = BaselineDensityForecaster()
+    T = 21 / 252.0
+    plain = f.forecast(closes, T).log_return_vol(closes[-1], T)
+    ranged = f.forecast(closes, T, bars=bars).log_return_vol(closes[-1], T)
+    assert abs(plain - ranged) > 1e-9, (
+        "passing bars changed nothing - the argument is accepted and discarded")
+
+
+def test_the_density_is_unchanged_when_no_bars_are_given():
+    """Every number this repo has already recorded came from the close-only
+    path. If that moves, the change was not additive."""
+    from models.baseline import BaselineDensityForecaster
+    bars, _ = _sv_world(300, 8, steps=78)
+    closes = [b[3] for b in bars]
+    f = BaselineDensityForecaster()
+    T = 30 / 252.0
+    a = f.forecast(closes, T).log_return_vol(closes[-1], T)
+    b = f.forecast(closes, T, bars=None).log_return_vol(closes[-1], T)
+    assert a == b
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

@@ -250,7 +250,7 @@ def long_run_vol(prices: Sequence[float], window: int = 252) -> float:
 
 def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
              spot_vol: float | None = None, long_run: float | None = None,
-             window: int = 252) -> float:
+             window: int = 252, bars=None, estimator: str = "gkyz") -> float:
     """Annualised vol for the horizon T, WITH a mean-reverting term structure.
 
     Volatility mean-reverts: a hot (or calm) spot vol decays toward a long-run
@@ -273,7 +273,12 @@ def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
     """
     if T <= 0:
         raise ValueError("T must be positive")
-    v0 = (spot_vol if spot_vol is not None else har_rv_forecast(prices)) ** 2
+    # ``bars`` only reaches the SPOT variance. The long-run level is a 252-day
+    # average, where a noisier daily input barely matters, and leaving it on
+    # close-to-close keeps the two ends of the term structure anchored by
+    # different estimators - a cheap independence check on the level.
+    v0 = (spot_vol if spot_vol is not None
+          else har_rv_forecast(prices, bars=bars, estimator=estimator)) ** 2
     try:
         vinf = (long_run if long_run is not None else long_run_vol(prices, window)) ** 2
     except ValueError:
