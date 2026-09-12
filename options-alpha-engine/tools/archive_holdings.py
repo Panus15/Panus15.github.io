@@ -107,9 +107,21 @@ def fetch_one(fund: str, url: str, outdir: str, *, asof: str | None = None,
         return {"fund": fund, "status": f"UNPARSEABLE, not archived: "
                                         f"{type(e).__name__}: {e}"}
     if n_opts == 0:
+        # Two very different problems wore the same message. A web page has no
+        # rows at all; a real issuer file has hundreds of rows and names its
+        # options in OSI rather than tabulating a strike column. Telling the
+        # operator to go check the URL when the URL was fine costs a day.
+        rows_seen = len(book.positions)
         os.remove(tmp)
-        return {"fund": fund, "status": "no option lines found, not archived "
-                                        "(the URL probably returned a web page)"}
+        if rows_seen == 0:
+            return {"fund": fund, "status": "no rows parsed, not archived "
+                                            "(the URL probably returned a web page)"}
+        return {"fund": fund,
+                "status": f"{rows_seen} rows parsed but NO option lines among "
+                          f"them, not archived. The download worked; either this "
+                          f"fund holds no listed options (JEPI/JEPQ use OTC "
+                          f"notes) or the file names them in a form the parser "
+                          f"does not read yet"}
 
     os.replace(tmp, dest)
     return {"fund": fund, "status": "archived", "path": dest,

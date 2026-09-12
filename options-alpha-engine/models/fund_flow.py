@@ -81,6 +81,47 @@ class FundOptionPosition:
         return self.strike / spot - 1.0 if spot > 0 else 0.0
 
 
+#: OSI (Options Symbology Initiative) is how a listed option is named on every
+#: US holdings file that does not break it into columns: a 6-character root,
+#: YYMMDD, C or P, then the strike as an 8-digit integer of price x 1000.
+#:
+#:     "QQQ   261016C00620000"  ->  QQQ, 2026-10-16, call, 620.00
+#:
+#: This matters more than it looks. Without it a real issuer file parses to zero
+#: option lines, tools/archive_holdings rejects the day as "no option lines
+#: found (the URL probably returned a web page)", and the operator banks nothing
+#: while being told the wrong reason. The data was fine; the reader was not.
+OSI_LEN = 21
+
+
+def parse_osi(symbol: str):
+    """(root, 'YYYY-MM-DD', 'call'|'put', strike) from an OSI symbol, or None.
+
+    Returns None rather than raising on anything that is not OSI-shaped, because
+    a holdings file is mostly equities and cash and only some rows are options.
+    """
+    if not symbol:
+        return None
+    s = str(symbol).strip()
+    # tolerate the root being space-padded to 6 or not padded at all
+    if len(s) < 15:
+        return None
+    tail = s[-15:]                     # YYMMDD + C/P + 8 digits
+    root = s[:-15].strip().upper()
+    if not root or not root.isalnum():
+        return None
+    ymd, cp, strike = tail[:6], tail[6:7].upper(), tail[7:]
+    if not ymd.isdigit() or cp not in ("C", "P") or not strike.isdigit():
+        return None
+    yy, mm, dd = int(ymd[:2]), int(ymd[2:4]), int(ymd[4:6])
+    if not (1 <= mm <= 12 and 1 <= dd <= 31):
+        return None
+    # OSI carries a two-digit year. These files are current holdings, so 20xx is
+    # the only reading that is ever right; a 19xx option is not in a live book.
+    return (root, f"20{yy:02d}-{mm:02d}-{dd:02d}",
+            "call" if cp == "C" else "put", int(strike) / 1000.0)
+
+
 @dataclass
 class FundBook:
     """A fund's option positions as published on ``asof``."""
@@ -120,13 +161,50 @@ class FundBook:
         for r in rows:
             kind = str(pick(r, "kind", "type", "call_put", "putcall", default="call")).lower()
             kind = "put" if kind.startswith("p") else "call"
+            underlying = str(pick(r, "underlying", "ticker", "symbol",
+                                  default="")).upper()
+            expiry = str(pick(r, "expiry", "expiration", "maturity", default=""))
+            try:
+                strike = float(pick(r, "strike", "strike_price", default=0) or 0)
+            except (TypeError, ValueError):
+                strike = 0.0
+
+            # Fall back to OSI when the file names the contract instead of
+            # tabulating it, which is what real issuer files do. Explicit columns
+            # WIN when present - a file that supplies both and disagrees is more
+            # likely to have a stale symbol than a stale column.
+            if strike <= 0 or not expiry:
+                # Try EVERY field rather than a list of column names. Issuers
+                # disagree about what the column is called - StockTicker,
+                # SecurityID, Identifier - and guessing the name is how a real
+                # file parses to zero option lines. OSI is distinctive enough
+                # (root + YYMMDD + C/P + 8 digits) that a false positive on an
+                # equity ticker or a cash row is not a realistic risk.
+                osi = None
+                for v in r.values():
+                    osi = parse_osi(v)
+                    if osi:
+                        break
+                if osi:
+                    root, exp, k, strk = osi
+                    # Precedence, applied to EVERY field and not just to strike:
+                    # an explicit column always wins. A file carrying both is
+                    # likelier to have a stale symbol than a stale column, and
+                    # letting the symbol override even one field silently moves
+                    # a contract. `had_cols` records whether this row tabulated
+                    # its option at all - if it did not, the symbol IS the row.
+                    had_cols = strike > 0
+                    if not had_cols:
+                        underlying = underlying or root
+                        kind = k
+                        strike = strk
+                    expiry = expiry or exp
+
             try:
                 pos.append(FundOptionPosition(
-                    underlying=str(pick(r, "underlying", "ticker", "symbol", default="")).upper(),
-                    expiry=str(pick(r, "expiry", "expiration", "maturity", default="")),
-                    strike=float(pick(r, "strike", "strike_price", default=0) or 0),
-                    kind=kind,
-                    contracts=float(pick(r, "contracts", "quantity", "qty", "shares", default=0) or 0),
+                    underlying=underlying, expiry=expiry, strike=strike, kind=kind,
+                    contracts=float(pick(r, "contracts", "quantity", "qty",
+                                         "shares", default=0) or 0),
                     multiplier=float(pick(r, "multiplier", default=100) or 100),
                 ))
             except (TypeError, ValueError):

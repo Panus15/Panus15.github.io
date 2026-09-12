@@ -5,6 +5,7 @@ Run: python3 tests/test_fund_flow.py
 import csv
 import json
 import os
+import shutil
 import sys
 import tempfile
 
@@ -142,6 +143,113 @@ def test_iv_dent_finds_a_suppressed_strike():
     dents = iv_dent(chain, fit, dte, min_dent=0.01)
     assert dents and abs(dents[0][0] - 105.0) < 1e-9      # the dented strike is found
     assert dents[0][3] > 0.01                             # and it is a real gap
+
+
+
+# --------------------------------------------------------------------------
+# Reading a REAL issuer file — the archive is worthless if this fails
+# --------------------------------------------------------------------------
+
+def test_osi_round_trips_against_the_spec():
+    """OSI is a fixed-width spec, so this is an oracle: root, YYMMDD, C/P, and
+    the strike as price x 1000 in 8 digits. The answers are known before the
+    code runs."""
+    from models.fund_flow import parse_osi
+    assert parse_osi("QQQ   261016C00620000") == ("QQQ", "2026-10-16", "call", 620.0)
+    assert parse_osi("AAPL  240119C00190000") == ("AAPL", "2024-01-19", "call", 190.0)
+    assert parse_osi("SPY   251219P00450500") == ("SPY", "2025-12-19", "put", 450.5)
+    # a fractional strike must survive the x1000 integer encoding exactly
+    assert parse_osi("XSP   260320P00067825")[3] == 67.825
+    # unpadded roots appear in the wild too
+    assert parse_osi("QQQ 261016C00620000") == ("QQQ", "2026-10-16", "call", 620.0)
+
+
+def test_osi_declines_everything_that_is_not_an_option():
+    """A holdings file is mostly equities and cash. A parser that guesses here
+    would invent option positions out of ticker strings."""
+    from models.fund_flow import parse_osi
+    for junk in ("", "AAPL", "CASH USD", "-", "US912797KL553",
+                 "QQQ   261016X00620000",      # not C or P
+                 "QQQ   261399C00620000",      # month 13
+                 "QQQ   2610160062000",        # too short
+                 "      261016C00620000"):     # no root
+        assert parse_osi(junk) is None, junk
+
+
+def test_a_real_issuer_file_parses_even_though_its_columns_are_unguessable():
+    """The failure this prevents is silent and expensive.
+
+    Real funds name the contract in ONE column - StockTicker, Identifier,
+    SecurityID, depending on the issuer - instead of tabulating strike, expiry
+    and type. The old parser needed those columns, found none, dropped every
+    line, and tools/archive_holdings then rejected the day with 'the URL
+    probably returned a web page'. The download was fine. The operator would
+    have banked nothing while being told the wrong reason.
+    """
+    d = tempfile.mkdtemp()
+    try:
+        neos = os.path.join(d, "neos.csv")
+        with open(neos, "w") as fh:
+            fh.write("Account,StockTicker,SecurityName,Shares,MarketValue\n"
+                     "QQQI,QQQ   261016C00620000,QQQ OCT 26 620 CALL,-8000,-1200000\n"
+                     "QQQI,QQQ   261016C00610000,QQQ OCT 26 610 CALL,-2000,-410000\n"
+                     "QQQI,NVDA,NVIDIA CORP,15000,2700000\n"
+                     "QQQI,-,CASH,0,140000\n")
+        b = FundBook.from_file(neos, fund="QQQI", asof="2026-09-12")
+        assert len(b.positions) == 2, [p.__dict__ for p in b.positions]
+        assert {p.strike for p in b.positions} == {620.0, 610.0}
+        assert all(p.underlying == "QQQ" and p.kind == "call" for p in b.positions)
+        assert len(b.shorts("QQQ")) == 2, "the short calls are the whole point"
+
+        # a different issuer, a different column name, same outcome
+        gx = os.path.join(d, "gx.csv")
+        with open(gx, "w") as fh:
+            fh.write("Ticker,Identifier,Name,Quantity,Weight\n"
+                     "XYLD,SPY   251219P00450500,SPY DEC25 450.5 PUT,-1200,0.4\n"
+                     "XYLD,AAPL,APPLE INC,9000,3.1\n")
+        b2 = FundBook.from_file(gx, fund="XYLD", asof="2026-09-12")
+        assert len(b2.positions) == 1
+        assert b2.positions[0].strike == 450.5 and b2.positions[0].kind == "put"
+    finally:
+        shutil.rmtree(d)
+
+
+def test_explicit_columns_win_over_a_symbol_that_disagrees():
+    """A file carrying both is more likely to have a stale symbol than a stale
+    column, and silently preferring the symbol would move a strike."""
+    d = tempfile.mkdtemp()
+    try:
+        # the symbol disagrees with the columns on strike, KIND and expiry, so
+        # every field is checked - overriding any one of them moves a contract
+        p = os.path.join(d, "both.csv")
+        with open(p, "w") as fh:
+            fh.write("symbol,underlying,expiry,strike,kind,quantity\n"
+                     "SPY   991231P00999000,QQQ,2026-10-16,620,call,-8000\n")
+        b = FundBook.from_file(p, fund="F", asof="2026-09-12")
+        assert len(b.positions) == 1
+        got = b.positions[0]
+        assert got.strike == 620.0, "the OSI symbol overrode the strike column"
+        assert got.kind == "call", "the OSI symbol overrode the kind column"
+        assert got.expiry == "2026-10-16", "the OSI symbol overrode the expiry column"
+        assert got.underlying == "QQQ", "the OSI symbol overrode the underlying"
+    finally:
+        shutil.rmtree(d)
+
+
+def test_an_equity_only_fund_yields_no_option_lines_without_inventing_any():
+    """JEPI and JEPQ run their overwriting through OTC equity-linked notes and
+    hold no listed options. Zero is the right answer for them and must not
+    become non-zero by accident."""
+    d = tempfile.mkdtemp()
+    try:
+        p = os.path.join(d, "eq.csv")
+        with open(p, "w") as fh:
+            fh.write("Ticker,Name,Shares\n"
+                     "MSFT,MICROSOFT CORP,120000\n"
+                     "GS ELN 09/30/26,GOLDMAN SACHS ELN,50000\n")
+        assert FundBook.from_file(p, fund="JEPQ", asof="2026-09-12").positions == []
+    finally:
+        shutil.rmtree(d)
 
 
 def _run_all():
