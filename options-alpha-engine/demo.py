@@ -96,10 +96,28 @@ def main() -> None:
     from models.spreads import scan_spreads
     _dtes = sorted({q.expiry_days for q in chain.quotes})
     _sdte = min(_dtes, key=lambda d: abs(d - 30))          # ~monthly expiry
-    for s in scan_spreads(chain, forecaster, prices, dte=_sdte):
+    _spreads = scan_spreads(chain, forecaster, prices, dte=_sdte)
+    for s in _spreads:
         print("  " + s.line())
     print("  (EV>0 = the market pays more credit than the P-model's expected loss;\n"
           "   max loss is DEFINED — the crash can't blow the position up)\n")
+
+    # 3b-2c. THE ORDER TICKET — the point where a view becomes an order ----------
+    # Everything above is a view. This is the only block a human could act on
+    # without filling in six blanks themselves: structure, strikes, expiry DATE,
+    # contracts, limit, and the dollar worst case. It refuses BY NAME when it
+    # cannot support a number, and the refusal is the common outcome at retail
+    # size — one SPY put can lose more than a 2% budget on a $100k account.
+    from models.ticket import build_ticket
+    from models.trade_card import build_card
+    _card = build_card(chain, forecaster, prices, dte=_sdte)
+    _best = max(_spreads, key=lambda s: s.ev) if _spreads else None
+    _ticket = build_ticket(
+        _card, _best, equity=100_000.0, max_risk_frac=0.02,
+        settled_trades=0,          # the forward ledger really is empty
+        exit_rule="close at 50% of max profit, or at 7 DTE, whichever comes first")
+    print(_ticket.render())
+    print()
 
     # 3b-3. DE-AMERICANIZATION — unlock US single-name / ETF (American) options ---
     # BKM/VIX/BL replication assumes EUROPEAN prices; US equity & ETF options
