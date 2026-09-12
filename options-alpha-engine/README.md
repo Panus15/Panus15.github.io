@@ -65,7 +65,8 @@ python3 -m tools.quickstart --demo # ไม่มีเน็ต / โดนบ�
    ตั้งงบส่วนนี้ไว้ตั้งแต่แรก
 5. **เริ่มจาก baseline ที่ง่ายและ interpretable** — HAR-RV / EWMA สำหรับ vol, กฎง่าย ๆ สำหรับ execution
    **ต้องชนะ baseline ก่อน** ค่อยเติม TFT / MDN / PPO. ของหรู = 10% สุดท้ายและเสี่ยงสุด (RL execution overfit ง่ายมาก)
-6. **Risk management คือ Phase 0 ไม่ใช่ Phase 3** — fractional Kelly + hard cap ต่อไม้ (ดู `engine/sizing.py`)
+6. **Risk management คือ Phase 0 ไม่ใช่ Phase 3** — cap ต่อไม้ที่คิดบน *ผลขาดทุนสูงสุด* ไม่ใช่บนพรีเมียม (ดู `engine/sizing.py`)
+   > cap เดิมหารงบด้วย *ราคาออปชั่น* ซึ่งถูกสำหรับการซื้อ แต่สำหรับการขาย มันอนุมัติ position ที่ขาดทุนได้ **144,000%** ของบัญชี และยิ่งออปชั่นถูกยิ่งขายเยอะ
    ต้องมีตั้งแต่ backtest วันแรก. Risk of ruin ฆ่าแม้แต่กลยุทธ์ที่มี edge จริง
 7. **Paper trade ก่อนเสมอ** — ต่อ IBKR/sandbox วัด latency + ค่าธรรมเนียมแฝง ก่อนใส่เงินจริง
 
@@ -81,7 +82,7 @@ python3 -m tools.quickstart --demo # ไม่มีเน็ต / โดนบ�
 |---|---|---|
 | **1. Data Pipeline & Features** — Greeks/IV/IV-surface | `engine/pricing.py`, `engine/iv.py`, `engine/data.py` | ✅ รันได้ (synthetic adapter; เสียบ vendor จริงผ่าน `MarketDataAdapter`) |
 | **2. Core ML** — Vol model, density, pricing evaluator | `engine/volforecast.py` (HAR-RV/EWMA baseline), `engine/signal.py` (evaluator) | ✅ baseline; TFT/MDN = งานถัดไป |
-| **3. RL Execution & Risk** — sizing, exit | `engine/sizing.py` (fractional Kelly + cap) | 🟡 sizing พร้อม; PPO agent = งานถัดไป |
+| **3. RL Execution & Risk** — sizing, exit | `engine/sizing.py` (cap บนผลขาดทุน; naked short = ปฏิเสธ) | 🟡 sizing พร้อม; PPO agent = งานถัดไป |
 | **4. Validation & Proof** — backtest, Sortino/MaxDD | `engine/backtest.py` | ✅ engine + metrics พร้อม; ต่อ data 10 ปี = งานถัดไป |
 
 **NLP (FinBERT sentiment)** = จงใจยังไม่ทำใน Phase 1 ตามเหตุผลข้อ 1 ด้านบน — เสียบเป็น feature เพิ่มใน Phase 2
@@ -101,7 +102,7 @@ option data (vendor)                prices (vendor)
                    signal.py  ── scan: market IV vs forecast vol,
                         │          edge NET of spread -> RICH / CHEAP
                         ▼
-                   sizing.py  ── fractional Kelly + 2% risk cap
+                   sizing.py  ── 2% cap บน max loss (naked = 0 สัญญา)
                         ▼
                   backtest.py ── cost-aware equity curve
                                  Sharpe / Sortino / MaxDD / hit-rate
