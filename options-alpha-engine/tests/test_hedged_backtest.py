@@ -209,6 +209,62 @@ def test_disabling_the_switch_reproduces_the_old_behaviour_exactly():
     assert on.metrics.sharpe == off.metrics.sharpe
 
 
+
+def test_the_kill_switch_has_never_actually_protected_anything():
+    """A safety feature the repo advertises in three places and which has never
+    fired. Recorded as a test so the claim cannot quietly become true-sounding
+    again.
+
+    At the shipped default (max_drawdown=0.25) the CVaR-sized book never gets
+    near a 25% drawdown - it tops out around 8% - so the switch is INERT:
+    kill_midtrade True and False produce byte-identical results on every path
+    tried, calm and crash alike.
+
+    That is not a bug. It is a risk control that has never been exercised, and
+    describing it as protection implies evidence that does not exist.
+    """
+    paths = [("calm", SyntheticAdapter(seed=s).price_history("X", 900))
+             for s in (1, 4, 7)]
+    paths += [("crash", price_path_with_crash(900))]
+    for label, px in paths:
+        on = run_hedged_backtest(px, kill_midtrade=True)
+        off = run_hedged_backtest(px, kill_midtrade=False)
+        assert on.n_killed_midtrade == 0, (
+            f"{label}: the kill-switch fired at defaults. That is NEWS - update "
+            f"the docs that say it never has, rather than deleting this test")
+        assert on.metrics.total_return == off.metrics.total_return, label
+
+
+def test_the_kill_switch_works_when_it_is_reachable_and_costs_more_than_it_saves():
+    """Separates "inert" from "broken", and measures the trade it makes.
+
+    Lowering the threshold until it is reachable shows the mechanism is fine: it
+    fires at max_drawdown <= 0.06 on the crash path. What it buys is the finding:
+
+        max_drawdown 0.25 (default)   0 kills   total -0.56%   maxDD -8.4%
+        max_drawdown 0.06             1 kill    total -6.90%   maxDD -7.6%
+
+    6.3 points of return for 0.8 points of drawdown. On this fixture the switch
+    is a bad trade when it acts, which is why the default is NOT being lowered to
+    make it fire - that would be tuning a locked parameter (PREREGISTRATION.md
+    §2.3) toward a worse outcome in order to justify a feature.
+    """
+    px = price_path_with_crash(900)
+    loose = run_hedged_backtest(
+        px, limits=portfolio.RiskLimits(max_net_short_vega=8_000.0,
+                                        max_drawdown=0.25), kill_midtrade=True)
+    tight = run_hedged_backtest(
+        px, limits=portfolio.RiskLimits(max_net_short_vega=8_000.0,
+                                        max_drawdown=0.06), kill_midtrade=True)
+    assert loose.n_killed_midtrade == 0
+    assert tight.n_killed_midtrade >= 1, "the mechanism is broken, not merely inert"
+    assert tight.metrics.total_return < loose.metrics.total_return, (
+        "the kill-switch stopped costing return when it fires; re-measure the "
+        "trade before any doc claims it is protection")
+    assert tight.metrics.max_drawdown > loose.metrics.max_drawdown, (
+        "it fired and did not even reduce the drawdown")
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

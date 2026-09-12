@@ -28,7 +28,7 @@ python3 -m tools.quickstart --demo
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 461 tests, 45 files
+for t in tests/test_*.py; do python3 "$t"; done   # 463 tests, 45 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

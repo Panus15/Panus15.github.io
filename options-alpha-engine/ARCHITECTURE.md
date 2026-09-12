@@ -135,7 +135,8 @@ honest, cost-inclusive verdict leaves on the right.
 ### Control
 - **`engine/portfolio.py`** — correlation-aware short-vega cap (N identical shorts
   are N× the risk, not √N), CVaR sizing (not binary Kelly), a drawdown
-  kill-switch, and defined-risk conversion.
+  kill-switch (which has never fired at its shipped threshold — see
+  PIPELINE.md §2.7), and defined-risk conversion.
 
 ### Prove (the part that matters most)
 - **`engine/hedged_backtest.py` / `signal_backtest.py`** — delta-hedged,

@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 45 test files · **461 tests, all green** · pure stdlib, no
+**Scale:** 45 test files · **463 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -55,7 +55,7 @@ money, and the two clocks that could produce such evidence have not started.
                                         ▼
                               portfolio.py  govern
                               CVaR size · correlation-aware
-                              vega cap · intra-trade kill-switch
+                              vega cap · kill-switch (NEVER FIRED)
                                         │
                                         ▼
                               sizing.py  cap on the LOSS
@@ -209,6 +209,22 @@ scenario. It now refuses a level its scenarios cannot resolve; on a four-point s
 alpha rises properly (1,944 / 3,363 / 8,286).
 
 `engine/sizing.py` had **no test file at all** — 391 tests passed around it.
+
+**The intra-trade kill-switch has never protected anything.** At the shipped
+`max_drawdown=0.25` the CVaR-sized book tops out near 8% drawdown, so the switch is
+INERT: `kill_midtrade` True and False give byte-identical results on every path
+tried, calm and crash alike. The mechanism is not broken — lowering the threshold
+until it is reachable shows it firing — but what it buys is the finding:
+
+| `max_drawdown` | kills | total | max DD |
+|---|---|---|---|
+| 0.25 (shipped) | 0 | −0.56% | −8.4% |
+| 0.06 | 1 | **−6.90%** | −7.6% |
+
+**6.3 points of return for 0.8 points of drawdown.** On this fixture it is a bad
+trade when it acts, which is why the default is not being lowered to make it fire —
+that would be tuning a locked parameter toward a worse outcome to justify a
+feature. It is listed here as untested protection, not as protection.
 
 ### 2.8 The volatility input, measured against a known answer
 
@@ -460,7 +476,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 461 tests, 45 files
+for t in tests/test_*.py; do python3 "$t"; done      # 463 tests, 45 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

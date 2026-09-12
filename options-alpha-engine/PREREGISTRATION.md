@@ -132,7 +132,7 @@ absent from the listed market must not read as a small participant in it.
 | `min_vrp` | 0.0 | sell only when Q variance exceeds P |
 | `hedge_bps` / `spread_frac` | 5e-4 / 0.015 | round-trip cost model |
 | `cvar_limit` | 0.03 | 3% of equity at the CVaR shock |
-| `max_drawdown` | 0.25 | kill-switch, now checked intra-trade |
+| `max_drawdown` | 0.25 | kill-switch, checked intra-trade — but it has NEVER FIRED at this level on any path measured, so it is an untested control rather than a demonstrated one (§4.7) |
 | `max_net_short_vega` | 8,000 | governor cap |
 | gates enabled | regime + macro + **events** | events was previously off in every run |
 
@@ -205,6 +205,20 @@ Stated up front so they are not later presented as surprises.
    recorded in the entry (`requested_dte`, `expiry_snapped`). Found while
    verifying an operator runbook, not by a test; §5.2 had been "start the
    ledger" for weeks and starting it would have banked nothing.
+7. **The intra-trade kill-switch has never fired, so it is an untested control.**
+   At the locked `max_drawdown=0.25` the CVaR-sized book tops out near 8%
+   drawdown, so the switch never reaches its own trigger: `kill_midtrade` True
+   and False produce **byte-identical** totals on every path measured, calm and
+   crash alike. It is inert, not broken — lowering the threshold until it is
+   reachable does fire it, and that experiment is the finding: at 0.06 it turns
+   −0.56% into **−6.90%** while cutting max drawdown only 8.4% → 7.6%. **6.3
+   points of return for 0.8 points of drawdown.** The default is deliberately
+   NOT being lowered: 0.25 is locked in §2.3, and lowering a locked parameter to
+   make a feature fire — toward a worse outcome — is the exact move this file
+   exists to prevent. The honest statement is that the book is protected by the
+   CVaR limit and the vega cap, and that the kill-switch behind them is
+   unexercised. Measured in `tests/test_hedged_backtest.py`, tabulated in
+   PIPELINE.md §2.7.
 
 ## §5 — Order of execution
 
