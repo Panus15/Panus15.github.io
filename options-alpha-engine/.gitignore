@@ -1,4 +1,7 @@
 __pycache__/
+daily-job.bat
+daily-job.sh
+daily.log
 *.py[cod]
 .venv/
 venv/
@@ -12,3 +15,14 @@ data/
 *.csv
 *.parquet
 .env
+
+# ...except the fund-holdings archive. This is the one dataset in the project
+# that cannot be re-bought at any price: holdings are published daily and
+# overwritten, so a day not captured is a day gone forever, and the crowding
+# study in PREREGISTRATION.md 2.2 needs ~18 months of them. Leaving it under
+# `*.csv` meant the irreplaceable data was the only data with no version
+# control and no backup, sitting on one laptop.
+!holdings/
+!holdings/**/
+!holdings/**/*.csv
+!holdings/**/*.json

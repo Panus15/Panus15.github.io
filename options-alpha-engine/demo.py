@@ -89,6 +89,36 @@ def main() -> None:
     print("  (on an efficiently-priced chain almost everything is FAIR — a BUY/\n"
           "   WRITE only appears when fair-vs-market survives spread+commission)\n")
 
+    # 3b-2b. DEFINED-RISK SPREADS — harvest the premium with a CAPPED tail --------
+    # VRP is compensation for a crash; selling NAKED vol takes the un-hedgeable
+    # tail. Defined-risk structures cap the loss with long wings — the structural
+    # answer to the tail problem. Each is scored EV = credit - E_P[loss] - cost.
+    from models.spreads import scan_spreads
+    _dtes = sorted({q.expiry_days for q in chain.quotes})
+    _sdte = min(_dtes, key=lambda d: abs(d - 30))          # ~monthly expiry
+    _spreads = scan_spreads(chain, forecaster, prices, dte=_sdte)
+    for s in _spreads:
+        print("  " + s.line())
+    print("  (EV>0 = the market pays more credit than the P-model's expected loss;\n"
+          "   max loss is DEFINED — the crash can't blow the position up)\n")
+
+    # 3b-2c. THE ORDER TICKET — the point where a view becomes an order ----------
+    # Everything above is a view. This is the only block a human could act on
+    # without filling in six blanks themselves: structure, strikes, expiry DATE,
+    # contracts, limit, and the dollar worst case. It refuses BY NAME when it
+    # cannot support a number, and the refusal is the common outcome at retail
+    # size — one SPY put can lose more than a 2% budget on a $100k account.
+    from models.ticket import build_ticket
+    from models.trade_card import build_card
+    _card = build_card(chain, forecaster, prices, dte=_sdte)
+    _best = max(_spreads, key=lambda s: s.ev) if _spreads else None
+    _ticket = build_ticket(
+        _card, _best, equity=100_000.0, max_risk_frac=0.02,
+        settled_trades=0,          # the forward ledger really is empty
+        exit_rule="close at 50% of max profit, or at 7 DTE, whichever comes first")
+    print(_ticket.render())
+    print()
+
     # 3b-3. DE-AMERICANIZATION — unlock US single-name / ETF (American) options ---
     # BKM/VIX/BL replication assumes EUROPEAN prices; US equity & ETF options
     # (QQQ, SPY, the holdings inside income funds like QQQI) are American and
@@ -167,20 +197,39 @@ def main() -> None:
     print(f"  trained MDN  {nll_mdn:>9.4f} {tail_mdn:>11.4f}")
     print(f"  -> ships: {winner}  (must win BOTH aggregate NLL and the tall tail)\n")
 
+    # 3e. CALIBRATION — is P RIGHT in absolute terms, not just better than a rival?
+    # NLL/CRPS only rank models against each other; a winner can still be
+    # systematically too narrow. Since the edge IS the P-vs-Q gap, a P vol biased
+    # low inflates every RICH verdict by exactly that bias. PIT says so, and hands
+    # back the vol scale that would fix it.
+    from models.calibration import calibration_report
+    cal = calibration_report(BaselineDensityForecaster(), oos)
+    print(cal.summary())
+    print("  (width is judged CENTERED because the forecast is direction-neutral by\n"
+          "   design — a trending sample is expected to tilt the raw PIT)\n")
+
     # 4. Position sizing -----------------------------------------------------
     if ideas:
         best = ideas[0]
-        n = sizing.position_size(
-            account_equity=100_000,
-            contract_price=best.quote.mid,
-            win_prob=0.58,          # placeholder; comes from your model in prod
-            payoff_odds=1.0,
-            kelly_scale=0.25,
-            max_risk_frac=0.02,
-        )
+        # Sized on the LOSS, not the premium. Selling the option means the price
+        # is what we RECEIVE; the cap has to bind on what we can lose, or it
+        # loosens exactly as the strike gets further out and cheaper.
+        short = best.verdict.upper().startswith(("WRITE", "SELL"))
+        qty = -1 if short else 1
+        loss = sizing.max_loss_per_contract_for(
+            best.quote.kind, best.quote.strike, quantity=qty,
+            entry_price=best.quote.mid)
+        n = sizing.position_size(100_000, max_loss_per_contract=loss,
+                                 max_risk_frac=0.02)
         print(f"Top idea: {best.verdict} {best.quote.kind} "
               f"{best.quote.strike:.0f} / {best.quote.expiry_days}d")
-        print(f"Sized position (0.25 Kelly, 2% cap): {n} contracts\n")
+        if loss == sizing.UNBOUNDED:
+            print("Sized position: 0 contracts — a naked short call has no finite\n"
+                  "  max loss, so there is nothing for a 2% cap to bind on. Buy a\n"
+                  "  wing to make it a spread and it becomes sizeable.\n")
+        else:
+            print(f"Sized position (2% of equity at risk): {n} contracts, "
+                  f"max loss ${loss * n:,.0f} on $100,000\n")
 
     # 5. Delta-hedged WALK-FORWARD backtest — governed + crash-aware ----------
     # The real proof: sell the straddle, delta-hedge daily, size via CVaR, and
@@ -223,6 +272,97 @@ def main() -> None:
                           BaselineDensityForecaster(), dte=21, warmup=63)
     print("Benchmarks (same crash path, cost-inclusive):")
     print(summary_table(books) + "\n")
+
+    # 8. Overnight-gap / short-gamma STRESS — the risk a smooth backtest hides ----
+    # Continuous delta-hedging is a fiction; real markets gap over nights and
+    # weekends and you are short gamma across the jump. Inject big jumps and re-run.
+    from engine.stress import gap_stress
+    gs = gap_stress(price_path_with_crash(760), synthetic_chain_series(dte=21),
+                    BaselineDensityForecaster(), dte=21, warmup=63,
+                    always_sell=True, every=40, size=0.20)
+    print("Overnight-gap stress (ungated short vol, ±20% jumps):")
+    print("  " + gs.summary().replace("\n", "\n  "))
+    print("  -> big un-hedgeable jumps bleed short gamma; THIS is what the regime\n"
+          "     gate + kill-switch defend against, and why continuous-hedge Sharpe lies\n")
+
+    # 9. Does FUND CROWDING actually matter? — the paired experiment ------------
+    # models/fund_flow can see WHERE the income ETFs concentrate their short calls.
+    # Whether that knowledge is worth anything is an empirical question, so this is
+    # the experiment rather than an assertion: on each date sell BOTH a crowded
+    # strike and the nearest uncrowded one, and read the PAIRED difference. Note the
+    # control run: with no dent injected the study reports NOTHING, which is the
+    # property that makes the positive results worth reading at all.
+    from engine.crowding_backtest import (run_crowding_backtest,
+                                          synthetic_crowding_series)
+    cpath = price_path_with_crash(3000)
+    print("Does fund crowding matter? (paired, same-date, moneyness-matched):")
+    for label, dent in (("control  — fund present, supply moves nothing", 0.00),
+                        ("2 vol pt supply dent at the crowded strike   ", 0.02),
+                        ("5 vol pt supply dent at the crowded strike   ", 0.05)):
+        ch, su = synthetic_crowding_series(dte=21, dent=dent)
+        cr = run_crowding_backtest(cpath, ch, su, dte=21, warmup=63)
+        print(f"  {label}  n={cr.n_pairs:>4}  diff={cr.mean_diff:>+8.2f}  "
+              f"t={cr.t_stat:>+5.2f}  -> {cr.verdict.split(' —')[0]}")
+    print("  -> the harness is real; the ANSWER needs real published fund holdings,")
+    print("     which is the one input this repo cannot synthesise for you.\n")
+
+    # 10. Do the WINGS earn their cost? — defined-risk vs naked, same dates ------
+    # models/spreads.py scores iron condors by expected value; this realises them.
+    # The result is sharper than "spreads cap the tail": against a book that can
+    # delta-hedge continuously the wings are a pure cost, and they only earn their
+    # price where the hedge fails. Injecting gaps flips the comparison outright.
+    from engine.spread_backtest import run_spread_backtest
+    from engine.stress import evenly_spaced_gaps as _gaps
+    from engine.stress import inject_gaps as _inject
+    LADDER = tuple(round(-0.20 + 0.025 * i, 3) for i in range(17))
+    sp_path = price_path_with_crash(900)
+    print("Defined-risk spreads vs the delta-hedged naked book (same dates):")
+    print(f"  {'path':20}{'spread tot':>12}{'naked tot':>11}"
+          f"{'spread worst':>14}{'naked worst':>13}")
+    for lbl, pth in (("clean", sp_path),
+                     ("with ±18% gaps", _inject(sp_path, _gaps(900, every=40,
+                                                               size=0.18, start=63)))):
+        sr = run_spread_backtest(pth, synthetic_chain_series(dte=21, ladder=LADDER,
+                                                             min_px=0.005),
+                                 BaselineDensityForecaster(), dte=21, warmup=63,
+                                 structure="iron_condor", always_sell=True)
+        print(f"  {lbl:20}{sr.metrics.total_return:>+11.1%}"
+              f"{sr.naked.total_return:>+11.1%}"
+              f"{sr.worst_trade:>+14,.0f}{sr.naked_worst:>+13,.0f}")
+    print("  -> a working delta hedge already removes what the wings are sold to cap,")
+    print("     so buy them for the risk you CANNOT hedge (gaps), not the risk you can\n")
+
+    # 11. How much of any of this is the sample? --------------------------------
+    # Every number above came off ONE path. Holding the strategy fixed and changing
+    # only the seed, this fixture's Sharpe runs from about -0.02 to +3.9 — so a
+    # point estimate quoted without its width is the easiest way to fool yourself
+    # in this whole codebase. Two views: rerun the world, and resample the trades.
+    from engine.robustness import (block_bootstrap, bootstrap_summary,
+                                   seed_ensemble)
+    ens = seed_ensemble(lambda p: run_hedged_backtest(p),
+                        lambda s: price_path_with_crash(900, seed=s),
+                        seeds=range(1, 21))
+    print(ens.summary())
+    one = run_hedged_backtest(price_path_with_crash(900))
+    print(bootstrap_summary(block_bootstrap(one.trade_pnl)))
+    print("  -> read every Sharpe printed above through these intervals\n")
+
+    # 12. MANY positions at once — the case the risk governor exists for --------
+    # Every harness above holds ONE position at a time, so the governor is handed
+    # an empty book on every entry and its correlation-aware aggregation never
+    # runs. Stagger five underlyings and let it see the real book:
+    from engine.book_backtest import run_book_backtest
+    bk_px = {f"S{i}": price_path_with_crash(900, seed=i) for i in range(1, 6)}
+    print("Correlation-aware sizing vs the per-trade view (cap 8,000 net short vega):")
+    print(f"  {'sizing':34}{'peak vega':>11}{'maxDD':>9}{'total':>9}{'blocked':>9}")
+    for lbl, kw in (("governed (sees the live book)", {}),
+                    ("ungoverned (empty book)", {"govern": False})):
+        bk = run_book_backtest(bk_px, **kw)
+        print(f"  {lbl:34}{bk.peak_net_short_vega:>11,.0f}"
+              f"{bk.metrics.max_drawdown:>9.1%}{bk.metrics.total_return:>+9.1%}"
+              f"{bk.n_blocked_by_vega_cap:>9}")
+    print("  -> sizing each trade as if it were the only one BREACHES the stated cap;")
+    print("     a per-trade view understates the book's short vega by 54-77%\n")
 
     print("Reminder: swap SyntheticAdapter for real data before trusting any "
           "number. This fixture only proves the engine + risk discipline work.")

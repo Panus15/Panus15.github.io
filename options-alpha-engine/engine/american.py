@@ -129,7 +129,36 @@ def de_americanize_price(american_market_price: float, S: float, K: float, T: fl
     return pricing.price(S, K, T, r, q, iv, kind), iv
 
 
-def de_americanize_chain(chain: OptionChain, *, steps: int = 128) -> OptionChain:
+def implied_carry(chain: OptionChain, dte: int, T: float, *, r: float | None = None):
+    """Recover the market's implied dividend/borrow so the binomial reproduces the
+    chain's own implied forward, instead of trusting a static ``q``.
+
+    From put-call parity at the strike nearest spot, F = K + e^{rT}(C - P); then
+    q_eff = r - ln(F/S)/T so the tree's forward S·e^{(r-q_eff)T} equals F. For an
+    ETF like QQQ/SPY this folds the real dividend yield AND the hard-to-borrow rate
+    into one implied number — both of which move the American price the raw ``q``
+    would miss. (Parity is exact for European options and slightly biased for
+    American, since the put's early-exercise premium ≠ the call's; near ATM that
+    bias is second-order and far smaller than using a wrong static q.) Returns
+    ``(r, q_eff)`` or ``None`` when there is no ATM call/put pair to anchor it."""
+    r = chain.r if r is None else r
+    calls, puts = {}, {}
+    for qt in chain.quotes:
+        if qt.expiry_days != dte:
+            continue
+        (calls if qt.kind == "call" else puts)[qt.strike] = qt.mid
+    common = [k for k in calls if k in puts]
+    if not common or T <= 0 or chain.spot <= 0:
+        return None
+    kstar = min(common, key=lambda k: abs(k - chain.spot))
+    fwd = kstar + math.exp(r * T) * (calls[kstar] - puts[kstar])
+    if fwd <= 0:
+        return None
+    return r, r - math.log(fwd / chain.spot) / T
+
+
+def de_americanize_chain(chain: OptionChain, *, steps: int = 128,
+                         use_implied_forward: bool = True) -> OptionChain:
     """Map an AMERICAN OptionChain to its European-equivalent (drop-in for rnd).
 
     The MID of each quote is de-Americanized (models.rnd integrates mids), and the
@@ -139,13 +168,25 @@ def de_americanize_chain(chain: OptionChain, *, steps: int = 128) -> OptionChain
     would drop the whole strike (and rnd's call/put strike intersection would then
     drop the paired side too), silently truncating the wings and biasing the
     recovered variance LOW. Only a quote whose MID is below intrinsic (a genuinely
-    broken quote) is dropped. ``r``/``q``/``asof``/``spot`` pass through unchanged.
-    European call with no dividend -> a no-op (no early-exercise premium)."""
+    broken quote) is dropped.
+
+    ``use_implied_forward`` (default) recovers the dividend/borrow per expiry from
+    put-call parity (see ``implied_carry``) so QQQ/SPY-style chains are priced
+    against the market's own forward; set False to trust the chain's static ``q``.
+    ``r``/``q``/``asof``/``spot`` metadata pass through unchanged — the European
+    prices carry the implied forward, which rnd recovers from parity anyway."""
+    carry = {}
+    for dte in {qt.expiry_days for qt in chain.quotes}:
+        T = dte / 365.0
+        c = implied_carry(chain, dte, T) if use_implied_forward else None
+        carry[dte] = c if c is not None else (chain.r, chain.q)
+
     out = []
     for qt in chain.quotes:
         T = qt.expiry_days / 365.0
-        de = de_americanize_price(qt.mid, chain.spot, qt.strike, T, chain.r,
-                                  chain.q, qt.kind, steps=steps)
+        r_used, q_used = carry[qt.expiry_days]
+        de = de_americanize_price(qt.mid, chain.spot, qt.strike, T, r_used,
+                                  q_used, qt.kind, steps=steps)
         if de is None:
             continue
         eur_mid = de[0]

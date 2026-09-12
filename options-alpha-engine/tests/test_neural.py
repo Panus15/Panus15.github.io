@@ -26,7 +26,9 @@ if HAVE_NUMPY:
 PRICES = SyntheticAdapter(seed=3).price_history("X", 320) if HAVE_NUMPY else []
 
 
-def _valid(dist: MixtureLogNormal, spot, T):
+def _valid(dist, spot, T):     # unannotated on purpose: the name
+    # only exists when numpy does, and an annotation is evaluated at
+    # def time, so annotating it made the 'clean skip' a NameError
     w = sum(c.weight for c in dist.components)
     assert abs(w - 1.0) < 1e-6
     assert all(c.sigma > 0 for c in dist.components)

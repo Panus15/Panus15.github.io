@@ -56,6 +56,133 @@ def _rolling_rv(rets: Sequence[float], window: int) -> list[float]:
     return out
 
 
+
+# --------------------------------------------------------------------------- #
+# Range-based daily variance — the same forecast, fed a less noisy input
+# --------------------------------------------------------------------------- #
+# A single squared close-to-close return is a one-observation estimate of that
+# day's variance, and its own variance is 2*sigma^4. The high and the low are
+# free with every bar and carry information about the path BETWEEN the closes,
+# which is why the range estimators are several times more efficient for the
+# same day. That efficiency is a theorem, not a backtest, and the tests below
+# check it against the published constants rather than against a return series.
+#
+# WHAT THEY DO NOT SEE. Parkinson, Garman-Klass and Rogers-Satchell measure the
+# TRADING SESSION only; they are blind to the move between yesterday's close and
+# today's open. On an index that is roughly a quarter of the total variance, so
+# using them raw understates vol by about 15%. In an engine whose signal is
+# VRP = q_vol^2 - p_vol^2, understating p makes EVERY expiry look rich, which
+# silently converts it into a machine that is always short volatility. So the
+# gap term is added explicitly (`gkyz`, `rsgap`) and `calibration_scale` exists
+# to catch whatever residual bias is left, measured on TRAIN data only.
+#
+# Yang-Zhang is deliberately not here. Its advertised advantage is independence
+# from drift, which matters when the daily drift is comparable to the daily vol;
+# on a liquid ETF that ratio is about 0.03, so it buys nothing, and it is a
+# WINDOW estimator, which fits the HAR's daily component worse than a
+# single-bar one. The "14x more efficient" figure attached to it in folklore is
+# a theoretical bound against close-to-close under conditions no market meets.
+
+Bar = tuple          # (open, high, low, close), all > 0
+
+
+def parkinson_var(bar) -> float:
+    """High-low range variance for ONE session. ~5x the efficiency of r^2."""
+    o, h, l, c = bar
+    if h <= 0 or l <= 0:
+        return 0.0
+    return (math.log(h / l) ** 2) / (4.0 * math.log(2.0))
+
+
+def garman_klass_var(bar) -> float:
+    """Session variance from the range AND the open-to-close move. ~7x."""
+    o, h, l, c = bar
+    if min(o, h, l, c) <= 0:
+        return 0.0
+    hl = math.log(h / l)
+    co = math.log(c / o)
+    return 0.5 * hl * hl - (2.0 * math.log(2.0) - 1.0) * co * co
+
+
+def rogers_satchell_var(bar) -> float:
+    """Session variance that stays unbiased when the price drifts."""
+    o, h, l, c = bar
+    if min(o, h, l, c) <= 0:
+        return 0.0
+    return (math.log(h / c) * math.log(h / o)
+            + math.log(l / c) * math.log(l / o))
+
+
+def _gap_var(bar, prev_close: float | None) -> float:
+    """The overnight move, squared. Zero on the first bar, which has no yesterday."""
+    if prev_close is None or prev_close <= 0 or bar[0] <= 0:
+        return 0.0
+    return math.log(bar[0] / prev_close) ** 2
+
+
+def daily_variance_series(bars, *, estimator: str = "gkyz") -> list[float]:
+    """Per-day variance from OHLC bars, including the overnight gap.
+
+    ``estimator`` is 'gkyz' (Garman-Klass + gap), 'rsgap' (Rogers-Satchell +
+    gap), 'parkinson' (range only, SESSION ONLY - biased low, provided for the
+    efficiency oracle) or 'cc' (close-to-close, the old behaviour, for A/B).
+    """
+    fn = {"gkyz": garman_klass_var, "rsgap": rogers_satchell_var,
+          "parkinson": parkinson_var}.get(estimator)
+    if estimator == "cc":
+        out, prev = [], None
+        for b in bars:
+            out.append(0.0 if prev is None else math.log(b[3] / prev) ** 2)
+            prev = b[3]
+        return out
+    if fn is None:
+        raise ValueError(f"unknown estimator {estimator!r}")
+    gapped = estimator in ("gkyz", "rsgap")
+    out, prev = [], None
+    for b in bars:
+        v = fn(b) + (_gap_var(b, prev) if gapped else 0.0)
+        out.append(max(v, 0.0))
+        prev = b[3]
+    return out
+
+
+def calibration_scale(bars, *, estimator: str = "gkyz") -> float:
+    """Multiplier putting a variance series on the same LEVEL as close-to-close.
+
+    Computed on whatever bars it is given, which must be TRAIN data only. A
+    scale fitted on the sample it is then judged on is not a calibration, it is
+    a fit, and this engine has already measured what that buys: models/tail_fit
+    improves train loss every time and test loss never.
+
+    Returns 1.0 rather than a wild number when either series is degenerate, so a
+    short or flat window cannot silently rescale a forecast.
+    """
+    est = daily_variance_series(bars, estimator=estimator)
+    cc = daily_variance_series(bars, estimator="cc")
+    if len(est) < 2:
+        return 1.0
+    a = sum(est[1:]) / len(est[1:])
+    b = sum(cc[1:]) / len(cc[1:])
+    if a <= 0 or b <= 0:
+        return 1.0
+    return b / a
+
+def _rolling_var_mean(daily_var: Sequence[float], window: int) -> list[float]:
+    """Rolling annualised variance from a per-day VARIANCE series.
+
+    The bar analogue of ``_rolling_rv``. That one squares returns because a
+    squared return IS its day's variance estimate; a range estimator has already
+    done that step, so here the values are averaged directly. Mixing the two up
+    would square a variance.
+    """
+    out = []
+    for i in range(len(daily_var)):
+        lo = max(0, i - window + 1)
+        chunk = daily_var[lo:i + 1]
+        out.append(sum(chunk) / len(chunk) * TRADING_DAYS)
+    return out
+
+
 def _ols(X: list[list[float]], y: list[float]) -> list[float]:
     """Tiny ordinary-least-squares via normal equations + Gaussian elimination.
 
@@ -107,21 +234,100 @@ def realized_skew(prices: Sequence[float], window: int = 63) -> float:
     return third / var ** 1.5
 
 
-def har_rv_forecast(prices: Sequence[float]) -> float:
+def long_run_vol(prices: Sequence[float], window: int = 252) -> float:
+    """Annualised vol over a LONG window — the level short-horizon vol reverts to.
+
+    Uses the whole available history up to ``window`` bars, so it is deliberately
+    slow-moving: it is the anchor, not the signal.
+    """
+    rets = log_returns(prices)[-window:]
+    if len(rets) < 2:
+        raise ValueError("need at least 3 prices")
+    mean = sum(rets) / len(rets)
+    var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
+    return math.sqrt(var * TRADING_DAYS)
+
+
+def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
+             spot_vol: float | None = None, long_run: float | None = None,
+             window: int = 252, bars=None, estimator: str = "gkyz") -> float:
+    """Annualised vol for the horizon T, WITH a mean-reverting term structure.
+
+    Volatility mean-reverts: a hot (or calm) spot vol decays toward a long-run
+    level, so the *average* variance over a long horizon sits closer to the
+    long-run level than to today's. Under an OU/Heston-style variance the
+    horizon-average is closed form::
+
+        sigma^2(T) = v_inf + (v_0 - v_inf) * (1 - e^{-kappa*T}) / (kappa*T)
+
+    with ``v_0`` today's (HAR) instantaneous variance and ``v_inf`` the long-run
+    variance. ``kappa=2.77`` is a ~3-month variance half-life (ln2/0.25), typical
+    for equity and crypto vol.
+
+    WHY THIS EXISTS — found on the first real option chain: the flat forecast
+    returned the SAME annualised vol at 5 days and 334 days, while the market's
+    implied term structure sloped 38% -> 47%. Subtracting a flat number from a
+    sloping one makes the LONGEST expiry look richest every single time, whatever
+    the market does. That is a model artifact masquerading as an edge; a term
+    structure is what makes a P-vs-Q comparison meaningful across maturities.
+    """
+    if T <= 0:
+        raise ValueError("T must be positive")
+    # ``bars`` only reaches the SPOT variance. The long-run level is a 252-day
+    # average, where a noisier daily input barely matters, and leaving it on
+    # close-to-close keeps the two ends of the term structure anchored by
+    # different estimators - a cheap independence check on the level.
+    v0 = (spot_vol if spot_vol is not None
+          else har_rv_forecast(prices, bars=bars, estimator=estimator)) ** 2
+    try:
+        vinf = (long_run if long_run is not None else long_run_vol(prices, window)) ** 2
+    except ValueError:
+        vinf = v0
+    kT = max(kappa * T, 1e-9)
+    weight = (1.0 - math.exp(-kT)) / kT          # -> 1 as T->0, -> 0 as T->inf
+    var = vinf + (v0 - vinf) * weight
+    return math.sqrt(max(var, 1e-12))
+
+
+def har_rv_forecast(prices: Sequence[float], *, bars=None,
+                    estimator: str = "gkyz") -> float:
     """Heterogeneous Auto-Regressive Realised Volatility (Corsi, 2009) forecast.
 
     Regresses next-day realised variance on daily / weekly (5d) / monthly (22d)
     realised-variance averages. Returns an annualised vol forecast. This is the
     workhorse baseline every serious vol desk starts from.
+
+    ``bars`` — an optional [(o,h,l,c), ...] aligned with ``prices``. When given,
+    the daily variance the regression is fed comes from the RANGE rather than
+    from one squared close-to-close return, which is the same model eating a
+    less noisy input. Without it the behaviour is exactly what it always was, so
+    a caller that has only closes loses nothing.
+
+    The level scale is computed from the SAME trailing bars the forecast is made
+    from, which are strictly earlier than the day being predicted — train-only in
+    the only sense that matters here. The EWMA sanity anchor deliberately stays
+    close-to-close: an independent estimator is a better bracket than the same
+    one twice.
     """
     rets = log_returns(prices)
     if len(rets) < 30:
         # Not enough history for HAR -> fall back to EWMA.
         return ewma_vol(prices)
 
-    rv_d = _rolling_rv(rets, 1)
-    rv_w = _rolling_rv(rets, 5)
-    rv_m = _rolling_rv(rets, 22)
+    if bars is not None and len(bars) >= 30:
+        dv = daily_variance_series(bars, estimator=estimator)
+        scale = calibration_scale(bars, estimator=estimator)
+        dv = [v * scale for v in dv]
+        rv_d = _rolling_var_mean(dv, 1)
+        rv_w = _rolling_var_mean(dv, 5)
+        rv_m = _rolling_var_mean(dv, 22)
+        # the bar series has one entry per BAR; the return series has one fewer.
+        # Drop the first so the regression's t indices mean the same thing.
+        rv_d, rv_w, rv_m = rv_d[1:], rv_w[1:], rv_m[1:]
+    else:
+        rv_d = _rolling_rv(rets, 1)
+        rv_w = _rolling_rv(rets, 5)
+        rv_m = _rolling_rv(rets, 22)
 
     X, y = [], []
     # Predict day t's RV from features known at t-1.

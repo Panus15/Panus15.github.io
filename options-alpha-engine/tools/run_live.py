@@ -21,6 +21,7 @@ core is pure and unit-tested offline; only `fetch` touches the network.
 from __future__ import annotations
 
 import argparse
+import os
 
 from engine import hedged_backtest
 from engine.data import OptionChain
@@ -28,15 +29,44 @@ from models import edge, rnd
 from models.baseline import BaselineDensityForecaster
 
 
+#: Underlyings whose options are ONE unit per contract (crypto), not 100 shares.
+_UNIT_CONTRACT_SYMBOLS = ("BTC", "ETH", "SOL", "XRP", "DOGE", "AVAX", "MATIC")
+
+
+def default_contract_mult(source: str, chain: OptionChain) -> float:
+    """Contract size to assume: 1 unit for crypto, 100 shares for equity/ETF.
+
+    Keyed off the CHAIN, not just the CLI source — the documented workflow is
+    `--dump` from a live vendor and then `replay` the file offline, and a replayed
+    crypto chain must keep its 1-coin contract size. Deriving it from the source
+    alone silently reverts a dumped BTC chain to 100x on replay, overstating every
+    dollar figure by two orders of magnitude. Override with --contract-mult.
+    """
+    if source == "deribit":
+        return 1.0
+    symbol = (chain.symbol or "").upper()
+    if any(tok in symbol for tok in _UNIT_CONTRACT_SYMBOLS):
+        return 1.0
+    return 100.0
+
+
 def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
-            american: bool = False) -> dict:
+            american: bool = False, contract_mult: float = 100.0,
+            events_json: str | None = None, sectors_csv: str = "",
+            holdings_dir: str = "") -> dict:
     """Run the full pipeline on a chain + price history. PURE (no network).
 
     ``american=True`` de-Americanizes the chain first (binomial American IV ->
     European-equivalent prices) so the Q-extractors, which assume European
     options, get an unbiased chain. REQUIRED for US single-name / ETF options
     (QQQ, SPY, ...); a no-op-ish pass for already-European chains (SPX/XSP, BTC)."""
+    # Vendors list their OWN expiries; a requested --dte 30 usually does not exist
+    # (Deribit quotes 5/12/19/33/61/152/243/334, say). Snap to the nearest listed
+    # expiry instead of silently failing Q extraction on an empty slice.
+    dte, note = rnd.snap_to_listed_expiry(chain, dte)
+    if note:
+        print(f"[expiry] {note}")
     T = dte / 365.0
     if american:
         from engine.american import de_americanize_chain
@@ -79,7 +109,7 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
     # 2b. Per-strike board — which exact contract looks mispriced ------------
     if len(prices) >= 30:
         from models.strike_scan import scan_strikes
-        board = scan_strikes(chain, forecaster, prices, top=8)
+        board = scan_strikes(chain, forecaster, prices, top=8, contract_mult=contract_mult)
         report["strike_board"] = [
             {"dte": s.expiry_days, "strike": s.strike, "kind": s.kind,
              "edge_buy": s.edge_buy, "edge_write": s.edge_write,
@@ -88,26 +118,240 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
         for s in board:
             print("  " + s.line())
 
-    # 3. Delta-hedged walk-forward backtest --------------------------------
+    # 3. Delta-hedged walk-forward SIMULATION -------------------------------
+    # Read the label carefully before believing this number. It is NOT a backtest
+    # of the option chain above: only `prices` goes in, so the chain the vendor
+    # just returned is not an input. Every trade is sold at
+    # har_rv_forecast(trailing) * (1 + premium) — a CONSTANT assumed premium
+    # applied to the real price history. Printed unlabelled directly beneath real
+    # Deribit moments, it reads like evidence the engine has found an edge on live
+    # data, which it is not. Two things keep it honest: the premium is taken from
+    # THIS snapshot's measured VRP instead of a hardcoded 0.15 where possible, and
+    # the header says what it is.
     if run_backtest and len(prices) >= 63 + dte + 5:
-        res = hedged_backtest.run_hedged_backtest(prices, dte=dte)
+        premium, prem_src = 0.15, "assumed default"
+        near = [s for s in (signals if len(prices) >= 30 else [])
+                if s.p_vol and s.p_vol > 0]
+        if near:
+            s0 = min(near, key=lambda s: abs(s.expiry_days - dte))
+            obs = s0.q_vol / s0.p_vol - 1.0
+            if -0.5 < obs < 2.0:
+                premium, prem_src = obs, f"measured on this chain at {s0.expiry_days}d"
+        res = hedged_backtest.run_hedged_backtest(
+            prices, dte=dte, premium=premium, contract_mult=int(contract_mult))
         report["backtest"] = {"sharpe": res.metrics.sharpe,
                               "max_drawdown": res.metrics.max_drawdown,
                               "total_return": res.metrics.total_return,
-                              "trades": res.n_trades, "skipped": res.n_skipped}
-        print(f"Backtest (delta-hedged, {len(prices)}d history): "
-              f"Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
-              f"trades={res.n_trades} skipped={res.n_skipped}")
+                              "trades": res.n_trades, "skipped": res.n_skipped,
+                              "premium": premium, "premium_source": prem_src,
+                              "uses_fetched_chain": False}
+        reasons = "; ".join(f"{k}:{v}" for k, v in res.skip_reasons.items()) or "none"
+        print(f"SIMULATION on {len(prices)}d of PRICE history — not a backtest of the "
+              f"chain above.")
+        print(f"  Every trade is sold at forecast_vol x (1 + {premium:+.0%}) "
+              f"[{prem_src}]; no quote above is used.")
+        print(f"  Sharpe={res.metrics.sharpe:.2f}  MaxDD={res.metrics.max_drawdown:.1%}  "
+              f"trades={res.n_trades} skipped={res.n_skipped} ({reasons})")
+        # A single-path Sharpe is the easiest number in this repo to over-read.
+        # Bootstrap the realised trades so the width of the claim is visible next
+        # to the claim itself, rather than left for the reader to imagine.
+        if len(res.trade_pnl) >= 5:
+            from engine.robustness import block_bootstrap
+            boot = block_bootstrap(res.trade_pnl, n_boot=1000, block=3)
+            mt = boot["mean_trade"]
+            report["bootstrap"] = {"mean_trade": mt.point, "lo": mt.lo, "hi": mt.hi,
+                                   "spans_zero": mt.spans_zero}
+            print(f"  bootstrap over {boot['n_trades']} trades: mean trade P&L "
+                  f"{mt.point:+,.2f}  90% [{mt.lo:+,.2f}, {mt.hi:+,.2f}]"
+                  + ("  <- SPANS ZERO: not distinguishable from luck"
+                     if mt.spans_zero else ""))
+        if res.n_trades == 0 and res.skip_reasons:
+            top = max(res.skip_reasons, key=res.skip_reasons.get)
+            why = {
+                "size_zero": ("CVaR sizing returned 0 contracts — one contract's tail "
+                              "loss exceeds the risk budget. On a high-notional "
+                              "underlying (BTC ~$64k/contract) a small account "
+                              "genuinely cannot carry one; raise starting_equity or "
+                              "cvar_limit, or trade a defined-risk spread instead."),
+                "vega_cap": ("the short-vega cap bound every trade — the position's "
+                             "vega is large relative to the equity limit."),
+                "regime": "the regime gate suppressed selling (realised vol accelerating).",
+                "kill_switch": "the drawdown kill-switch was active.",
+            }.get(top, "see skip_reasons above.")
+            print(f"  -> no trades because {top} dominated: {why}")
     elif run_backtest:
         print(f"Backtest skipped: need >= {63 + dte + 5} price points, have {len(prices)}")
+
+    # 3b. Is the P density even CALIBRATED on this underlying? ---------------
+    # The VRP is P-vs-Q, so a P vol biased low inflates every RICH verdict by
+    # exactly that bias. PIT answers it in absolute terms, and hands back the vol
+    # scale that would fix it. Width is judged on a CENTERED PIT because this
+    # forecast is direction-neutral by design.
+    if len(prices) >= 150:
+        from models import calibration
+        windows, w_stride = objective_windows(prices, dte)
+        if len(windows) >= 40:
+            cal = calibration.calibration_report(forecaster, windows,
+                                                 stride=w_stride)
+            report["calibration"] = {"vol_scale": cal.vol_scale,
+                                     "verdict": cal.verdict.split(" — ")[0],
+                                     "coverage_90": cal.centered_coverage_90}
+            print("\n" + cal.summary())
+            if cal.vol_scale > 1.15:
+                print(f"  !! the P vol looks ~{(cal.vol_scale - 1) * 100:.0f}% too LOW here, so the "
+                      f"VRP above is OVERSTATED — treat RICH verdicts with suspicion")
+            elif cal.vol_scale < 0.87:
+                print(f"  !! the P vol looks ~{(1 - cal.vol_scale) * 100:.0f}% too HIGH here, so the "
+                      f"VRP above is UNDERSTATED")
+
+            # Re-scan with the bias corrected, using a scale fitted ONLY on the
+            # earlier part of the history (walk-forward — a scale fitted on the
+            # same data it corrects is in-sample fitting and proves nothing).
+            wf = calibration.walk_forward_scale(forecaster, prices, dte=dte)
+            report["wf_vol_scale"] = wf
+            if abs(wf - 1.0) > 0.05:
+                fixed = calibration.CalibratedForecaster(forecaster, vol_scale=wf)
+                adj = edge.scan_distribution(chain, fixed, prices, actionable_only=False)
+                report["signals_calibrated"] = [
+                    {"dte": s.expiry_days, "p_vol": s.p_vol, "q_vol": s.q_vol,
+                     "vrp": s.variance_risk_premium, "verdict": s.verdict} for s in adj]
+                print(f"\nSENSITIVITY: P-vs-Q re-scanned with a walk-forward vol scale "
+                      f"x{wf:.2f} (fitted on the earlier history only):")
+                print(f"  {'dte':>5} {'P_vol':>7} {'Q_vol':>7} {'VRP':>9} {'verdict':>9}")
+                for s in adj[:8]:
+                    print(f"  {s.expiry_days:>5} {s.p_vol:>7.1%} {s.q_vol:>7.1%} "
+                          f"{s.variance_risk_premium:>+9.4f} {s.verdict:>9}")
+                print("  -> read this as a STRESS TEST of the signal, not a better "
+                      "estimate: the scale\n     conflates genuine model bias with a "
+                      "regime shift between the fitting window\n     and now, so on a "
+                      "regime-changing sample it OVERCORRECTS. What matters is\n"
+                      "     whether a verdict SURVIVES it — one that flips was never robust.")
+                # Pair by EXPIRY, not position: both scans are sorted by |VRP|, so
+                # zipping them compares different contracts.
+                raw_by_dte = {s.expiry_days: s.verdict for s in signals}
+                flips = sum(1 for s in adj
+                            if raw_by_dte.get(s.expiry_days, s.verdict) != s.verdict)
+                print(f"  {flips}/{len(adj)} verdicts flip under this correction.")
+                if wf >= 1.9 or wf <= 0.55:
+                    print("  !! the scale hit its clamp — the estimate is extreme "
+                          "(usually a regime change,\n     not a model bias). Treat both "
+                          "scans as wide error bars, not a decision.")
+
+    # 3c. THE CARD — collapse everything above into one decision object -----
+    if len(prices) >= 30:
+        from models.trade_card import build_card
+        calendar = None
+        if events_json:
+            from models.events import EventCalendar
+            calendar = EventCalendar.from_file(events_json)
+        card = build_card(chain, forecaster, prices, dte=dte,
+                          calibration=locals().get("cal"), calendar=calendar)
+        report["card"] = {"vol_side": card.vol_side, "direction": card.direction,
+                          "entry": card.entry, "target": card.target,
+                          "stop": card.stop, "expected_value": card.expected_value}
+        print("\n" + card.render())
+
+        # 3d. THE FUSED DECISION — the card plus the two context signals ------
+        # Both context inputs are optional and both default to "no data", which
+        # the decision states rather than treats as benign. Neither can raise the
+        # size; that asymmetry is the whole reason this is safe to print.
+        from models.decision import build_decision
+        rot_pt = _rotation_point(sectors_csv, chain.symbol)
+        crowd = _crowding(holdings_dir, chain, card)
+        decision = build_decision(card, rotation_point=rot_pt, crowding=crowd)
+        report["decision"] = {
+            "action": decision.action,
+            "size_multiplier": decision.size_multiplier,
+            "weakest_evidence": decision.weakest_evidence,
+            "inputs": [{"name": i.name, "status": i.status, "effect": i.effect}
+                       for i in decision.inputs]}
+        print("\n" + decision.render())
 
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
+        # The gate scores challengers against baseline.py's hand-set crash tail.
+        # Print how good that prior actually is on THIS underlying, so "passed the
+        # tail gate" is read for what it is rather than for what it sounds like.
+        try:
+            from models.tail_fit import fit_tail_shape
+            tf = fit_tail_shape(prices, horizons=(dte,), rounds=1, grid=4)
+            report["tail_prior"] = {"test_improvement": tf.test_improvement,
+                                    "n_test": tf.n_test}
+            print("\n" + tf.summary())
+        except (ValueError, ZeroDivisionError, ArithmeticError) as e:
+            print(f"\ntail-prior check skipped: {e}")
 
     print("\nReminder: a single snapshot is a spot check. A real edge claim needs an\n"
           "honest OUT-OF-SAMPLE, cost-inclusive equity curve over many dates + a crash.")
     return report
+
+
+def objective_windows(prices: list, dte: int, *, context: int = 63,
+                      stride: int | None = None, cap: int = 250):
+    """Leak-free (context, horizon, outcome) windows at this horizon.
+
+    Returns ``(windows, stride)``. The stride is not decoration — the caller must
+    hand it to ``calibration_report`` so the p-value is computed on the number of
+    INDEPENDENT observations. Overlapping windows are kept for the point estimates
+    (mean, sd, coverage, the vol scale), which are merely inefficient under overlap
+    rather than wrong; it is only the significance claim that breaks.
+
+    The old body was ``w[::max(1, len(w) // 250)]``, which at typical history
+    lengths evaluates to a step of 1 and thins nothing — so ~300 windows sharing
+    all but one day of their horizon reached a KS test that believed they were
+    independent draws, and reported roughly 5x more significance than it had.
+    """
+    from models import objective
+    step = max(1, int(stride)) if stride else 1
+    w = objective.build_windows(prices, context=context, horizons=(dte,),
+                                stride=step)
+    if cap and len(w) > cap:
+        keep = max(1, len(w) // cap)
+        w, step = w[::keep], step * keep
+    return w, step
+
+
+def _rotation_point(sectors_csv: str, symbol: str):
+    """The RotationPoint for this underlying, or None when we simply do not know.
+
+    Returns None rather than a neutral placeholder for anything it cannot answer —
+    a missing sector map is missing DATA, and `decision.py` prints that as such
+    instead of quietly treating the sector as fine.
+    """
+    if not sectors_csv or not os.path.exists(sectors_csv):
+        return None
+    try:
+        from models.rotation import rotation_map
+        from tools.rotation_dashboard import load_csv
+        series, bench, _ = load_csv(sectors_csv)
+        sym = (symbol or "").upper()
+        if sym not in series:
+            return None
+        pts = rotation_map(series, bench)
+        return next((p for p in pts if p.symbol == sym), None)
+    except (OSError, ValueError, KeyError, SystemExit):
+        return None
+
+
+def _crowding(holdings_dir: str, chain, card):
+    """(share, note) for the strike the card would sell, or None with no archive."""
+    if not holdings_dir or not os.path.isdir(holdings_dir):
+        return None
+    try:
+        from models.fund_flow import crowding_score, supply_map
+        from tools.archive_holdings import load_archive
+        books = load_archive(holdings_dir)
+        if not books:
+            return None
+        asof = books[-1][0]
+        latest = [b for d, b in books if d == asof]
+        buckets = supply_map(latest, chain.symbol, chain.spot)
+        strike = getattr(card, "entry", 0.0) or chain.spot
+        return crowding_score(strike, "call", chain.quotes[0].expiry_days,
+                              chain.asof, buckets)
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
 
 
 def _promotion_gate(prices: list) -> dict:
@@ -133,8 +377,12 @@ def fetch(source: str, args) -> tuple:
         return ad.option_chain(), ad.price_history(days=args.days)
     if source == "tradier":
         from engine.tradier import TradierAdapter
-        ad = TradierAdapter()
-        return ad.option_chain(args.symbol), ad.price_history(args.symbol, args.days)
+        ad = TradierAdapter(max_expirations=getattr(args, "max_expirations", 6))
+        # pass the tenor we actually want: the adapter fetches a budgeted number
+        # of expiries AROUND it rather than the soonest few, which on a
+        # near-daily-expiry ETF are all too short to carry usable wings
+        return (ad.option_chain(args.symbol, target_dte=getattr(args, "dte", None)),
+                ad.price_history(args.symbol, args.days))
     if source == "replay":
         from engine.adapters import JsonFileAdapter
         ad = JsonFileAdapter(price_json=args.price_json, chain_json=args.chain_json)
@@ -149,14 +397,31 @@ def main(argv=None):
     p.add_argument("--currency", default="BTC")
     p.add_argument("--symbol", default="SPX")
     p.add_argument("--dte", type=int, default=30)
+    p.add_argument("--max-expirations", dest="max_expirations", type=int,
+                    default=6,
+                    help="how many expiries to fetch AROUND --dte. The 3 "
+                         "soonest on a daily-expiry ETF are all too short "
+                         "to carry usable wings.")
     p.add_argument("--days", type=int, default=400)
     p.add_argument("--chain-json", dest="chain_json")
     p.add_argument("--price-json", dest="price_json")
     p.add_argument("--dump", help="save the fetched chain to this JSON path")
     p.add_argument("--gate", action="store_true", help="also run the MDN promotion gate")
+    p.add_argument("--sectors-csv", dest="sectors_csv", default="",
+                   help="wide price CSV (tools.fetch_prices) -> the sector-rotation "
+                        "context on the fused decision")
+    p.add_argument("--holdings", dest="holdings_dir", default="",
+                   help="archive dir (tools.archive_holdings) -> the fund-crowding "
+                        "context on the fused decision")
     p.add_argument("--no-backtest", dest="backtest", action="store_false")
     p.add_argument("--american", action="store_true",
                    help="de-Americanize the chain before Q extraction (US equity/ETF options)")
+    p.add_argument("--events-json", dest="events_json",
+                   help="event calendar (JSON/CSV of date,symbol,kind) — refuses the "
+                        "vol leg when a known event (earnings) lands before expiry")
+    p.add_argument("--contract-mult", dest="contract_mult", type=float, default=None,
+                   help="units per contract (1 for crypto, 100 for US equity/ETF); "
+                        "default is inferred from the source and the chain symbol")
     args = p.parse_args(argv)
 
     chain, prices = fetch(args.source, args)
@@ -165,8 +430,12 @@ def main(argv=None):
         save_chain_json(chain, args.dump)
         print(f"saved chain -> {args.dump} (replay offline with: "
               f"run_live replay --chain-json {args.dump})")
+    mult = args.contract_mult if args.contract_mult else default_contract_mult(
+        args.source, chain)
     analyze(chain, prices, dte=args.dte, label=args.source,
-            run_backtest=args.backtest, run_gate=args.gate, american=args.american)
+            run_backtest=args.backtest, run_gate=args.gate, american=args.american,
+            sectors_csv=args.sectors_csv, holdings_dir=args.holdings_dir,
+            contract_mult=mult, events_json=args.events_json)
 
 
 if __name__ == "__main__":
