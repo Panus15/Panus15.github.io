@@ -167,6 +167,22 @@ def calibration_scale(bars, *, estimator: str = "gkyz") -> float:
         return 1.0
     return b / a
 
+def _rolling_var_mean(daily_var: Sequence[float], window: int) -> list[float]:
+    """Rolling annualised variance from a per-day VARIANCE series.
+
+    The bar analogue of ``_rolling_rv``. That one squares returns because a
+    squared return IS its day's variance estimate; a range estimator has already
+    done that step, so here the values are averaged directly. Mixing the two up
+    would square a variance.
+    """
+    out = []
+    for i in range(len(daily_var)):
+        lo = max(0, i - window + 1)
+        chunk = daily_var[lo:i + 1]
+        out.append(sum(chunk) / len(chunk) * TRADING_DAYS)
+    return out
+
+
 def _ols(X: list[list[float]], y: list[float]) -> list[float]:
     """Tiny ordinary-least-squares via normal equations + Gaussian elimination.
 
@@ -268,21 +284,45 @@ def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
     return math.sqrt(max(var, 1e-12))
 
 
-def har_rv_forecast(prices: Sequence[float]) -> float:
+def har_rv_forecast(prices: Sequence[float], *, bars=None,
+                    estimator: str = "gkyz") -> float:
     """Heterogeneous Auto-Regressive Realised Volatility (Corsi, 2009) forecast.
 
     Regresses next-day realised variance on daily / weekly (5d) / monthly (22d)
     realised-variance averages. Returns an annualised vol forecast. This is the
     workhorse baseline every serious vol desk starts from.
+
+    ``bars`` — an optional [(o,h,l,c), ...] aligned with ``prices``. When given,
+    the daily variance the regression is fed comes from the RANGE rather than
+    from one squared close-to-close return, which is the same model eating a
+    less noisy input. Without it the behaviour is exactly what it always was, so
+    a caller that has only closes loses nothing.
+
+    The level scale is computed from the SAME trailing bars the forecast is made
+    from, which are strictly earlier than the day being predicted — train-only in
+    the only sense that matters here. The EWMA sanity anchor deliberately stays
+    close-to-close: an independent estimator is a better bracket than the same
+    one twice.
     """
     rets = log_returns(prices)
     if len(rets) < 30:
         # Not enough history for HAR -> fall back to EWMA.
         return ewma_vol(prices)
 
-    rv_d = _rolling_rv(rets, 1)
-    rv_w = _rolling_rv(rets, 5)
-    rv_m = _rolling_rv(rets, 22)
+    if bars is not None and len(bars) >= 30:
+        dv = daily_variance_series(bars, estimator=estimator)
+        scale = calibration_scale(bars, estimator=estimator)
+        dv = [v * scale for v in dv]
+        rv_d = _rolling_var_mean(dv, 1)
+        rv_w = _rolling_var_mean(dv, 5)
+        rv_m = _rolling_var_mean(dv, 22)
+        # the bar series has one entry per BAR; the return series has one fewer.
+        # Drop the first so the regression's t indices mean the same thing.
+        rv_d, rv_w, rv_m = rv_d[1:], rv_w[1:], rv_m[1:]
+    else:
+        rv_d = _rolling_rv(rets, 1)
+        rv_w = _rolling_rv(rets, 5)
+        rv_m = _rolling_rv(rets, 22)
 
     X, y = [], []
     # Predict day t's RV from features known at t-1.
