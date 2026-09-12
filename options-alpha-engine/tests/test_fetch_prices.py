@@ -17,6 +17,7 @@ Run: python3 tests/test_fetch_prices.py
 
 import datetime
 import json
+import math
 import os
 import shutil
 import sys
@@ -25,6 +26,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from tools.fetch_prices import (DEFAULT_BASKET, SOURCE_ORDER, fetch_basket,
+                                parse_yahoo_bars,
                                 fetch_one, fetch_one_auto, main, parse_yahoo,
                                 stooq_url, yahoo_url)
 
@@ -335,6 +337,88 @@ def test_the_two_total_failures_give_DIFFERENT_advice():
             "a reachable vendor is not a network problem and must not say so")
     finally:
         shutil.rmtree(d)
+
+
+
+# --------------------------------------------------------------------------
+# OHLC bars, and the adjustment trap that makes a dividend look like volatility
+# --------------------------------------------------------------------------
+
+def _yahoo_bars(rows, adj=None):
+    """rows = [(epoch, o, h, l, c)]; adj = optional adjusted-close list."""
+    ind = {"quote": [{"open": [r[1] for r in rows], "high": [r[2] for r in rows],
+                      "low": [r[3] for r in rows], "close": [r[4] for r in rows]}]}
+    if adj is not None:
+        ind["adjclose"] = [{"adjclose": adj}]
+    return json.dumps({"chart": {"result": [
+        {"meta": {}, "timestamp": [r[0] for r in rows], "indicators": ind}],
+        "error": None}}).encode()
+
+
+def test_ohlc_survives_the_parse_at_all():
+    d0 = int(datetime.datetime(2026, 3, 2).timestamp())
+    raw = _yahoo_bars([(d0, 100.0, 103.0, 99.0, 102.0),
+                       (d0 + 86400, 102.5, 104.0, 101.0, 101.5)])
+    bars = parse_yahoo_bars(raw)
+    assert len(bars) == 2
+    o, h, l, c = bars["2026-03-02"]
+    assert (o, h, l, c) == (100.0, 103.0, 99.0, 102.0)
+    # and the close-only view must agree with the bar view, or two callers
+    # reading "the price" would disagree about what day it was
+    assert parse_yahoo(raw)["2026-03-02"] == c
+
+
+def test_a_dividend_is_not_allowed_to_read_as_overnight_volatility():
+    """The trap, as an oracle: the answer is known before the code runs.
+
+    Yahoo returns open/high/low UNADJUSTED and adjusts only the close. Pair a
+    raw open with an adjusted previous close and the overnight term
+    log(O_t / C_{t-1}) swallows the whole payout. A 0.7% dividend is then
+    indistinguishable from a 0.7% gap down, and every range estimator with a gap
+    term reads the payout as risk.
+
+    Constructed so the TRUE overnight move is exactly zero: the stock closes at
+    100, goes ex-dividend 0.70, and opens at 99.30 - which is no move at all
+    once the dividend is accounted for.
+    """
+    d0 = int(datetime.datetime(2026, 3, 2).timestamp())
+    rows = [(d0, 99.5, 100.5, 99.0, 100.0),              # cum-dividend close
+            (d0 + 86400, 99.30, 99.80, 98.90, 99.30)]    # opens exactly ex-div
+    # the vendor's adjusted close scales the earlier bar by (1 - 0.007)
+    adj = [100.0 * 0.993, 99.30]
+    bars = parse_yahoo_bars(_yahoo_bars(rows, adj=adj))
+    prev_c = bars["2026-03-02"][3]
+    nxt_o = bars["2026-03-03"][0]
+    gap = math.log(nxt_o / prev_c)
+    assert abs(gap) < 1e-9, (
+        f"overnight gap read as {gap:+.5f} when the true move was zero - the "
+        f"open was not put on the same footing as the adjusted close")
+
+    # and the intraday shape must be untouched: scaling is a pure ratio
+    o, h, l, c = bars["2026-03-02"]
+    assert abs((h / l) - (100.5 / 99.0)) < 1e-12
+    assert abs((c / o) - (100.0 / 99.5)) < 1e-12
+
+
+def test_a_bar_that_contradicts_itself_is_dropped_not_repaired():
+    """high below the close, or a non-positive low, is corrupt data. Silently
+    'fixing' it invents a bar the vendor never sent."""
+    d0 = int(datetime.datetime(2026, 3, 2).timestamp())
+    raw = _yahoo_bars([(d0, 100.0, 101.0, 99.0, 100.5),     # fine
+                       (d0 + 86400, 100.0, 99.0, 98.0, 102.0),  # high < close
+                       (d0 + 172800, 100.0, 101.0, -1.0, 100.0)])  # low <= 0
+    bars = parse_yahoo_bars(raw)
+    assert list(bars) == ["2026-03-02"], list(bars)
+
+
+def test_a_response_with_no_ohlc_still_yields_bars_from_the_close():
+    """Stooq-shaped and degenerate feeds must not crash the bar path; a bar with
+    no range is a zero-range bar, which the estimators handle."""
+    d0 = int(datetime.datetime(2026, 3, 2).timestamp())
+    payload = {"chart": {"result": [{"meta": {}, "timestamp": [d0],
+               "indicators": {"quote": [{"close": [101.0]}]}}], "error": None}}
+    bars = parse_yahoo_bars(json.dumps(payload).encode())
+    assert bars["2026-03-02"] == (101.0, 101.0, 101.0, 101.0)
 
 
 def _run_all():

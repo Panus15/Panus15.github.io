@@ -74,8 +74,19 @@ def yahoo_url(symbol: str, *, base: str = YAHOO, range_: str = "10y") -> str:
     return f"{base}{sep}{s}?interval=1d&range={range_}"
 
 
-def parse_yahoo(raw: bytes) -> dict:
-    """{'YYYY-MM-DD': close} from a Yahoo chart response. Raises on anything else."""
+def parse_yahoo_bars(raw: bytes) -> dict:
+    """{'YYYY-MM-DD': (open, high, low, close)} from a Yahoo chart response.
+
+    THE ADJUSTMENT TRAP, which is the whole reason this is a separate function.
+    Yahoo returns open/high/low UNADJUSTED and supplies the split/dividend-adjusted
+    series only for the close. Taking the adjusted close and the raw open together
+    makes the overnight term log(O_t / C_{t-1}) absorb the entire dividend, and a
+    single 0.7% ex-dividend day inflates that day's gap variance by roughly 6x.
+    Every range estimator that uses a gap term would then read the payout as
+    volatility. So O/H/L are rescaled by f = adjclose / close before anything sees
+    them, which leaves every ratio within a bar untouched and fixes the one ratio
+    that spans bars.
+    """
     import datetime
 
     payload = json.loads(raw.decode("utf-8", "replace"))
@@ -87,28 +98,49 @@ def parse_yahoo(raw: bytes) -> dict:
         raise ValueError("no result block (unknown or delisted symbol)")
     r = results[0]
     stamps = r.get("timestamp") or []
-    quotes = (r.get("indicators") or {}).get("quote") or [{}]
-    closes = quotes[0].get("close") or []
-    # prefer the split/dividend-adjusted series when the vendor supplies it
-    adj = (r.get("indicators") or {}).get("adjclose") or []
-    if adj and adj[0].get("adjclose"):
-        closes = adj[0]["adjclose"]
+    q = ((r.get("indicators") or {}).get("quote") or [{}])[0]
+    raw_close = q.get("close") or []
+    opens, highs, lows = q.get("open") or [], q.get("high") or [], q.get("low") or []
+    adj_block = (r.get("indicators") or {}).get("adjclose") or []
+    adj_close = adj_block[0].get("adjclose") if adj_block else None
+    closes = adj_close or raw_close
     if not stamps or not closes:
         raise ValueError("response carried no timestamps or closes")
+
     out: dict = {}
-    for ts, c in zip(stamps, closes):
-        if c is None:
+    for i, ts in enumerate(stamps):
+        c = closes[i] if i < len(closes) else None
+        if c is None or c <= 0:
             continue                          # vendor gaps are holes, not zeros
         try:
             d = datetime.datetime.utcfromtimestamp(int(ts)).date().isoformat()
         except (OverflowError, OSError, ValueError):
             continue
-        if c > 0:
-            out[d] = float(c)
+        rc = raw_close[i] if i < len(raw_close) else None
+        f = (c / rc) if (adj_close and rc) else 1.0
+        o = opens[i] if i < len(opens) else None
+        h = highs[i] if i < len(highs) else None
+        lo = lows[i] if i < len(lows) else None
+        # MISSING and CORRUPT are different. A null open is a field the vendor
+        # did not send: fall back to the close, which yields a zero-range bar and
+        # loses information without inventing any. A NEGATIVE or zero price is
+        # corrupt, and substituting anything for it would manufacture a bar the
+        # vendor never sent - drop the whole day instead.
+        if any(v is not None and v <= 0 for v in (o, h, lo)):
+            continue
+        o, h, lo = ((v * f) if v is not None else c for v in (o, h, lo))
+        # a bar whose range does not contain its own endpoints contradicts itself
+        if h < max(o, c) or lo > min(o, c):
+            continue
+        out[d] = (o, h, lo, c)
     if not out:
-        raise ValueError("every row was null")
+        raise ValueError("no usable bars in the response")
     return out
 
+
+def parse_yahoo(raw: bytes) -> dict:
+    """{'YYYY-MM-DD': close}. The close-only view of parse_yahoo_bars."""
+    return {d: b[3] for d, b in parse_yahoo_bars(raw).items()}
 
 def _short(msg: str, n: int = 160) -> str:
     """One line, truncated. A bot-check page is 40kB and must not fill a terminal."""

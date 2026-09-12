@@ -56,6 +56,117 @@ def _rolling_rv(rets: Sequence[float], window: int) -> list[float]:
     return out
 
 
+
+# --------------------------------------------------------------------------- #
+# Range-based daily variance — the same forecast, fed a less noisy input
+# --------------------------------------------------------------------------- #
+# A single squared close-to-close return is a one-observation estimate of that
+# day's variance, and its own variance is 2*sigma^4. The high and the low are
+# free with every bar and carry information about the path BETWEEN the closes,
+# which is why the range estimators are several times more efficient for the
+# same day. That efficiency is a theorem, not a backtest, and the tests below
+# check it against the published constants rather than against a return series.
+#
+# WHAT THEY DO NOT SEE. Parkinson, Garman-Klass and Rogers-Satchell measure the
+# TRADING SESSION only; they are blind to the move between yesterday's close and
+# today's open. On an index that is roughly a quarter of the total variance, so
+# using them raw understates vol by about 15%. In an engine whose signal is
+# VRP = q_vol^2 - p_vol^2, understating p makes EVERY expiry look rich, which
+# silently converts it into a machine that is always short volatility. So the
+# gap term is added explicitly (`gkyz`, `rsgap`) and `calibration_scale` exists
+# to catch whatever residual bias is left, measured on TRAIN data only.
+#
+# Yang-Zhang is deliberately not here. Its advertised advantage is independence
+# from drift, which matters when the daily drift is comparable to the daily vol;
+# on a liquid ETF that ratio is about 0.03, so it buys nothing, and it is a
+# WINDOW estimator, which fits the HAR's daily component worse than a
+# single-bar one. The "14x more efficient" figure attached to it in folklore is
+# a theoretical bound against close-to-close under conditions no market meets.
+
+Bar = tuple          # (open, high, low, close), all > 0
+
+
+def parkinson_var(bar) -> float:
+    """High-low range variance for ONE session. ~5x the efficiency of r^2."""
+    o, h, l, c = bar
+    if h <= 0 or l <= 0:
+        return 0.0
+    return (math.log(h / l) ** 2) / (4.0 * math.log(2.0))
+
+
+def garman_klass_var(bar) -> float:
+    """Session variance from the range AND the open-to-close move. ~7x."""
+    o, h, l, c = bar
+    if min(o, h, l, c) <= 0:
+        return 0.0
+    hl = math.log(h / l)
+    co = math.log(c / o)
+    return 0.5 * hl * hl - (2.0 * math.log(2.0) - 1.0) * co * co
+
+
+def rogers_satchell_var(bar) -> float:
+    """Session variance that stays unbiased when the price drifts."""
+    o, h, l, c = bar
+    if min(o, h, l, c) <= 0:
+        return 0.0
+    return (math.log(h / c) * math.log(h / o)
+            + math.log(l / c) * math.log(l / o))
+
+
+def _gap_var(bar, prev_close: float | None) -> float:
+    """The overnight move, squared. Zero on the first bar, which has no yesterday."""
+    if prev_close is None or prev_close <= 0 or bar[0] <= 0:
+        return 0.0
+    return math.log(bar[0] / prev_close) ** 2
+
+
+def daily_variance_series(bars, *, estimator: str = "gkyz") -> list[float]:
+    """Per-day variance from OHLC bars, including the overnight gap.
+
+    ``estimator`` is 'gkyz' (Garman-Klass + gap), 'rsgap' (Rogers-Satchell +
+    gap), 'parkinson' (range only, SESSION ONLY - biased low, provided for the
+    efficiency oracle) or 'cc' (close-to-close, the old behaviour, for A/B).
+    """
+    fn = {"gkyz": garman_klass_var, "rsgap": rogers_satchell_var,
+          "parkinson": parkinson_var}.get(estimator)
+    if estimator == "cc":
+        out, prev = [], None
+        for b in bars:
+            out.append(0.0 if prev is None else math.log(b[3] / prev) ** 2)
+            prev = b[3]
+        return out
+    if fn is None:
+        raise ValueError(f"unknown estimator {estimator!r}")
+    gapped = estimator in ("gkyz", "rsgap")
+    out, prev = [], None
+    for b in bars:
+        v = fn(b) + (_gap_var(b, prev) if gapped else 0.0)
+        out.append(max(v, 0.0))
+        prev = b[3]
+    return out
+
+
+def calibration_scale(bars, *, estimator: str = "gkyz") -> float:
+    """Multiplier putting a variance series on the same LEVEL as close-to-close.
+
+    Computed on whatever bars it is given, which must be TRAIN data only. A
+    scale fitted on the sample it is then judged on is not a calibration, it is
+    a fit, and this engine has already measured what that buys: models/tail_fit
+    improves train loss every time and test loss never.
+
+    Returns 1.0 rather than a wild number when either series is degenerate, so a
+    short or flat window cannot silently rescale a forecast.
+    """
+    est = daily_variance_series(bars, estimator=estimator)
+    cc = daily_variance_series(bars, estimator="cc")
+    if len(est) < 2:
+        return 1.0
+    a = sum(est[1:]) / len(est[1:])
+    b = sum(cc[1:]) / len(cc[1:])
+    if a <= 0 or b <= 0:
+        return 1.0
+    return b / a
+
 def _ols(X: list[list[float]], y: list[float]) -> list[float]:
     """Tiny ordinary-least-squares via normal equations + Gaussian elimination.
 
