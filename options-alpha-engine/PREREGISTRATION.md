@@ -98,6 +98,31 @@ a 21-day spacing means **≥ ~18 months of daily books**, or a shorter archive w
 overlapping expiries. `tools/archive_holdings.py` must be running daily from now;
 point-in-time holdings cannot be bought retroactively at any price.
 
+**§2.2a — the necessary condition, checkable in an afternoon.** Eighteen months is
+a long time to wait to find out the premise was never arithmetically possible. The
+mechanism requires that a fund hold a meaningful share of the OPEN INTEREST at its
+own strike; a fund holding 1% of the contracts outstanding there is one participant
+among a hundred and cannot be the marginal seller setting the price.
+`models/oi_share.py` measures that share and `tools/oi_share.py` runs it against one
+archived book plus one live chain. **The bands were fixed before any data was seen:**
+
+| max share at any strike | reading |
+|---|---|
+| < 5% | **REFUTED** — close §2.2 rather than wait on it |
+| 5–20% | **INCONCLUSIVE** — starting the archive is defensible, and this is the reason |
+| ≥ 20% | **PLAUSIBLE** — the mechanism is not ruled out; the study is worth running |
+
+Passing is not evidence of an effect. It only says the arithmetic does not forbid
+one. Open interest of 0 means UNKNOWN in this codebase, and a chain without it
+returns NO OPEN INTEREST DATA rather than a refutation — closing a study on an
+absence of evidence would be the same error in the opposite direction.
+
+**Known before running it, and recorded here so the result is not a surprise:**
+JEPI and JEPQ implement their overwriting through OTC equity-linked notes and hold
+no listed options at all, so for those two there is nothing to hold a share OF. The
+screen reports unmatched fund lines rather than discarding them, because a fund
+absent from the listed market must not read as a small participant in it.
+
 ### 2.3 Options edge (`models/edge.py`, `engine/signal_backtest.py`, `tools/paper_trade.py`)
 
 | Parameter | Value | Why this one |

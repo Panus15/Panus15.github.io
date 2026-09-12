@@ -63,7 +63,8 @@ def parse_chain(options: list, *, symbol: str, spot: float, asof: str,
         if dte <= 0:
             continue
         quotes.append(OptionQuote(expiry_days=dte, strike=float(o["strike"]),
-                                  kind=kind, bid=float(bid), ask=float(ask)))
+                                  kind=kind, bid=float(bid), ask=float(ask),
+                                  open_interest=int(o.get("open_interest") or 0)))
     return OptionChain(symbol=symbol, spot=spot, r=r, q=q, quotes=quotes, asof=asof)
 
 
