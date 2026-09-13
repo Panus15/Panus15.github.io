@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 45 test files · **476 tests, all green** · pure stdlib, no
+**Scale:** 46 test files · **494 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -256,6 +256,43 @@ APPLIED` on its face, because an optional safety check that can be skipped quiet
 is the same defect wearing a keyword argument. `tests/test_wiring.py` pins the call
 shape at every entry point — reachability was never the problem here, the ticket was
 reachable and *uninformed*.
+
+### 2.7b The page a human opens was leading with the disproven half
+
+The one study this repo has run on real market data **answered NO**: the sector
+quadrant predicted nothing (§7.1 of PREREGISTRATION.md, t=+0.71 on a test that
+charges no costs). That verdict is rendered honestly — and it was still the *first*
+thing on the page, while the half backed by oracle-tested machinery, the variance
+edge and the order it implies, printed only into a terminal. Ordering is not
+decoration: a reader acts on what is at the top.
+
+The dashboard now leads with **the options decision** — vol side, P vs Q, VRP, the
+fused size multiplier, and the order ticket itself with every leg, the limit, the
+dollar worst case and the evidence caveat — or, when no chain was supplied, with a
+panel that **says so and gives the command**. Rotation moved below it and keeps its
+own verdict. `tests/test_dashboard.py` pins the ordering, because the next person
+to add a section will not know it was a decision.
+
+The dashboard had **no tests at all** — 476 of them passed around the one file a
+human actually looks at — and it is the one module where a defect is invisible to
+Python. `TEMPLATE` is a non-raw triple-quoted string, so this line:
+
+```
+c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c])
+```
+
+shipped a bare quote to the browser, a syntax error that blanked **the entire
+page**, and every Python test still passed. Found by executing the page's own
+script in node, not by reading it. Two guards now: a portable test that no
+backslash survives in the template region (the root cause — Python eats it), and a
+`node --check` on the script the page actually ships, which runs where node exists
+and says plainly when it does not.
+
+Also found while testing it: the panel rounded `maxLossPerContract` and
+`maxLossTotal` **independently**, so the two numbers on screen did not multiply
+out. The payload now carries money unrounded and the page formats at display time.
+**12/13 mutants killed here; the 13th — dropping `decision=` — is killed by
+`tests/test_wiring.py`, which names the file and line.**
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -523,7 +560,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 476 tests, 45 files
+for t in tests/test_*.py; do python3 "$t"; done      # 494 tests, 46 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

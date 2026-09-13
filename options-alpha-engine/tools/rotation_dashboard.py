@@ -79,8 +79,117 @@ def demo_world(n: int = 1300, seed: int = 20260731):
                        for i in range(n + 1)]
 
 
+def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
+                  dte: int = 30, equity: float = 100_000.0,
+                  max_risk_frac: float = 0.02, ledger: str = "") -> dict:
+    """The OPTIONS decision, as JSON for the page — or a named reason it is absent.
+
+    Why this lives on the rotation dashboard at all. The one study this repo has
+    run on real market data answered NO (PREREGISTRATION.md §7.1): the sector
+    quadrant predicted nothing. So the page a human actually opens was leading
+    with its DISPROVEN signal while the half backed by oracle-tested machinery —
+    the variance edge, and the order it implies — printed only into a terminal.
+    That ordering teaches the reader to act on the wrong number.
+
+    Returns ``{"available": False, "reason": ..., "how": ...}`` when no chain was
+    supplied. Absence is rendered, never hidden: a panel that disappears when the
+    data is missing looks identical to one that had nothing to say.
+    """
+    if not chain_json:
+        return {"available": False,
+                "reason": "no option chain was supplied, so the variance edge — "
+                          "the only half of this engine backed by oracle-tested "
+                          "machinery — is not on this page",
+                "how": "python3 -m tools.run_live tradier --symbol SPX --dte 30 "
+                       "--dump spx.json, then pass --chain-json spx.json"}
+    if not os.path.exists(chain_json):
+        return {"available": False,
+                "reason": f"the chain file {chain_json!r} does not exist",
+                "how": "check the path, or re-dump it with run_live --dump"}
+    try:
+        from engine.adapters import JsonFileAdapter
+        from models.decision import build_decision
+        from models.spreads import scan_spreads
+        from models.ticket import build_ticket
+        from models.trade_card import build_card
+        from models.baseline import BaselineDensityForecaster
+        from tools.run_live import _settled_count
+
+        ad = JsonFileAdapter(price_json=price_json or None, chain_json=chain_json)
+        chain = ad.option_chain(symbol)
+        prices = ad.price_history(symbol) if price_json else []
+        if len(prices) < 30:
+            return {"available": False,
+                    "reason": f"only {len(prices)} price bars reached the forecaster "
+                              f"and the P density needs 30; a chain without history "
+                              f"gives a Q with nothing to compare it against",
+                    "how": "pass --price-json as well as --chain-json"}
+        forecaster = BaselineDensityForecaster()
+        listed = sorted({q.expiry_days for q in chain.quotes})
+        use_dte = min(listed, key=lambda d: abs(d - dte)) if listed else dte
+        card = build_card(chain, forecaster, prices, dte=use_dte)
+        decision = build_decision(card)
+        spreads = scan_spreads(chain, forecaster, prices, dte=use_dte)
+        best = max(spreads, key=lambda sp: sp.ev) if spreads else None
+        ticket = build_ticket(card, best, equity=equity,
+                              max_risk_frac=max_risk_frac, decision=decision,
+                              settled_trades=_settled_count(ledger),
+                              exit_rule="close at 50% of max profit, or at 7 DTE, "
+                                        "whichever comes first")
+    except (ValueError, KeyError, OSError, ZeroDivisionError, ArithmeticError,
+            IndexError) as e:
+        # A chain too sparse or too short-dated to price is a DATA outcome. The
+        # page says which, rather than rendering an empty box.
+        return {"available": False,
+                "reason": f"the chain could not be turned into a decision ({e})",
+                "how": "sparse or very short-dated chains fail coverage; try a "
+                       "30-45 DTE expiry on a liquid index"}
+    return {
+        "available": True,
+        "symbol": ticket.symbol or chain.symbol,
+        "asof": str(getattr(chain, "asof", "") or getattr(card, "asof", "") or ""),
+        "dte": use_dte,
+        "requestedDte": dte,
+        "volSide": card.vol_side,
+        "volReason": getattr(card, "vol_reason", ""),
+        "pVol": round(float(getattr(card, "p_vol", 0.0)), 4),
+        "qVol": round(float(getattr(card, "q_vol", 0.0)), 4),
+        "vrp": round(float(getattr(card, "vrp", 0.0)), 4),
+        "action": decision.action,
+        "sizeMultiplier": decision.size_multiplier,
+        "weakest": decision.weakest_evidence,
+        "inputs": [{"name": i.name, "reading": getattr(i, "reading", ""),
+                    "status": i.status, "effect": getattr(i, "effect", 1.0),
+                    "note": getattr(i, "note", "")} for i in decision.inputs],
+        "warnings": list(getattr(decision, "warnings", []) or []),
+        "placeable": ticket.placeable,
+        "structure": ticket.structure,
+        "expiryDate": ticket.expiry_date,
+        "contracts": ticket.contracts,
+        "uncappedContracts": ticket.uncapped_contracts,
+        # NOT rounded. Rounding per-contract and total independently makes the
+        # two numbers on screen fail to multiply out, and rounding the total up
+        # from a rounded per-contract can print a loss a cent over its own budget.
+        # The payload stays exact; the page formats to 2dp at display time.
+        "limitCredit": ticket.limit_credit,
+        "creditTotal": ticket.credit_total,
+        "maxLossPerContract": ticket.max_loss_per_contract,
+        "maxLossTotal": ticket.max_loss_total,
+        "equity": equity,
+        "maxRiskFrac": max_risk_frac,
+        "probProfit": round(float(ticket.prob_profit), 4),
+        "evPerContract": ticket.ev_per_contract,
+        "exitRule": ticket.exit_rule,
+        "evidence": ticket.evidence,
+        "legs": [{"side": l.side, "kind": l.kind, "strike": l.strike,
+                  "price": l.price} for l in ticket.legs],
+        "refusals": [{"code": c, "detail": d} for c, d in ticket.refusals],
+    }
+
+
 def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: int,
-                  tail: int, horizon: int, spark: int = 120, run_test: bool = True):
+                  tail: int, horizon: int, spark: int = 120, run_test: bool = True,
+                  options: dict | None = None):
     pts = rotation_map(px, bench, window=window, mom_lag=mom_lag, tail=tail)
     if not pts:
         raise SystemExit(f"no symbol has the {2 * window + mom_lag + tail} bars this "
@@ -118,6 +227,9 @@ def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: i
         "window": window, "momLag": mom_lag, "tail": tail, "horizon": horizon,
         "points": points,
         "test": None,
+        # Always a dict, never None: the options panel renders its own ABSENCE, so
+        # "no chain supplied" must reach the page rather than be falsy and skipped.
+        "options": options if options is not None else options_panel("", ""),
     }
 
     if run_test:
@@ -248,6 +360,55 @@ td.excess{white-space:nowrap}
 .section{margin-top:26px}
 .scroll{overflow-x:auto}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* --- options panel: the validated half, so it leads the page --- */
+#opt{margin-bottom:22px}
+#opt .verdict{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
+  margin:2px 0 14px}
+#opt .side{font:700 26px/1.1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-.02em}
+#opt .side.sell{color:var(--lead)}
+#opt .side.no{color:var(--ink-3)}
+#opt .side.buy{color:var(--improve)}
+#opt .mult{font-variant-numeric:tabular-nums;color:var(--ink-2);font-size:14px}
+#opt .why{color:var(--ink-2);font-size:13.5px;margin:0 0 16px;max-width:72ch}
+#opt .order{border:1px solid var(--edge);border-radius:10px;overflow:hidden;
+  background:var(--ground)}
+#opt .order > .hd{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;
+  padding:10px 14px;border-bottom:1px solid var(--edge);background:var(--panel)}
+#opt .order > .hd b{font-size:15px}
+#opt table.legs{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+#opt table.legs td{padding:7px 14px;border-bottom:1px solid var(--edge);font-size:13.5px}
+#opt table.legs tr:last-child td{border-bottom:0}
+#opt .sideTag{display:inline-block;min-width:48px;font-weight:700;font-size:11.5px;
+  letter-spacing:.06em;padding:2px 7px;border-radius:5px}
+#opt .sideTag.short{background:var(--lag-bg);color:var(--lag)}
+#opt .sideTag.long{background:var(--improve-bg);color:var(--improve)}
+#opt .nums{display:grid;gap:1px;background:var(--edge);
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-top:14px}
+#opt .nums div{background:var(--panel);padding:10px 13px}
+#opt .nums .k{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3)}
+#opt .nums .v{font:600 17px/1.3 ui-sans-serif,system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;margin-top:3px}
+#opt .refuse{border:1px solid var(--edge);border-left:3px solid var(--lag);
+  border-radius:8px;padding:12px 14px;background:var(--lag-bg)}
+#opt .refuse .code{font:700 11.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.04em;color:var(--lag)}
+#opt .refuse p{margin:2px 0 12px;font-size:13px;color:var(--ink-2);max-width:78ch}
+#opt .refuse p:last-child{margin-bottom:0}
+#opt .absent{border:1px dashed var(--edge);border-radius:8px;padding:14px;
+  color:var(--ink-2);font-size:13.5px;max-width:80ch}
+#opt .absent code{background:var(--ground);border:1px solid var(--edge);
+  border-radius:5px;padding:1px 6px;font-size:12.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+#opt ul.inp{list-style:none;margin:16px 0 0;padding:0;font-size:13px}
+#opt ul.inp li{display:flex;flex-wrap:wrap;gap:4px 10px;padding:7px 0;
+  border-top:1px solid var(--edge)}
+#opt ul.inp .nm{min-width:118px;font-weight:600}
+#opt ul.inp .rd{color:var(--ink-2);flex:1 1 220px}
+#opt ul.inp .st{font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-3);white-space:nowrap}
+#opt .ev{margin:14px 0 0;font-size:12.5px;color:var(--ink-3);max-width:80ch}
 </style>
 
 <div class="wrap">
@@ -265,6 +426,8 @@ td.excess{white-space:nowrap}
     <div><div class="k">Bars</div><div class="v num">@@BARS@@</div></div>
   </div>
 </header>
+
+<section class="card section" id="opt"></section>
 
 <div class="grid">
   <section class="card">
@@ -373,6 +536,89 @@ function drawBoard(){
 }
 
 /* ---------- the test ---------- */
+function esc(x){ return String(x==null?"":x).replace(/[&<>"]/g,
+  c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function money(x){ return (x<0?"-$":"$") + Math.abs(x).toLocaleString(undefined,
+  {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+function drawOptions(){
+  const o = DATA.options, el = document.getElementById("opt");
+  // The panel renders its own ABSENCE. Removing it would look identical to a
+  // panel that had nothing to say, which is the opposite of what is true: the
+  // variance edge is the one half of this engine with oracle-tested machinery
+  // behind it, and if it is missing the reader should be told why.
+  if(!o || !o.available){
+    el.innerHTML = `<header><h2>The options decision</h2>
+        <span class="eyebrow">not available</span></header>
+      <div class="absent"><b>This page is showing only the context signals.</b><br>
+        ${esc(o ? o.reason : "no options data reached this page")}.
+        <div style="margin-top:10px">To put it here: <code>${esc(o ? o.how : "")}</code></div>
+      </div>`;
+    return;
+  }
+  const sideCls = o.volSide==="SELL VOL" ? "sell" : (o.volSide==="BUY VOL" ? "buy" : "no");
+  const inputs = (o.inputs||[]).map(i=>`<li><span class="nm">${esc(i.name)}</span>
+      <span class="rd">${esc(i.reading)}</span>
+      <span class="st">${esc(i.status)}${i.effect<1 ? " &middot; x"+i.effect.toFixed(2) : ""}</span></li>`).join("");
+
+  let order;
+  if(o.placeable){
+    const legs = (o.legs||[]).map(l=>`<tr>
+        <td><span class="sideTag ${esc(l.side)}">${esc(l.side.toUpperCase())}</span></td>
+        <td>${esc(l.kind.toUpperCase())}</td>
+        <td class="r num">${l.strike.toFixed(2)}</td>
+        <td class="r num">${l.price.toFixed(2)}</td></tr>`).join("");
+    order = `<div class="order">
+        <div class="hd"><b>SELL ${o.contracts} &times; ${esc(o.structure)}</b>
+          <span class="eyebrow">${esc(o.symbol)} &middot; expires ${esc(o.expiryDate)}
+          (${o.dte}d)</span></div>
+        <table class="legs"><tbody>${legs}</tbody></table></div>
+      <div class="nums">
+        <div><div class="k">Limit, credit</div><div class="v" style="color:var(--lead)">
+          ${money(o.limitCredit)}<span style="font-size:12px;color:var(--ink-3)">
+          /contract</span></div></div>
+        <div><div class="k">Credit total</div><div class="v">${money(o.creditTotal)}</div></div>
+        <div><div class="k">Max loss, total</div><div class="v" style="color:var(--lag)">
+          ${money(o.maxLossTotal)}</div></div>
+        <div><div class="k">Risk budget</div><div class="v">${(o.maxRiskFrac*100).toFixed(1)}%
+          <span style="font-size:12px;color:var(--ink-3)">of
+          ${o.equity.toLocaleString()}</span></div></div>
+        <div><div class="k">P(profit)</div><div class="v">${(o.probProfit*100).toFixed(1)}%</div></div>
+        <div><div class="k">Model EV</div>
+          <div class="v" style="color:${o.evPerContract>=0?"var(--lead)":"var(--lag)"}">
+          ${o.evPerContract>=0?"+":""}${money(o.evPerContract)}</div></div>
+      </div>
+      ${o.exitRule ? `<p class="ev" style="color:var(--ink-2)"><b>Exit:</b>
+        ${esc(o.exitRule)}</p>` : ""}`;
+  }else{
+    order = `<div class="refuse">
+        <div class="eyebrow" style="color:var(--lag);margin-bottom:8px">No order &mdash;
+          refused, by name</div>
+        ${(o.refusals||[]).map(r=>`<div class="code">${esc(r.code)}</div>
+          <p>${esc(r.detail)}</p>`).join("")}
+      </div>`;
+  }
+
+  const cut = o.sizeMultiplier < 1
+    ? `size <b>&times;${o.sizeMultiplier.toFixed(2)}</b> after context`
+    : `size <b>&times;1.00</b> &mdash; nothing cut it`;
+  el.innerHTML = `<header><h2>The options decision</h2>
+      <span class="eyebrow">${esc(o.symbol)} &middot; ${o.dte}d${
+        o.dte!==o.requestedDte ? ` (asked ${o.requestedDte}d, snapped to a listed expiry)` : ""
+      }${o.asof ? " &middot; " + esc(o.asof) : ""}</span></header>
+    <div class="verdict">
+      <span class="side ${sideCls}">${esc(o.volSide)}</span>
+      <span class="mult">${cut}</span>
+      <span class="mult">P ${(o.pVol*100).toFixed(1)}% vs Q ${(o.qVol*100).toFixed(1)}%
+        &middot; VRP ${o.vrp>=0?"+":""}${(o.vrp*100).toFixed(2)} vol pts</span>
+    </div>
+    <p class="why">${esc(o.volReason)}</p>
+    ${order}
+    <ul class="inp">${inputs}</ul>
+    <p class="ev"><b>Evidence:</b> ${esc(o.evidence)}</p>
+    ${(o.warnings||[]).map(w=>`<p class="ev" style="color:var(--weak)">!! ${esc(w)}</p>`).join("")}`;
+}
+
 function drawTest(){
   const t = DATA.test, el = document.getElementById("testcard");
   if(!t){ el.remove(); return; }
@@ -478,7 +724,7 @@ function link(){
     const h=e.target.closest("[data-sym]"); if(h) set(h.getAttribute("data-sym"), true);});
 }
 
-drawRRG(); drawBoard(); drawTest(); drawSparks(); link();
+drawOptions(); drawRRG(); drawBoard(); drawTest(); drawSparks(); link();
 </script>
 """
 
@@ -520,6 +766,20 @@ def main(argv=None):
                     help="forward window the predictive test scores")
     ap.add_argument("--no-test", action="store_true",
                     help="skip the predictive test (renders the chart alone)")
+    ap.add_argument("--chain-json", dest="chain_json", default="",
+                    help="option chain (run_live --dump schema) — adds the OPTIONS "
+                         "decision and order ticket, the validated half of the engine")
+    ap.add_argument("--price-json", dest="price_json", default="",
+                    help="price history for the chain's underlying (needed for P)")
+    ap.add_argument("--symbol", default="", help="underlying inside --chain-json")
+    ap.add_argument("--dte", type=int, default=30, help="tenor for the options panel")
+    ap.add_argument("--equity", type=float, default=100_000.0,
+                    help="account equity the order ticket sizes against")
+    ap.add_argument("--max-risk-frac", dest="max_risk_frac", type=float, default=0.02,
+                    help="fraction of equity the ticket may put at MAXIMUM LOSS")
+    ap.add_argument("--ledger", default="",
+                    help="paper-trade ledger; its settled count is the ticket's "
+                         "evidence label (read from disk, never typed)")
     a = ap.parse_args(argv)
 
     if a.demo or not a.csv:
@@ -529,8 +789,12 @@ def main(argv=None):
     else:
         px, bench, dates = load_csv(a.csv)
 
+    opts = options_panel(a.chain_json, a.price_json, symbol=a.symbol, dte=a.dte,
+                         equity=a.equity, max_risk_frac=a.max_risk_frac,
+                         ledger=a.ledger)
     payload = build_payload(px, bench, dates, window=a.window, mom_lag=a.mom_lag,
-                            tail=a.tail, horizon=a.horizon, run_test=not a.no_test)
+                            tail=a.tail, horizon=a.horizon, run_test=not a.no_test,
+                            options=opts)
     # utf-8 explicitly: the page carries em dashes and Python would otherwise
     # write them in the machine's own codepage, which the browser has no way to
     # know about. A dashboard that renders as mojibake on a non-English Windows
@@ -541,6 +805,14 @@ def main(argv=None):
     if payload["test"]:
         print("  panel: " + payload["test"]["panelVerdict"])
         print("  book : " + payload["test"]["bookVerdict"])
+    o = payload["options"]
+    if o.get("available"):
+        print(f"  options: {o['action']} size x{o['sizeMultiplier']:.2f} -> "
+              + (f"{o['contracts']} x {o['structure']} "
+                 f"(risk {o['maxLossTotal']:,.0f})" if o["placeable"]
+                 else "REFUSED: " + ", ".join(r["code"] for r in o["refusals"])))
+    else:
+        print("  options: not on the page — " + o.get("reason", ""))
     return 0
 
 

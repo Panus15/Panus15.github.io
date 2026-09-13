@@ -11,7 +11,7 @@ python3 -m tools.quickstart
 ```
 
 It updates the checkout, downloads prices, renders the chart, opens it, and
-writes the two verdict lines to `RESULT.txt`. It runs every step **from its own
+writes the verdict lines to `RESULT.txt`. It runs every step **from its own
 folder**, so it does not matter where your shell is — and if the data step
 produces nothing it stops there and names the reason, instead of letting the
 next step die on a missing file.
@@ -23,12 +23,29 @@ downloads nothing:
 python3 -m tools.quickstart --demo
 ```
 
+**Put the OPTIONS decision on the page too.** Without a chain the dashboard can only
+show the context signals — and the one study this repo has run on real data answered
+NO for the sector quadrant, so a page with only that half is a page leading with its
+weakest number. It says so plainly rather than looking complete. Dump a chain once,
+then pass it:
+
+```bash
+python3 -m tools.run_live tradier --symbol SPX --dte 30 --dump spx.json
+python3 -m tools.quickstart --chain-json spx.json --price-json spx_px.json \
+        --symbol SPX --equity 250000 --ledger spx.jsonl
+```
+
+The page then leads with the vol side, P vs Q, the VRP, the fused size multiplier,
+and **the order itself** — every leg, the limit, the dollar worst case — or a named
+refusal. `--ledger` supplies the evidence label from the settled-trade count on
+disk; it is read, never typed.
+
 ## 0b. Everything else, no network, no installs
 
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 476 tests, 45 files
+for t in tests/test_*.py; do python3 "$t"; done   # 494 tests, 46 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

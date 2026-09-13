@@ -155,6 +155,17 @@ def main(argv=None):
     ap.add_argument("--base-url", default="", help="fetch from a local mirror")
     ap.add_argument("--csv", default="sectors.csv")
     ap.add_argument("--out", default="rotation.html")
+    ap.add_argument("--chain-json", dest="chain_json", default="",
+                    help="option chain (run_live --dump schema) — puts the OPTIONS "
+                         "decision and its order ticket on the page")
+    ap.add_argument("--price-json", dest="price_json", default="",
+                    help="price history for the chain's underlying")
+    ap.add_argument("--symbol", default="", help="underlying inside --chain-json")
+    ap.add_argument("--equity", type=float, default=100_000.0,
+                    help="account equity the order ticket sizes against")
+    ap.add_argument("--ledger", default="",
+                    help="paper-trade ledger; its settled count is the ticket's "
+                         "evidence label")
     a = ap.parse_args(argv)
     make_console_safe()
 
@@ -197,16 +208,32 @@ def main(argv=None):
               f"{dates[0]} .. {dates[-1]}")
 
     step(total, total, "building the dashboard")
-    payload = rotation_dashboard.build_payload(px, bench, dates, **PARAMS)
+    opts = rotation_dashboard.options_panel(
+        a.chain_json, a.price_json, symbol=a.symbol, equity=a.equity,
+        ledger=a.ledger)
+    payload = rotation_dashboard.build_payload(px, bench, dates, options=opts,
+                                               **PARAMS)
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(rotation_dashboard.render(payload))
     print(f"  wrote {a.out}  ({len(payload['points'])} sectors, "
           f"{payload['bars']} bars)")
 
     lines = []
+    o = payload["options"]
+    if o.get("available"):
+        lines.append("options: " + (
+            f"{o['action']} size x{o['sizeMultiplier']:.2f} -> {o['contracts']} x "
+            f"{o['structure']}, risk {o['maxLossTotal']:,.0f} of "
+            f"{o['maxRiskFrac'] * o['equity']:,.0f}" if o["placeable"]
+            else f"{o['action']} -> REFUSED: "
+                 + ", ".join(r["code"] for r in o["refusals"])))
+    else:
+        # Said out loud rather than left off: the validated half being absent is
+        # the most important thing about a page that is only showing context.
+        lines.append("options: NOT ON THIS PAGE — " + o.get("reason", ""))
     if payload["test"]:
         t = payload["test"]
-        lines = ["panel: " + t["panelVerdict"], "book : " + t["bookVerdict"]]
+        lines += ["panel: " + t["panelVerdict"], "book : " + t["bookVerdict"]]
         with open(os.path.join(here, RESULT), "w", encoding="utf-8") as fh:
             fh.write(result_report(payload, demo=a.demo,
                                    span=(dates[0], dates[-1]) if dates else None))
