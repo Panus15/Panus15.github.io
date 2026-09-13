@@ -45,7 +45,7 @@ disk; it is read, never typed.
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 494 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done   # 509 tests, 46 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

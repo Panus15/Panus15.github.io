@@ -134,6 +134,8 @@ absent from the listed market must not read as a small participant in it.
 | `cvar_limit` | 0.03 | 3% of equity at the CVaR shock |
 | `max_drawdown` | 0.25 | kill-switch, checked intra-trade — but it has NEVER FIRED at this level on any path measured, so it is an untested control rather than a demonstrated one (§4.7) |
 | `max_net_short_vega` | 8,000 | governor cap |
+| `take_profit_frac` | 0.50 | the exit rule the ticket recommends; a retail convention adopted as-is, not fitted (§4.8) |
+| `min_dte_remaining` | 7 | time stop on the same rule; default OFF in the harness so pre-rule numbers stand |
 | gates enabled | regime + macro + **events** | events was previously off in every run |
 
 **Primary question.** On the forward paper-trade ledger only — not on any
@@ -219,6 +221,19 @@ Stated up front so they are not later presented as surprises.
    CVaR limit and the vega cap, and that the kill-switch behind them is
    unexercised. Measured in `tests/test_hedged_backtest.py`, tabulated in
    PIPELINE.md §2.7.
+8. **The management rule was recommended without ever being measured.** Every
+   order ticket advised "close at 50% of max profit, or at 7 DTE" while
+   `engine/spread_backtest.py` held every spread to expiry, so every reported
+   Sharpe, worst trade and return described a strategy the screen did not
+   recommend. **FIXED** — the rule is implemented, default off so prior numbers
+   stand, and measured paired with the closing cost charged. The finding is mixed
+   and is recorded as such: the tail improves on **10/10** paths (worst trade −634
+   → −505) and drawdown on 7/10, returns are **noise** (6/10, bootstrap interval
+   spans zero at every closing cost from 1.5% to 12%), and **Sharpe is worse on
+   9/10** because the fixture's mean is negative and cutting dispersion makes
+   mean ÷ sd more negative. This is NOT a walk-forward-selected parameter: 0.50
+   and 7 DTE are conventional retail defaults adopted as-is, and they are now
+   locked here like everything else in §2 (PIPELINE.md §2.7c).
 
 ## §5 — Order of execution
 

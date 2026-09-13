@@ -113,6 +113,27 @@ def test_every_internal_exemption_carries_a_reason():
     assert not blank, f"exemptions without a reason: {blank}"
 
 
+def test_no_entry_point_hardcodes_the_exit_rule():
+    """The rule on the screen and the rule in the harness must be one string. They
+    were not: models/ticket.py advised "close at 50% of max profit, or at 7 DTE"
+    and engine/spread_backtest.py held every spread to expiry, so every reported
+    Sharpe, worst trade and return described a strategy the screen did not
+    recommend. A literal copy anywhere lets them drift apart again."""
+    bad = []
+    for entry in ENTRY_POINTS:
+        path = os.path.join(ROOT, entry)
+        files = ([path] if os.path.isfile(path)
+                 else [os.path.join(path, f) for f in sorted(os.listdir(path))
+                       if f.endswith(".py")])
+        for f in files:
+            for n, line in enumerate(io.open(f, encoding="utf-8"), 1):
+                if "exit_rule=" in line and "max profit" in line:
+                    bad.append(f"{os.path.relpath(f, ROOT)}:{n}")
+    assert not bad, ("exit_rule spelled out literally at " + ", ".join(bad)
+                     + " — use engine.spread_backtest.EXIT_RULE_TEXT so the "
+                       "recommendation cannot drift from the measurement")
+
+
 def test_every_order_ticket_is_built_from_the_fused_decision():
     """Import-level wiring was never the problem for models/ticket.py — it was
     reachable from demo.py the whole time. It was reachable and UNINFORMED: it

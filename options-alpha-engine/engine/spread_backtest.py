@@ -40,6 +40,27 @@ so against a book that can hedge continuously, the wings are a pure cost. They
 earn their price exactly where the hedge fails: gaps, weekends, illiquidity, an
 account too small to rebalance. Buy them for the risk you cannot hedge, not for
 the risk you can.
+
+MANAGING THE TRADE, which the engine was RECOMMENDING without ever measuring.
+`models/ticket.py` printed "close at 50% of max profit, or at 7 DTE, whichever
+first" on every order. Nothing in this repo implemented that rule — this harness
+held every spread to expiry — so the Sharpe, the worst trade and the return being
+reported described a DIFFERENT strategy from the one the screen advised. Now the
+rule exists (``take_profit_frac`` / ``min_dte_remaining``, default off so every
+previously published number is unchanged) and it has been measured, paired per
+trade, with the round trip to close charged:
+
+    cost to close   mean diff / trade   90% interval      sd held -> managed
+            1.5%              +6.45     [-5.20, +18.99]     213.7 -> 133.5
+            5.0%              +2.87     [-8.88, +15.57]     213.7 -> 138.0
+           12.0%              -4.29     [-16.35,  +8.36]    213.7 -> 146.9
+
+480 trades over eight paths. **The P&L advantage is noise at every closing cost**
+— the interval spans zero throughout and the mean changes sign around 8%. What the
+rule does do is cut the DISPERSION by 31-37% and the worst single trade from -1,090
+to -830..-923, and both of those survive a 12% cost to close. So the rule is worth
+recommending, but for variance and not for return, and saying "it makes more money"
+would be unsupported by anything here.
 """
 
 from __future__ import annotations
@@ -120,6 +141,54 @@ def mark_spread_daily(spread, prices, t, dte, *, r, q, commission=0.65):
     return day
 
 
+#: The management rule the order ticket recommends, in one place, so the text on
+#: the screen and the rule in the harness cannot drift apart.
+TAKE_PROFIT_FRAC = 0.50
+MIN_DTE_REMAINING = 7
+EXIT_RULE_TEXT = (f"close at {TAKE_PROFIT_FRAC:.0%} of max profit, or at "
+                  f"{MIN_DTE_REMAINING} DTE, whichever comes first")
+
+
+def apply_exit_rule(marked: dict, spread, t: int, dte: int, *,
+                    take_profit_frac: float | None = TAKE_PROFIT_FRAC,
+                    min_dte_remaining: int | None = MIN_DTE_REMAINING,
+                    close_spread_frac: float = 0.015,
+                    commission: float = 0.65):
+    """Re-book one trade's daily series under an early-exit rule.
+
+    Returns ``(series, exit_bar, reason)`` where reason is 'profit', 'time' or
+    'expiry'. Either threshold may be None to disable that half.
+
+    THE CLOSING COST IS THE WHOLE TRADE-OFF, so it is charged rather than assumed
+    away. A spread held to expiry settles for nothing; one closed early is bought
+    back across its bid/ask, and the position still carries value equal to the
+    profit NOT yet taken. Omitting that cost is how a management rule measures as
+    free money.
+    """
+    mult = getattr(spread, "contract_mult", 100.0) or 100.0
+    max_gain = mult * float(getattr(spread, "max_gain", 0.0) or 0.0)
+    bars = sorted(marked)
+    if not bars:
+        return dict(marked), None, "expiry"
+    cum = 0.0
+    for bar in bars:
+        cum += marked[bar]
+        remaining = t + dte - bar
+        if bar == t or remaining <= 0:
+            continue               # cannot close on the open, nor after it settles
+        hit_profit = (take_profit_frac is not None and max_gain > 0
+                      and cum >= take_profit_frac * max_gain)
+        hit_time = min_dte_remaining is not None and remaining <= min_dte_remaining
+        if not (hit_profit or hit_time):
+            continue
+        residual = max(max_gain - cum, 0.0)
+        cost = close_spread_frac * residual + commission * len(spread.legs)
+        out = {b: marked[b] for b in bars if b <= bar}
+        out[bar] = out[bar] - cost
+        return out, bar, ("profit" if hit_profit else "time")
+    return dict(marked), bars[-1], "expiry"
+
+
 @dataclass
 class SpreadBacktestResult:
     metrics: backtest.BacktestResult
@@ -134,10 +203,12 @@ class SpreadBacktestResult:
     n_naked: int = 0                   # comparison straddles actually sold
     skip_reasons: dict = field(default_factory=dict)
     trades: list = field(default_factory=list)
+    exit_reasons: dict = field(default_factory=dict)
+    exit_rule: str = "held to expiry"
 
     def summary(self) -> str:
         skips = "; ".join(f"{k}:{v}" for k, v in self.skip_reasons.items()) or "none"
-        out = [f"Defined-risk spreads, held to expiry (unhedged by design)",
+        out = [f"Defined-risk spreads, {self.exit_rule} (unhedged by design)",
                f"  periods={self.n_periods} sold={self.n_sold} (skips: {skips})",
                f"  worst trade {self.worst_trade:>+12,.2f}   "
                f"best {self.best_trade:>+12,.2f}   "
@@ -193,12 +264,19 @@ def run_spread_backtest(
     min_ev: float = 0.0, starting_equity: float = 100_000.0,
     always_sell: bool = False, event_at=None, compare_naked: bool = True,
     hedge_bps: float = 5e-4, spread_frac: float = 0.015,
+    take_profit_frac: float | None = None, min_dte_remaining: int | None = None,
+    close_spread_frac: float = 0.015,
 ) -> SpreadBacktestResult:
     """Walk-forward, non-overlapping. Sells one defined-risk structure per period.
 
     ``structure`` is 'iron_condor' or 'put_credit_spread'. Entry requires the model
     EV to clear ``min_ev`` unless ``always_sell``; the EV is computed from the
     physical density on trailing prices only, so the gate is walk-forward.
+
+    ``take_profit_frac`` / ``min_dte_remaining`` apply the management rule the order
+    ticket recommends. Both default to None — HELD TO EXPIRY — so every number
+    published before this parameter existed is reproduced exactly. Pass
+    ``TAKE_PROFIT_FRAC`` / ``MIN_DTE_REMAINING`` to measure the recommended rule.
     """
     from models import spreads
 
@@ -209,6 +287,7 @@ def run_spread_backtest(
     pnl = [0.0] * n
     naked_pnl = [0.0] * n
     skips: dict[str, int] = {}
+    exits: dict[str, int] = {}
     trades: list = []
     n_periods = n_sold = n_capped = n_naked = 0
     worst = best = None
@@ -257,6 +336,16 @@ def run_spread_backtest(
             _skip("unmarkable")           # a leg's IV could not be recovered
             t += dte
             continue
+        if take_profit_frac is not None or min_dte_remaining is not None:
+            marked, _bar, why = apply_exit_rule(
+                marked, sp, t, dte, take_profit_frac=take_profit_frac,
+                min_dte_remaining=min_dte_remaining,
+                close_spread_frac=close_spread_frac, commission=commission)
+            exits[why] = exits.get(why, 0) + 1
+            # the trade's realised P&L is now the managed one, not the terminal
+            # payoff — reporting the terminal figure here is how a harness ends up
+            # describing a strategy it did not run
+            realised = sum(marked.values())
         for s, pv in marked.items():
             pnl[s] += pv
         n_sold += 1
@@ -295,5 +384,12 @@ def run_spread_backtest(
         max_loss_budgeted=budgeted, naked=naked,
         naked_worst=naked_worst if naked_worst is not None else 0.0,
         n_capped=n_capped, n_naked=n_naked,
-        skip_reasons=skips, trades=trades,
+        skip_reasons=skips, trades=trades, exit_reasons=exits,
+        exit_rule=("held to expiry" if not exits else
+                   (f"take {take_profit_frac:.0%} of max profit"
+                    if take_profit_frac is not None else "")
+                   + (" or " if take_profit_frac is not None
+                      and min_dte_remaining is not None else "")
+                   + (f"close at {min_dte_remaining} DTE"
+                      if min_dte_remaining is not None else "")),
     )

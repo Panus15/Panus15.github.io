@@ -278,6 +278,7 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
         # models/ticket.py. Refusal is the common and correct outcome at retail
         # size, and it is printed by name.
         try:
+            from engine import spread_backtest
             from models.spreads import scan_spreads
             from models.ticket import build_ticket
             spreads = scan_spreads(chain, forecaster, prices, dte=dte)
@@ -285,8 +286,7 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             ticket = build_ticket(
                 card, best, equity=equity, max_risk_frac=max_risk_frac,
                 decision=decision, settled_trades=settled_trades,
-                exit_rule="close at 50% of max profit, or at 7 DTE, "
-                          "whichever comes first")
+                exit_rule=spread_backtest.EXIT_RULE_TEXT)
             report["ticket"] = {
                 "placeable": ticket.placeable,
                 "structure": ticket.structure,

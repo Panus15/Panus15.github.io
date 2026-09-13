@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 46 test files · **494 tests, all green** · pure stdlib, no
+**Scale:** 46 test files · **509 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -293,6 +293,51 @@ Also found while testing it: the panel rounded `maxLossPerContract` and
 out. The payload now carries money unrounded and the page formats at display time.
 **12/13 mutants killed here; the 13th — dropping `decision=` — is killed by
 `tests/test_wiring.py`, which names the file and line.**
+
+### 2.7c The engine was recommending a rule it had never measured
+
+Every order ticket printed **"close at 50% of max profit, or at 7 DTE, whichever
+comes first"**. Nothing in the repo implemented it — `engine/spread_backtest.py`
+held every spread to expiry. So the Sharpe, the worst trade and the return being
+reported described a *different strategy* from the one on the screen, and the gap
+was invisible because each half was internally consistent.
+
+The rule now exists (`take_profit_frac` / `min_dte_remaining`, default **off**, so
+every previously published number is reproduced exactly) and has been measured
+paired per trade with the round trip to close charged — a management rule measured
+without its closing cost reads as free money:
+
+| cost to close | mean diff / trade | 90% interval | sd held → managed |
+|---|---|---|---|
+| 1.5% | +6.45 | [−5.20, +18.99] | 213.7 → 133.5 |
+| 5.0% | +2.87 | [−8.88, +15.57] | 213.7 → 138.0 |
+| 12.0% | **−4.29** | [−16.35, +8.36] | 213.7 → 146.9 |
+
+**The P&L advantage is noise at every closing cost** — the interval spans zero
+throughout and the mean changes sign around 8%. Through the full harness over 10
+paths:
+
+| metric | held | managed | managed better on |
+|---|---|---|---|
+| total return | −1.92% | −1.58% | 6/10 |
+| **worst trade** | −634 | **−505** | **10/10** |
+| max drawdown | −2.87% | −2.05% | 7/10 |
+| **Sharpe** | −0.61 | **−0.87** | **1/10** |
+
+So the rule **reliably cuts the tail** (unanimous on the worst trade, 20% better)
+and usually cuts drawdown, **does not change returns**, and **makes Sharpe worse
+almost always**. That last row is the one worth understanding rather than
+explaining away: Sharpe is mean ÷ sd, the fixture's mean is negative, so cutting
+dispersion makes the ratio *more* negative. **Variance reduction flatters nothing
+on a strategy that loses money**, and anyone citing Sharpe to justify managing a
+trade here would be reading the arithmetic backwards.
+
+One constant now carries the rule (`EXIT_RULE_TEXT`), and `tests/test_wiring.py`
+fails if any entry point spells it out again — that is how the recommendation and
+the measurement drifted apart in the first place. **13/13 mutants killed**, after a
+first sweep where **7 of 13 survived**: the tests had exercised the rule through
+one real trade, which happened to exit on time and never once touched the profit
+target. Deterministic constructed series replaced it.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -560,7 +605,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 494 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done      # 509 tests, 46 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

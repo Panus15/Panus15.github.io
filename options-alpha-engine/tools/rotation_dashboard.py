@@ -107,6 +107,7 @@ def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
                 "reason": f"the chain file {chain_json!r} does not exist",
                 "how": "check the path, or re-dump it with run_live --dump"}
     try:
+        from engine import spread_backtest
         from engine.adapters import JsonFileAdapter
         from models.decision import build_decision
         from models.spreads import scan_spreads
@@ -134,8 +135,7 @@ def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
         ticket = build_ticket(card, best, equity=equity,
                               max_risk_frac=max_risk_frac, decision=decision,
                               settled_trades=_settled_count(ledger),
-                              exit_rule="close at 50% of max profit, or at 7 DTE, "
-                                        "whichever comes first")
+                              exit_rule=spread_backtest.EXIT_RULE_TEXT)
     except (ValueError, KeyError, OSError, ZeroDivisionError, ArithmeticError,
             IndexError) as e:
         # A chain too sparse or too short-dated to price is a DATA outcome. The
