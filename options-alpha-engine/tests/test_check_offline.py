@@ -134,6 +134,61 @@ def test_the_runner_counts_only_real_tests_in_this_file():
                        f"import them under a name that does not start with test_")
 
 
+_URL_FETCHER = "\n".join([
+    "import sys, urllib.request",
+    "def test_fetches_a_vendor():",
+    "    try:",
+    '        urllib.request.urlopen("https://query1.finance.yahoo.com/", timeout=2)',
+    "    except Exception:",
+    "        pass                      # swallowed, exactly as fetch_prices does",
+    "def _run_all():",
+    '    test_fetches_a_vendor(); print("PASS test_fetches_a_vendor"); return 0',
+    'if __name__ == "__main__":',
+    "    sys.exit(1 if _run_all() else 0)",
+    "",
+])
+
+
+def test_a_vendor_url_is_refused_even_behind_a_local_proxy():
+    """Refusing by socket ADDRESS alone is blind on any machine that routes through
+    a local HTTP proxy: the connect target is loopback and the real host never
+    appears. That is precisely how a test fetching twelve symbols from Yahoo and
+    Stooq looked clean in a proxied sandbox and was caught only on CI. The URL is
+    where the intent is, so it is refused there too."""
+    rel = _write(_URL_FETCHER)
+    try:
+        bad = check([rel])
+        assert len(bad) == 1, "a vendor URL was not refused"
+        path, rc, hits, lines = bad[0]
+        assert hits >= 1, lines
+        assert any("query1.finance.yahoo.com" in l for l in lines), lines
+    finally:
+        os.remove(os.path.join(ROOT, rel))
+
+
+def test_a_file_url_is_not_treated_as_a_vendor():
+    """`tools/archive_holdings.py` is tested against `file:///...` sources, which
+    touch no network at all. Refusing those would punish the offline fixture."""
+    body = "\n".join([
+        "import os, sys, tempfile, urllib.request",
+        "def test_reads_a_local_file():",
+        "    fd, p = tempfile.mkstemp(suffix='.csv'); os.close(fd)",
+        "    open(p, 'w').write('a,b\\n1,2\\n')",
+        "    urllib.request.urlopen('file://' + p).read()",
+        "    os.remove(p)",
+        "def _run_all():",
+        "    test_reads_a_local_file(); print('PASS test_reads_a_local_file'); return 0",
+        "if __name__ == '__main__':",
+        "    sys.exit(1 if _run_all() else 0)",
+        "",
+    ])
+    rel = _write(body)
+    try:
+        assert check([rel]) == [], "a file:// read was reported as a vendor call"
+    finally:
+        os.remove(os.path.join(ROOT, rel))
+
+
 def test_a_swallowed_refusal_is_still_caught():
     """The subtler offence: a test that reaches a vendor, catches the error and
     passes anyway. It exits 0, so the exit status alone would miss it, and the

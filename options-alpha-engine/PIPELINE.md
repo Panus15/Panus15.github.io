@@ -4,11 +4,11 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 47 test files · **554 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **556 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
-of PASS lines for work that did not happen, so a stdlib machine runs 554 and CI —
-which installs numpy on purpose — runs **564**. `tests/test_wiring.py` fails if this
+of PASS lines for work that did not happen, so a stdlib machine runs 556 and CI —
+which installs numpy on purpose — runs **566**. `tests/test_wiring.py` fails if this
 sentence stops matching the tree, and `tools/check_offline.py` proves every file
 passes with the network denied.
 
@@ -481,6 +481,50 @@ depending on whether the machine it runs on happens to have access. Verified bot
 ways: the guard blocks and restores, and running the old style of call under it turns
 the hidden access into `AssertionError: this test reached the network`.
 
+Then the obvious question: **is anything else doing this?** `tools/check_offline.py`
+answers it by re-running every file with external connections denied. It is a CI step
+now, because the runner is where a network actually exists and therefore where the
+check means anything — and on its first CI run it immediately found one more:
+
+> `tests/test_daily.py   exit 0, 24 external attempt(s)`
+> `EXTERNAL NETWORK: create_connection to query1.finance.yahoo.com`
+
+A test named *"the day's capture must survive one vendor being down"* was **really
+downloading all twelve symbols from Yahoo and Stooq**, and passing either way, because
+it only asserts that both steps were attempted. It had been doing that since it was
+written, in the suite and on every CI run. The vendor is now taken down *in* the test
+rather than hoped to be down, which makes it mean what its name says.
+
+That run also exposed a blind spot in the checker itself, and in the `_no_network()`
+guard: both refused `socket.socket` and `urlopen` but not **`socket.create_connection`**,
+which is what `http.client` actually calls — so the fetch walked straight past a
+context manager whose entire job was to stop it. And refusing by socket *address* is
+useless on a machine routing through a local HTTP proxy, because the connect target is
+then loopback and the real host never appears — which is exactly why the dev sandbox
+called this file clean while CI did not. The shim refuses at the **URL** layer too,
+where the intent is visible, and with that it reproduces CI's finding locally. `file://`
+stays allowed: `test_archive_holdings.py` reads fixtures that way and touches no network.
+
+Loopback stays open deliberately. A blunt socket block also fails
+`test_fetch_prices.py`, `test_archive_holdings.py` and `test_quickstart.py`, which
+stand up local HTTP servers — the correct way to test a fetcher offline — so blocking
+them would punish the right pattern.
+
+Two more things the checker got wrong before it was right, both found by testing the
+checker itself:
+
+- Its own test **probes an external host on purpose** to prove the shim refuses, and
+  `main()` relays that child's output, which the outer run then counted as the file's
+  own offence. One named exemption, carrying a reason, waives the *counter* — never
+  the exit status.
+- It claimed to catch a test that reaches a vendor, **swallows the error and passes
+  anyway**. It could not: the exception carries the message, so catching it erased the
+  only evidence, and the probe came back with 0 attempts and a clean exit. The shim now
+  writes each refusal to stderr **before** raising. That is the subtler offence of the
+  two, and it is the exact shape of what CI then found — `exit 0, 24 external attempts`.
+
+**All 47 files pass.**
+
 ### 2.7i The one study that could finish in an afternoon could not run at all
 
 `tools/oi_share.py` exists to answer the crowding premise in a day instead of
@@ -803,7 +847,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 554 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done      # 556 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

@@ -50,6 +50,41 @@ def _archive(root, fund, days):
             fh.write(ROWS)
 
 
+def _no_network():
+    """Any test below that reaches a vendor fails loudly instead of depending on
+    whether this machine happens to have outbound access.
+
+    This is the guard the three rewritten tests needed. They called `daily.run`,
+    which fetches prices and records a live ledger entry; in a blocked sandbox
+    those steps failed and the tests passed BY ACCIDENT, and in CI they succeeded
+    and clobbered the very fixtures the tests had written.
+    """
+    import socket
+    import urllib.request
+
+    def _boom(*a, **kw):
+        raise AssertionError("this test reached the network")
+
+    # create_connection too. Without it this guard missed the case CI found:
+    # `http.client` reaches the vendor through `socket.create_connection`, not
+    # through `socket.socket`, so a run that fetched 12 symbols from Yahoo and
+    # Stooq walked straight past a context manager whose whole job was to stop it.
+    saved = (socket.socket, socket.create_connection, urllib.request.urlopen)
+    socket.socket = _boom
+    socket.create_connection = _boom
+    urllib.request.urlopen = _boom
+
+    class _Restore:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            (socket.socket, socket.create_connection,
+             urllib.request.urlopen) = saved
+            return False
+    return _Restore()
+
+
 def test_a_failing_step_is_caught_and_reported_not_raised():
     def boom():
         raise RuntimeError("vendor down")
@@ -84,18 +119,28 @@ def test_a_clean_exit_zero_still_counts_as_success():
 
 
 def test_one_broken_step_does_not_cost_the_others():
-    """The day's capture must survive one vendor being down."""
+    """The day's capture must survive one vendor being down.
+
+    The vendor is taken down HERE rather than hoped to be down. This test used to
+    call the real fetcher and reach Yahoo and Stooq for all twelve symbols — 24
+    outbound connections per run — and passed either way, because it only asserts
+    the steps were ATTEMPTED. In a sandbox with no egress that looked like the
+    scenario it describes; on CI it was a live download. Denying the network makes
+    the failure deterministic and makes the test mean what its name says."""
     d = tempfile.mkdtemp()
     try:
         # holdings points at a real dir with unreachable sources -> that step fails
         srcs = os.path.join(d, "src.json")
         with open(srcs, "w") as fh:
             json.dump({"NOPE": "file:///definitely/not/here.csv"}, fh)
-        rows = run(_cfg(holdings=os.path.join(d, "h"), sources=srcs,
-                        prices=os.path.join(d, "p.csv")))
+        with _no_network():
+            rows = run(_cfg(holdings=os.path.join(d, "h"), sources=srcs,
+                            prices=os.path.join(d, "p.csv")))
         names = [r["step"] for r in rows]
         assert "fund holdings" in names and "price basket" in names, names
         assert len(rows) == 2, "every configured step must be attempted"
+        prices = [r for r in rows if r["step"] == "price basket"][0]
+        assert not prices["ok"], "the vendor was denied; the step must report that"
     finally:
         shutil.rmtree(d)
 
@@ -412,34 +457,6 @@ def test_the_wrapper_enters_the_repo_before_running():
 # --------------------------------------------------------------------------
 # The dashboard step — the clocks are only visible on the page
 # --------------------------------------------------------------------------
-
-def _no_network():
-    """Any test below that reaches a vendor fails loudly instead of depending on
-    whether this machine happens to have outbound access.
-
-    This is the guard the three rewritten tests needed. They called `daily.run`,
-    which fetches prices and records a live ledger entry; in a blocked sandbox
-    those steps failed and the tests passed BY ACCIDENT, and in CI they succeeded
-    and clobbered the very fixtures the tests had written.
-    """
-    import socket
-    import urllib.request
-
-    def _boom(*a, **kw):
-        raise AssertionError("this test reached the network")
-
-    saved = (socket.socket, urllib.request.urlopen)
-    socket.socket, urllib.request.urlopen = _boom, _boom
-
-    class _Restore:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            socket.socket, urllib.request.urlopen = saved
-            return False
-    return _Restore()
-
 
 def test_the_run_includes_a_dashboard_step_when_one_is_configured():
     """Only the dashboard is configured, so nothing here touches a vendor."""

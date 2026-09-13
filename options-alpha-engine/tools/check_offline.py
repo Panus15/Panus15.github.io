@@ -84,6 +84,26 @@ def _create(addr, *a, **kw):
     return _real_create(addr, *a, **kw)
 
 socket.socket, socket.create_connection = _Sock, _create
+
+# AND at the URL layer. Refusing by socket ADDRESS alone is blind on any machine
+# that routes through a local HTTP proxy: the connect target is then loopback and
+# the real host never appears. That is exactly how a test fetching twelve symbols
+# from Yahoo and Stooq looked clean in a proxied sandbox and was caught only on CI.
+# urllib is what every fetcher here uses, and the URL is where the intent is.
+import urllib.parse, urllib.request
+_real_urlopen = urllib.request.urlopen
+
+def _urlopen(url, *a, **kw):
+    target = getattr(url, "full_url", url)
+    if isinstance(target, str):
+        host = urllib.parse.urlsplit(target).hostname
+        if target.startswith("file:"):
+            return _real_urlopen(url, *a, **kw)
+        if not _is_local(host):
+            _refuse("urlopen", host)
+    return _real_urlopen(url, *a, **kw)
+
+urllib.request.urlopen = _urlopen
 sys.argv = [sys.argv[1]]
 runpy.run_path(sys.argv[0], run_name="__main__")
 '''
