@@ -413,41 +413,96 @@ def test_the_wrapper_enters_the_repo_before_running():
 # The dashboard step — the clocks are only visible on the page
 # --------------------------------------------------------------------------
 
-def test_the_run_renders_the_dashboard_from_what_it_captured():
+def _no_network():
+    """Any test below that reaches a vendor fails loudly instead of depending on
+    whether this machine happens to have outbound access.
+
+    This is the guard the three rewritten tests needed. They called `daily.run`,
+    which fetches prices and records a live ledger entry; in a blocked sandbox
+    those steps failed and the tests passed BY ACCIDENT, and in CI they succeeded
+    and clobbered the very fixtures the tests had written.
+    """
+    import socket
+    import urllib.request
+
+    def _boom(*a, **kw):
+        raise AssertionError("this test reached the network")
+
+    saved = (socket.socket, urllib.request.urlopen)
+    socket.socket, urllib.request.urlopen = _boom, _boom
+
+    class _Restore:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            socket.socket, urllib.request.urlopen = saved
+            return False
+    return _Restore()
+
+
+def test_the_run_includes_a_dashboard_step_when_one_is_configured():
+    """Only the dashboard is configured, so nothing here touches a vendor."""
     import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, _no_network():
         out = os.path.join(tmp, "page.html")
-        steps = daily.run(_cfg(holdings="", dashboard=out))
-        names = [st["step"] for st in steps]
-        assert "dashboard" in names, names
-        st = [x for x in steps if x["step"] == "dashboard"][0]
-        assert st["ok"], st["detail"]
-        assert os.path.exists(out)
+        steps = daily.run(_cfg(holdings="", ledger="", prices="", dashboard=out))
+        assert [st["step"] for st in steps] == ["dashboard"], steps
+        assert steps[0]["ok"], steps[0]["detail"]
         page = io.open(out, encoding="utf-8").read()
         assert page.lstrip().startswith("<!doctype html>")
         assert "@@" not in page, "an unfilled template token reached the page"
         assert 'id="fwd"' in page and 'id="opt"' in page
-        assert "0 recorded" in st["detail"], st["detail"]
+        assert "0 recorded" in steps[0]["detail"], steps[0]["detail"]
 
 
-def test_the_dashboard_renders_even_when_the_capture_produced_nothing():
+def test_the_dashboard_falls_back_to_the_fixture_when_no_basket_exists():
     """A page reading "0 settled" is the honest state and is more use than no
-    page. A step that only works on a complete capture would stop drawing exactly
-    when the operator most needs to see where the clocks stand."""
+    page. Rendered directly: making the price STEP fail to reach this condition is
+    what made the old test depend on a broken network."""
     import tempfile
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, _no_network():
         out = os.path.join(tmp, "page.html")
-        steps = daily.run(_cfg(holdings="", prices=os.path.join(tmp, "nope.csv"),
-                               dashboard=out))
-        prices = [x for x in steps if x["step"] == "price basket"][0]
-        dash = [x for x in steps if x["step"] == "dashboard"][0]
-        assert not prices["ok"], "the fixture is meant to fail the price step"
-        assert dash["ok"], dash["detail"]
-        assert "FIXTURE" in dash["detail"], dash["detail"]
+        cfg = _cfg(holdings="", ledger="", dashboard=out)
+        cfg["prices"] = os.path.join(tmp, "never-fetched.csv")
+        detail = daily.render_dashboard(cfg)
+        assert "FIXTURE" in detail, detail
+        assert os.path.exists(out)
 
 
-def test_the_dashboard_step_reports_the_ledger_counts_it_drew():
-    """So the operator sees the clock move in the run log, not only in a browser."""
+def test_a_real_price_basket_is_used_rather_than_the_fixture():
+    """Falling back to the generated world when a real CSV exists would draw
+    invented prices while labelling nothing — the most misleading thing this job
+    could produce."""
+    import tempfile
+    from tools import rotation_dashboard as rd
+    with tempfile.TemporaryDirectory() as tmp, _no_network():
+        px, bench, dates = rd.demo_world(n=700)
+        cols = dict(px)
+        cols[rd.BENCHMARK] = bench      # load_csv needs the benchmark column too
+        syms = sorted(cols)
+        csv = os.path.join(tmp, "sectors.csv")
+        with io.open(csv, "w", encoding="utf-8") as fh:
+            fh.write("date," + ",".join(syms) + "\n")
+            for i, d in enumerate(dates):
+                fh.write(d + "," + ",".join(f"{cols[sy][i]:.4f}" for sy in syms) + "\n")
+        out = os.path.join(tmp, "page.html")
+        cfg = _cfg(holdings="", ledger="", dashboard=out)
+        cfg["prices"] = csv
+        detail = daily.render_dashboard(cfg)
+        assert "sectors.csv" in detail, detail
+        assert "FIXTURE" not in detail, (
+            "a real price basket was ignored in favour of generated data")
+        assert dates[-1] in io.open(out, encoding="utf-8").read(), (
+            "the page was not drawn from the supplied CSV")
+
+
+def test_the_dashboard_reports_the_ledger_counts_it_drew():
+    """So the operator sees the clock move in the run log, not only in a browser.
+
+    Rendered directly. Going through `run` also ran the RECORDER, which appends a
+    live vendor entry — so in CI the ledger had grown between the count this test
+    computed and the count the page drew, and the two never matched."""
     import tempfile
     from engine.data import SyntheticAdapter
     from engine.signal_backtest import synthetic_chain_series
@@ -462,46 +517,14 @@ def test_the_dashboard_step_reports_the_ledger_counts_it_drew():
                                  step=21)
         lp = os.path.join(tmp, "led.jsonl")
         led.save(lp)
-        out = os.path.join(tmp, "page.html")
-        # ledger="" on the RECORD step: this asserts the dashboard reads the file,
-        # not that the job recorded into it
-        cfg = _cfg(holdings="", dashboard=out)
-        cfg["ledger"] = lp
-        steps = daily.run(cfg)
-        dash = [x for x in steps if x["step"] == "dashboard"][0]
         rec = led.report()
-        assert f"{rec.n_recorded} recorded" in dash["detail"], dash["detail"]
-        assert f"{rec.n_settled} settled" in dash["detail"], dash["detail"]
-
-
-def test_a_real_price_basket_is_used_rather_than_the_fixture():
-    """The complement of the test above. Falling back to the generated world when
-    a real CSV exists would draw a page of invented prices while labelling nothing
-    — the single most misleading thing this job could produce."""
-    import tempfile
-    from tools import rotation_dashboard as rd
-    with tempfile.TemporaryDirectory() as tmp:
-        px, bench, dates = rd.demo_world(n=700)
-        csv = os.path.join(tmp, "sectors.csv")
-        cols = dict(px)
-        cols[rd.BENCHMARK] = bench      # load_csv needs the benchmark column too
-        syms = sorted(cols)
-        with io.open(csv, "w", encoding="utf-8") as fh:
-            fh.write("date," + ",".join(syms) + "\n")
-            for i, d in enumerate(dates):
-                fh.write(d + "," + ",".join(f"{cols[sy][i]:.4f}" for sy in syms) + "\n")
         out = os.path.join(tmp, "page.html")
-        cfg = _cfg(holdings="", dashboard=out)
-        cfg["prices"] = csv           # set directly: the FETCH step would need a net
-        steps = daily.run(cfg)
-        dash = [x for x in steps if x["step"] == "dashboard"][0]
-        assert dash["ok"], dash["detail"]
-        assert "sectors.csv" in dash["detail"], dash["detail"]
-        assert "FIXTURE" not in dash["detail"], (
-            "a real price basket was ignored in favour of generated data")
-        # and the page carries that basket's own last date, not the fixture's
-        page = io.open(out, encoding="utf-8").read()
-        assert dates[-1] in page, "the page was not drawn from the supplied CSV"
+        cfg = _cfg(holdings="", prices="", dashboard=out)
+        cfg["ledger"] = lp
+        with _no_network():
+            detail = daily.render_dashboard(cfg)
+        assert f"{rec.n_recorded} recorded" in detail, (detail, rec.n_recorded)
+        assert f"{rec.n_settled} settled" in detail, (detail, rec.n_settled)
 
 
 def test_status_names_the_dashboard_and_whether_it_exists_yet():

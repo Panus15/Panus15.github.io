@@ -6,9 +6,10 @@ this explains *how the parts run together* and *what they have proven*.
 
 **Scale:** 46 test files · **539 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
-numpy (`test_gru.py`, `test_neural.py`) and are skipped here — those two files print
-SKIP rather than a row of PASS lines for work that did not happen, and
-`tests/test_wiring.py` now fails if this sentence stops matching the tree.
+numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
+of PASS lines for work that did not happen, so a stdlib machine runs 539 and CI —
+which installs numpy on purpose — runs **549**. `tests/test_wiring.py` fails if this
+sentence stops matching the tree.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
 (sector rotation, PREREGISTRATION.md §7.1). The forward options ledger has settled
@@ -454,6 +455,30 @@ Three things surfaced the moment it ran:
 - The marker was detected as a **substring**, and `test_wiring.py` mentions the name
   in its own source — so it excluded its own seven tests from the count it was
   computing. It is read as a module-level assignment via the AST.
+
+### 2.7h Three tests that passed because the network was broken
+
+CI caught what this sandbox could not. `tools/daily.py`'s dashboard step was a
+closure inside `run`, so every test of it had to call `run` — which also **fetches
+prices and records a live ledger entry**. Outbound access is blocked here, so those
+two steps failed, and three tests passed *because of it*:
+
+- one asserted `not prices["ok"]` — it was testing that the vendor was unreachable
+- one wrote a fixture CSV and read the page back; in CI the fetch **overwrote that
+  CSV** with freshly downloaded prices before the page was drawn
+- one compared the ledger's counts before and after; in CI the recorder **appended
+  live vendor entries** in between, so the two never matched
+
+Worse than three flaky tests: the suite was making real vendor API calls, and only
+the absence of a network was hiding it.
+
+The dashboard step is now a module-level `render_dashboard(cfg)` — testable alone,
+which is why the closure was the actual defect — and the tests call it directly. A
+`_no_network()` context manager replaces `socket.socket` and `urllib.request.urlopen`
+with a raising stub, so a test that reaches a vendor **fails by name** instead of
+depending on whether the machine it runs on happens to have access. Verified both
+ways: the guard blocks and restores, and running the old style of call under it turns
+the hidden access into `AssertionError: this test reached the network`.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries

@@ -121,34 +121,47 @@ def run(cfg: dict) -> list:
     # partial capture too: a page that says "0 settled" is the honest state and is
     # more use than no page.
     if cfg.get("dashboard"):
-        def _dash():
-            from tools import rotation_dashboard as rd
-            csv_path = cfg.get("prices") or ""
-            if csv_path and os.path.exists(csv_path):
-                px, bench, dates = rd.load_csv(csv_path)
-                src = os.path.basename(csv_path)
-            else:
-                px, bench, dates = rd.demo_world()
-                src = "GENERATED FIXTURE (no price basket yet)"
-            payload = rd.build_payload(
-                px, bench, dates, window=63, mom_lag=5, tail=12, horizon=21,
-                options=rd.options_panel(cfg.get("chain_json", ""),
-                                         cfg.get("price_json", ""),
-                                         symbol=cfg.get("symbol", ""),
-                                         dte=cfg.get("dte", 30),
-                                         equity=cfg.get("equity", 100_000.0),
-                                         ledger=cfg.get("ledger", "")),
-                ledger=rd.ledger_panel(cfg.get("ledger", ""),
-                                       dte_hint=cfg.get("dte", 30)))
-            with open(cfg["dashboard"], "w", encoding="utf-8") as fh:
-                fh.write(rd.render(payload))
-            f = payload["ledger"]
-            return (f"{os.path.basename(cfg['dashboard'])} from {src}  |  forward: "
-                    + (f"{f['recorded']} recorded, {f['settled']} settled"
-                       if f.get("available") else "0 recorded"))
-        out.append(_step("dashboard", _dash))
+        out.append(_step("dashboard", lambda: render_dashboard(cfg)))
 
     return out
+
+
+def render_dashboard(cfg: dict) -> str:
+    """Draw the page from whatever is on disk. PURE of the network by design.
+
+    A module-level function rather than a closure inside ``run`` because it has to
+    be testable ALONE. The first version was a closure, so every test of it had to
+    call ``run``, which also fetches prices and records a live ledger entry — and
+    those two steps fail in a sandbox with no outbound access. Three tests
+    therefore passed by depending on the network being BROKEN, and in CI, where it
+    works, the fetch overwrote the fixture CSV they had just written and the
+    recorder appended live vendor entries to their ledger. Tests must not need the
+    network, and must not quietly use it either.
+    """
+    from tools import rotation_dashboard as rd
+    csv_path = cfg.get("prices") or ""
+    if csv_path and os.path.exists(csv_path):
+        px, bench, dates = rd.load_csv(csv_path)
+        src = os.path.basename(csv_path)
+    else:
+        px, bench, dates = rd.demo_world()
+        src = "GENERATED FIXTURE (no price basket yet)"
+    payload = rd.build_payload(
+        px, bench, dates, window=63, mom_lag=5, tail=12, horizon=21,
+        options=rd.options_panel(cfg.get("chain_json", ""),
+                                 cfg.get("price_json", ""),
+                                 symbol=cfg.get("symbol", ""),
+                                 dte=cfg.get("dte", 30),
+                                 equity=cfg.get("equity", 100_000.0),
+                                 ledger=cfg.get("ledger", "")),
+        ledger=rd.ledger_panel(cfg.get("ledger", ""),
+                               dte_hint=cfg.get("dte", 30)))
+    with open(cfg["dashboard"], "w", encoding="utf-8") as fh:
+        fh.write(rd.render(payload))
+    f = payload["ledger"]
+    return (f"{os.path.basename(cfg['dashboard'])} from {src}  |  forward: "
+            + (f"{f['recorded']} recorded, {f['settled']} settled"
+               if f.get("available") else "0 recorded"))
 
 
 def status(cfg: dict) -> str:
