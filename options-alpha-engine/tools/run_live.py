@@ -21,6 +21,7 @@ core is pure and unit-tested offline; only `fetch` touches the network.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 from engine import hedged_backtest
@@ -54,7 +55,8 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             label: str = "", run_backtest: bool = True, run_gate: bool = False,
             american: bool = False, contract_mult: float = 100.0,
             events_json: str | None = None, sectors_csv: str = "",
-            holdings_dir: str = "") -> dict:
+            holdings_dir: str = "", equity: float = 100_000.0,
+            max_risk_frac: float = 0.02, settled_trades: int = 0) -> dict:
     """Run the full pipeline on a chain + price history. PURE (no network).
 
     ``american=True`` de-Americanizes the chain first (binomial American IV ->
@@ -267,6 +269,44 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
                        for i in decision.inputs]}
         print("\n" + decision.render())
 
+        # 3e. THE ORDER TICKET — the only block a human can act on -----------
+        # Everything above is a view. Without this the real-data path stopped at
+        # "SELL VOL, size x0.85" and left six blanks for the reader to fill in:
+        # structure, strikes, expiry DATE, contracts, limit, dollar worst case.
+        # The ticket is handed the DECISION, not just the card, so the size cut
+        # the context bought actually reaches the contract count — see
+        # models/ticket.py. Refusal is the common and correct outcome at retail
+        # size, and it is printed by name.
+        try:
+            from models.spreads import scan_spreads
+            from models.ticket import build_ticket
+            spreads = scan_spreads(chain, forecaster, prices, dte=dte)
+            best = max(spreads, key=lambda sp: sp.ev) if spreads else None
+            ticket = build_ticket(
+                card, best, equity=equity, max_risk_frac=max_risk_frac,
+                decision=decision, settled_trades=settled_trades,
+                exit_rule="close at 50% of max profit, or at 7 DTE, "
+                          "whichever comes first")
+            report["ticket"] = {
+                "placeable": ticket.placeable,
+                "structure": ticket.structure,
+                "expiry_date": ticket.expiry_date,
+                "contracts": ticket.contracts,
+                "uncapped_contracts": ticket.uncapped_contracts,
+                "size_multiplier": ticket.size_multiplier,
+                "limit_credit": ticket.limit_credit,
+                "max_loss_total": ticket.max_loss_total,
+                "refusals": [{"code": c, "detail": d} for c, d in ticket.refusals],
+                "legs": [{"side": l.side, "kind": l.kind, "strike": l.strike,
+                          "price": l.price} for l in ticket.legs]}
+            print("\n" + ticket.render())
+        except (ValueError, ZeroDivisionError, ArithmeticError, KeyError) as e:
+            # A chain too sparse to build a wing on is a DATA outcome, not a
+            # crash, and the scan above is still worth printing.
+            print(f"\nno order ticket: the chain could not support a defined-risk "
+                  f"structure ({e})")
+            report["ticket"] = {"placeable": False, "error": str(e)}
+
     # 4. Promotion gate (optional, slow) -----------------------------------
     if run_gate and len(prices) >= 160:
         report["gate"] = _promotion_gate(prices)
@@ -310,6 +350,29 @@ def objective_windows(prices: list, dte: int, *, context: int = 63,
         keep = max(1, len(w) // cap)
         w, step = w[::keep], step * keep
     return w, step
+
+
+def _settled_count(ledger_path: str) -> int:
+    """How many forward trades have actually been graded. Read from disk, never
+    from a flag: the evidence label on an order ticket is the one number an
+    operator has an incentive to inflate, so it is not made typeable."""
+    if not ledger_path or not os.path.exists(ledger_path):
+        return 0
+    n = 0
+    try:
+        with open(ledger_path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    if json.loads(line).get("status") == "settled":
+                        n += 1
+                except ValueError:
+                    continue          # a half-written line is not a settled trade
+    except OSError:
+        return 0
+    return n
 
 
 def _rotation_point(sectors_csv: str, symbol: str):
@@ -410,6 +473,13 @@ def main(argv=None):
     p.add_argument("--sectors-csv", dest="sectors_csv", default="",
                    help="wide price CSV (tools.fetch_prices) -> the sector-rotation "
                         "context on the fused decision")
+    p.add_argument("--equity", type=float, default=100_000.0,
+                   help="account equity the order ticket sizes against")
+    p.add_argument("--max-risk-frac", dest="max_risk_frac", type=float, default=0.02,
+                   help="fraction of equity the ticket may put at MAXIMUM LOSS")
+    p.add_argument("--ledger", default="",
+                   help="paper-trade ledger; its SETTLED count becomes the "
+                        "ticket's evidence label (read-only, never written)")
     p.add_argument("--holdings", dest="holdings_dir", default="",
                    help="archive dir (tools.archive_holdings) -> the fund-crowding "
                         "context on the fused decision")
@@ -435,7 +505,9 @@ def main(argv=None):
     analyze(chain, prices, dte=args.dte, label=args.source,
             run_backtest=args.backtest, run_gate=args.gate, american=args.american,
             sectors_csv=args.sectors_csv, holdings_dir=args.holdings_dir,
-            contract_mult=mult, events_json=args.events_json)
+            contract_mult=mult, events_json=args.events_json,
+            equity=args.equity, max_risk_frac=args.max_risk_frac,
+            settled_trades=_settled_count(args.ledger))
 
 
 if __name__ == "__main__":

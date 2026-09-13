@@ -17,7 +17,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.spreads import Spread, SpreadLeg
-from models.ticket import (MIN_SETTLED_FOR_EVIDENCE, NO_STRUCTURE, NO_VOL_EDGE,
+from models.ticket import (DECISION_SIZED_TO_ZERO, DECISION_STANDS_DOWN,
+                           MIN_SETTLED_FOR_EVIDENCE, NO_STRUCTURE, NO_VOL_EDGE,
                            NON_POSITIVE_EV, SIZE_ZERO, STALE_QUOTES,
                            UNBOUNDED_RISK, build_ticket)
 
@@ -45,6 +46,170 @@ def _spread(*, max_loss=8.5, credit=1.5, ev=0.35, dte=30, name="put credit 5-wid
 
 def _codes(t):
     return [c for c, _ in t.refusals]
+
+
+class _Input:
+    """Stands in for models.decision.Input — only .name and .effect are read."""
+    def __init__(self, name, effect=1.0):
+        self.name, self.effect = name, effect
+
+
+class _Decision:
+    """Stands in for models.decision.Decision. Built by hand so these tests pin
+    the CONTRACT between the two modules rather than re-testing decision.py."""
+    def __init__(self, action="SELL VOL", size_multiplier=1.0, cut=()):
+        self.action = action
+        self.size_multiplier = size_multiplier
+        self.inputs = [_Input(n, e) for n, e in cut]
+
+
+# --------------------------------------------------------------------------
+# The fused decision must actually reach the order
+# --------------------------------------------------------------------------
+
+def test_the_decision_size_cut_reaches_the_contract_count():
+    """The defect this closes: build_ticket read only the card, so a decision of
+    "SELL VOL, size x0.60" shipped exactly the same order as x1.00 — 67-100% more
+    risk than the fused view authorised. A cut the last step discards is a
+    comment, not a risk control."""
+    for equity, mult in ((100_000.0, 0.6), (250_000.0, 0.6), (1_000_000.0, 0.6),
+                         (1_000_000.0, 0.5), (1_000_000.0, 0.85)):
+        full = build_ticket(_Card(), _spread(), equity=equity)
+        cut = build_ticket(_Card(), _spread(), equity=equity,
+                           decision=_Decision(size_multiplier=mult,
+                                              cut=(("fund crowding", mult),)))
+        assert cut.contracts == int(full.contracts * mult), (
+            f"equity {equity:,.0f} x{mult}: shipped {cut.contracts}, "
+            f"authorised {int(full.contracts * mult)}")
+        assert cut.max_loss_total <= full.max_loss_total
+
+
+def test_the_cut_never_rounds_up_into_more_risk_than_authorised():
+    """Swept, because the rounding direction is the whole property: at a x0.6 on
+    2 contracts, rounding gives 1 and rounding-to-nearest gives 1, but at x0.9 on
+    5 they differ (4 vs 5) and only the floor is safe."""
+    for mult in (0.05, 0.25, 0.5, 0.6, 0.75, 0.85, 0.9, 0.99):
+        for equity in (100_000.0, 250_000.0, 500_000.0, 1_000_000.0):
+            full = build_ticket(_Card(), _spread(), equity=equity).contracts
+            cut = build_ticket(_Card(), _spread(), equity=equity,
+                               decision=_Decision(size_multiplier=mult)).contracts
+            assert cut <= full * mult + 1e-9, (mult, equity, cut, full)
+
+
+def test_the_decision_can_only_cut_never_raise():
+    """A multiplier above 1.0 is a bug upstream, and the ticket must not act on
+    it — rule 1 of decision.py is that an unproven input may only reduce size."""
+    full = build_ticket(_Card(), _spread(), equity=1_000_000.0).contracts
+    for bad in (1.5, 3.0, 100.0):
+        t = build_ticket(_Card(), _spread(), equity=1_000_000.0,
+                         decision=_Decision(size_multiplier=bad))
+        assert t.contracts == full, (bad, t.contracts, full)
+
+
+def test_a_garbage_multiplier_refuses_instead_of_defaulting_to_full_size():
+    """NaN survives min/max clamping untouched and inf clamps UP to 1.0, so the
+    obvious guard turns a corrupt risk input into a maximum-size order. Unusable
+    means zero here."""
+    full = build_ticket(_Card(), _spread(), equity=1_000_000.0).contracts
+    assert full > 0
+    for bad in (None, "big", float("nan"), float("inf"), float("-inf")):
+        t = build_ticket(_Card(), _spread(), equity=1_000_000.0,
+                         decision=_Decision(size_multiplier=bad))
+        assert t.contracts == 0, (bad, t.contracts)
+        assert DECISION_SIZED_TO_ZERO in _codes(t), (bad, _codes(t))
+
+
+def test_the_per_contract_dollar_numbers_are_not_scaled_by_the_cut():
+    """The multiplier sizes the ORDER, not the instrument. This caught a real
+    name collision: the new size multiplier shadowed the contract multiplier, so
+    a x0.60 decision would have printed a $1.50 limit instead of $150."""
+    full = build_ticket(_Card(), _spread(), equity=1_000_000.0)
+    cut = build_ticket(_Card(), _spread(), equity=1_000_000.0,
+                       decision=_Decision(size_multiplier=0.6))
+    assert cut.limit_credit == full.limit_credit == 1.5 * 100
+    assert cut.max_loss_per_contract == full.max_loss_per_contract == 8.5 * 100
+    assert cut.ev_per_contract == full.ev_per_contract
+
+
+def test_a_negative_multiplier_never_reaches_the_screen_as_a_negative_size():
+    """The refusal path already stops a negative from sizing anything, so the
+    ONLY place it is still observable is the printed multiplier — and a ticket
+    reading "size x-0.50" is a worse thing to show a human than "x0.00"."""
+    t = build_ticket(_Card(), _spread(), equity=1_000_000.0,
+                     decision=_Decision(size_multiplier=-0.5))
+    assert t.size_multiplier == 0.0, t.size_multiplier
+    assert t.contracts == 0
+    assert "x-" not in t.render(), t.render()
+
+
+def test_a_decision_that_disagrees_with_the_card_stands_the_ticket_down():
+    for action in ("NO TRADE", "BUY VOL"):
+        t = build_ticket(_Card(), _spread(), equity=EQ,
+                         decision=_Decision(action=action, size_multiplier=1.0))
+        assert DECISION_STANDS_DOWN in _codes(t), (action, _codes(t))
+        assert not t.placeable and t.contracts == 0
+
+
+def test_a_cut_below_one_contract_refuses_by_its_own_name():
+    """Distinct from SIZE_ZERO: the account is big enough, the CONTEXT said no.
+    The remedy differs, so the code must too."""
+    t = build_ticket(_Card(), _spread(), equity=EQ,
+                     decision=_Decision(size_multiplier=0.1,
+                                        cut=(("fund crowding", 0.1),)))
+    codes = _codes(t)
+    assert DECISION_SIZED_TO_ZERO in codes, codes
+    assert SIZE_ZERO not in codes, "the account was never the problem"
+    detail = dict(t.refusals)[DECISION_SIZED_TO_ZERO]
+    assert "fund crowding" in detail, detail
+
+
+def test_a_no_trade_decision_does_not_list_the_same_cause_twice():
+    """A decision whose action is NO TRADE also reports x0.00, so the naive check
+    raised DECISION_SIZED_TO_ZERO alongside NO_VOL_EDGE — one cause printed twice,
+    the second naming no input, which reads as an extra problem to go and fix."""
+    card = _Card(side="NO TRADE")
+    t = build_ticket(card, _spread(), equity=EQ,
+                     decision=_Decision(action="NO TRADE", size_multiplier=0.0))
+    codes = _codes(t)
+    assert NO_VOL_EDGE in codes, codes
+    assert DECISION_SIZED_TO_ZERO not in codes, codes
+    assert DECISION_STANDS_DOWN not in codes, "they agree; there is no disagreement"
+
+
+def test_an_absent_decision_is_visible_on_the_ticket_rather_than_silent():
+    """An optional safety check that can be skipped silently is the same defect
+    wearing a keyword argument."""
+    t = build_ticket(_Card(), _spread(), equity=EQ)
+    assert not t.decision_applied
+    assert "NOT APPLIED" in t.render()
+    t2 = build_ticket(_Card(), _spread(), equity=EQ, decision=_Decision())
+    assert t2.decision_applied
+    assert "NOT APPLIED" not in t2.render()
+    assert "x1.00" in t2.render()
+
+
+def test_a_refused_ticket_still_shows_what_the_context_did():
+    """Otherwise the only screens naming the cut are the ones already placing
+    orders, which is backwards."""
+    t = build_ticket(_Card(), _spread(), equity=EQ,
+                     decision=_Decision(size_multiplier=0.1,
+                                        cut=(("fund crowding", 0.1),)))
+    assert not t.placeable
+    assert "fused context" in t.render()
+
+
+def test_the_budget_theorem_still_holds_once_the_cut_is_applied():
+    """The headline property of test #1, re-swept with a decision in the path —
+    a second cap must not be able to break the first."""
+    for mult in (0.1, 0.5, 0.85, 1.0):
+        for loss in (0.5, 8.5, 45.0):
+            for frac in (0.005, 0.02, 0.05):
+                t = build_ticket(_Card(), _spread(max_loss=loss), equity=EQ,
+                                 max_risk_frac=frac,
+                                 decision=_Decision(size_multiplier=mult))
+                if not t.placeable:
+                    continue
+                assert t.max_loss_total <= frac * EQ + 1e-9
 
 
 def test_a_placeable_ticket_cannot_breach_its_own_budget():

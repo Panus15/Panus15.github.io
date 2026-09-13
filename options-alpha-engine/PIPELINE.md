@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 45 test files · **463 tests, all green** · pure stdlib, no
+**Scale:** 45 test files · **476 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -64,6 +64,8 @@ money, and the two clocks that could produce such evidence have not started.
                                         ▼
                               ticket.py  a placeable order,
                               or a named refusal
+                              (takes the DECISION, so the
+                               context's size cut reaches it)
                                         │
         ┌───────────────────────────────┼───────────────────────────────┐
         ▼                ▼              ▼              ▼                ▼
@@ -226,6 +228,34 @@ trade when it acts, which is why the default is not being lowered to make it fir
 that would be tuning a locked parameter toward a worse outcome to justify a
 feature. It is listed here as untested protection, not as protection.
 
+
+**The size cut never reached the order.** `decision.py` exists to let unproven
+inputs cut size and never raise it. `build_ticket` read only the variance card, so
+a decision of "SELL VOL, **size x0.60**" built the *same* order as x1.00 — the cut
+was discarded at the last step, where it becomes money. Measured on one put credit
+spread with fund crowding firing:
+
+| equity | shipped | authorised | risk shipped | risk authorised | excess |
+|---|---|---|---|---|---|
+| $100,000 | 2 | 1 | $1,700 | $850 | **+100%** |
+| $250,000 | 5 | 3 | $4,250 | $2,550 | **+67%** |
+| $1,000,000 | 23 | 13 | $19,550 | $11,050 | **+77%** |
+
+The ticket now takes `decision=`, floors (never rounds) the product, and refuses by
+its own code when the cut lands below one contract — separate from `SIZE_ZERO`,
+because "the context said no" and "your account is too small" have different
+remedies. Two traps found while fixing it, both by tests rather than by reading:
+the new multiplier **shadowed the contract multiplier**, which would have printed a
+$1.50 limit instead of $150; and a NaN multiplier **survives `min(max(x,0),1)`
+untouched** (every comparison against NaN is False) while `inf` clamps *up* to 1.0,
+so the obvious guard turned a corrupt risk input into a full-size order. Unusable
+now means zero, not maximum. **13/13 mutants killed.**
+
+And an absent decision is no longer silent: the ticket prints `fused context NOT
+APPLIED` on its face, because an optional safety check that can be skipped quietly
+is the same defect wearing a keyword argument. `tests/test_wiring.py` pins the call
+shape at every entry point — reachability was never the problem here, the ticket was
+reachable and *uninformed*.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -283,9 +313,14 @@ interest at its own strike? Bands were fixed before any data was seen
 ≥20% says the mechanism is not ruled out. Open interest of 0 means UNKNOWN, and a
 chain without it returns NO OPEN INTEREST DATA rather than a refutation.
 
-**`models/ticket.py`** turns a view into an order or a named refusal — six codes,
-each tested firing alone, accumulating rather than masking each other. A placeable
-ticket's contracts × max-loss is inside its budget for every input, swept.
+**`models/ticket.py`** turns a view into an order or a named refusal — **eight**
+codes, each tested firing alone, accumulating rather than masking each other. A
+placeable ticket's contracts × max-loss is inside its budget for every input,
+swept — and now swept again with a decision in the path, because a second cap must
+not be able to break the first. It takes the fused `decision`, so the size cut that
+sector rotation and fund crowding bought actually reaches the contract count (§2.7).
+It is reached from `run_live` and not only from the demo, so the real-data path ends
+at an order rather than at a view.
 
 ---
 
@@ -357,8 +392,20 @@ python3 -m tools.run_live tradier --symbol QQQ --dte 30 --american --gate
 ```
 
 Prints: model-free Q vol + BKM moments, the P-vs-Q scan, the per-strike board, the
-PIT calibration with its effective sample size, the trade card — and a **simulation**
-clearly labelled as not being a backtest of the chain above.
+PIT calibration with its effective sample size, the trade card, the fused decision,
+**the order ticket** (structure, strikes, expiry date, contracts, limit, dollar worst
+case — or a named refusal) — and a **simulation** clearly labelled as not being a
+backtest of the chain above.
+
+The ticket sizes against `--equity` (default $100,000) at `--max-risk-frac` (default
+2% of equity *at maximum loss*, not at premium). Its evidence label is read from
+`--ledger` on disk rather than from a flag, because the settled-trade count is the
+one number an operator has an incentive to inflate, so it is not made typeable:
+
+```bash
+python3 -m tools.run_live tradier --symbol SPX --dte 30 \
+        --equity 250000 --max-risk-frac 0.02 --ledger spx.jsonl
+```
 
 ### 3.3 Getting price history in
 
@@ -476,7 +523,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 463 tests, 45 files
+for t in tests/test_*.py; do python3 "$t"; done      # 476 tests, 45 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

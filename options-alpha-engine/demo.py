@@ -108,12 +108,17 @@ def main() -> None:
     # contracts, limit, and the dollar worst case. It refuses BY NAME when it
     # cannot support a number, and the refusal is the common outcome at retail
     # size — one SPY put can lose more than a 2% budget on a $100k account.
+    # The ticket is handed the fused DECISION, not just the card. Without that,
+    # a context that cut size to x0.60 shipped exactly the same order as x1.00.
+    from models.decision import build_decision
     from models.ticket import build_ticket
     from models.trade_card import build_card
     _card = build_card(chain, forecaster, prices, dte=_sdte)
+    _decision = build_decision(_card)      # no sector map, no holdings archive
     _best = max(_spreads, key=lambda s: s.ev) if _spreads else None
     _ticket = build_ticket(
         _card, _best, equity=100_000.0, max_risk_frac=0.02,
+        decision=_decision,
         settled_trades=0,          # the forward ledger really is empty
         exit_rule="close at 50% of max profit, or at 7 DTE, whichever comes first")
     print(_ticket.render())

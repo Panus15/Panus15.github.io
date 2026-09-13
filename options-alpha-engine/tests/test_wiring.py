@@ -13,6 +13,7 @@ or harness reaches it, this fails and names it.
 Run: python3 tests/test_wiring.py
 """
 
+import io
 import os
 import re
 import subprocess
@@ -110,6 +111,35 @@ def test_the_internal_allowlist_has_no_dead_entries():
 def test_every_internal_exemption_carries_a_reason():
     blank = [k for k, v in INTERNAL.items() if not (v or "").strip()]
     assert not blank, f"exemptions without a reason: {blank}"
+
+
+def test_every_order_ticket_is_built_from_the_fused_decision():
+    """Import-level wiring was never the problem for models/ticket.py — it was
+    reachable from demo.py the whole time. It was reachable and UNINFORMED: it
+    read only the variance card, so the size cut that sector rotation and fund
+    crowding bought was discarded at the last step, and the shipped order carried
+    67-100% more risk than the fused view authorised. Reachability does not imply
+    correctness, so the call SHAPE is pinned too."""
+    bad = []
+    for entry in ENTRY_POINTS:
+        path = os.path.join(ROOT, entry)
+        files = ([path] if os.path.isfile(path)
+                 else [os.path.join(path, f) for f in sorted(os.listdir(path))
+                       if f.endswith(".py")])
+        for f in files:
+            src = io.open(f, encoding="utf-8").read()
+            for m in re.finditer(r"build_ticket\s*\(", src):
+                # take the balanced argument list, so a nested call cannot end it early
+                i, depth = m.end(), 1
+                while i < len(src) and depth:
+                    depth += (src[i] == "(") - (src[i] == ")")
+                    i += 1
+                if "decision=" not in src[m.end():i]:
+                    line = src[:m.start()].count("\n") + 1
+                    bad.append(f"{os.path.relpath(f, ROOT)}:{line}")
+    assert not bad, ("build_ticket called without decision= at: " + ", ".join(bad)
+                     + " — the ticket would print full size regardless of what "
+                       "the fused context cut")
 
 
 def test_the_demo_actually_runs_and_prints_its_sections():
