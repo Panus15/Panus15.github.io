@@ -4,11 +4,11 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 47 test files · **556 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **562 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
-of PASS lines for work that did not happen, so a stdlib machine runs 556 and CI —
-which installs numpy on purpose — runs **566**. `tests/test_wiring.py` fails if this
+of PASS lines for work that did not happen, so a stdlib machine runs 562 and CI —
+which installs numpy on purpose — runs **572**. `tests/test_wiring.py` fails if this
 sentence stops matching the tree, and `tools/check_offline.py` proves every file
 passes with the network denied.
 
@@ -563,6 +563,59 @@ in memory while the CLI reads a CSV through `from_file` and a chain through
 one sentence for two different failures — "nothing matched" now says so, because
 blaming a chain's open interest for an expiry mismatch sends the operator to re-dump
 a chain that was fine. **10/10 mutants killed.**
+
+### 2.7j The coverage gate was a fixed ±10% and should have scaled with σ√T
+
+`rnd._coverage_ok` decided whether a recovered Q was trustworthy at all — and
+`models/edge.py` refuses to trade when it says False. The rule was a **fixed ±10%
+of spot**, with no tenor in it. The width a strike-integral needs scales with
+σ√T, so that one number meant:
+
+| chain | ±10% is worth | recovered vol error |
+|---|---|---|
+| 30d, 15% vol | 2.33 σ | fine |
+| 90d, 22% vol | 0.92 σ | ~−1.2 vol points |
+| 180d, 35% vol | **0.41 σ** | **~−2.7 vol points**, flag still True |
+
+Too low is the dangerous direction: it makes the market look **cheap**, which
+suppresses selling and can invite buying.
+
+The threshold is measured, not chosen. On **European** chains — where early
+exercise plays no part at all, so any bias is the integral's own truncation — the
+error depends on coverage in σ√T units and barely on tenor or vol:
+
+| coverage | error in the recovered vol |
+|---|---|
+| 1.0 σ | −1.16% to −2.68% |
+| 1.5 σ | −0.33% to −0.80% |
+| 2.0 σ | −0.07% to −0.27% |
+| **2.5 σ** | **−0.001% to −0.10%** |
+| 3.0 σ | ~0 |
+
+2.5 is the first level whose worst case is small against the 1–4 vol points of
+premium this engine harvests; 2.0 would admit up to a quarter of a one-point edge.
+The width is sized from an **ATM** implied vol, deliberately not from the
+model-free estimate — that is the quantity being tested, and it is biased low
+exactly when coverage is poor, so using it would shrink the requirement on the
+chains that need it widened.
+
+This began as a check on something else. US single-name and ETF options are
+American and the docs call de-Americanizing mandatory before Q extraction — and
+the dashboard never did it. Measured, that bias is **+0.2% relative** at 30d, and
+de-Americanizing overshoots about as far the other way; it only flips a decision
+when |VRP| is under ~0.04 vol points, which is a no-edge zone anyway. Chasing it
+to 90d and 180d is what exposed the real error, which was an order of magnitude
+larger and had nothing to do with early exercise.
+
+**It refuses more chains now, and the refusals say why**: `coverage_report` prints
+"puts stop at −15.4%; 2.5 sd at an ATM vol of 25.5% over 30d needs ±18.3%" instead
+of a bare False. Five fixtures had to be widened, and every one of them was
+truncated by a **price floor**, not by a narrow strike grid: a flat-vol synthetic
+chain prices deep puts below a cent, so the wings vanish. Real markets keep them
+quotable because skew prices them far above flat-vol value. The Deribit control
+test is the evidence this is real and not pedantry — widening its ladder from ±20%
+to ±45% at a 60% vol took its recovered vol from needing a 0.03 tolerance to an
+error of **+0.0036**.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -847,7 +900,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 556 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done      # 562 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

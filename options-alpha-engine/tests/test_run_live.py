@@ -25,10 +25,14 @@ def _chain(dtes=(7, 30, 60)):
     quotes = []
     for dte in dtes:
         T = dte / 365.0
-        for K in range(80, 121, 5):                 # dense, spans 0.8-1.2x
+        # spans 0.7-1.3x with a tenth-of-a-cent floor. The old grid was 0.8-1.2x
+        # at a one-cent floor, which left roughly +/-10% of quotable strikes —
+        # under 2.5 standard deviations once coverage is measured in sigma*sqrt(T)
+        # instead of as a fixed +/-10% of spot.
+        for K in range(70, 131, 5):
             for kind in ("call", "put"):
                 px = pricing.price(SPOT, K, T, 0.0, 0.0, IV, kind)
-                if px < 0.01:
+                if px < 0.001:
                     continue
                 quotes.append(OptionQuote(dte, float(K), kind, round(px, 3), round(px, 3)))
     return OptionChain("TEST", SPOT, 0.0, 0.0, quotes, asof=date(2026, 7, 19).isoformat())

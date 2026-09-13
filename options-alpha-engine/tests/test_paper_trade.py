@@ -28,7 +28,15 @@ from tools import paper_trade
 from tools.paper_trade import CAL_DAYS, PaperLedger, paper_trade_series
 
 PRICES = price_path_with_crash(900)
-CHAIN = synthetic_chain_series(dte=21)
+# A ladder with WINGS, as synthetic_chain_series' own docstring tells callers who
+# need them to ask for. The coarse default is +/-15% with a $0.02 floor, which in a
+# calm regime leaves three strikes at +/-5% — and coverage is now measured in
+# sigma*sqrt(T), so the span a crash regime needs grows exactly when the default
+# ladder cannot supply it. With no date passing coverage the series recorded zero
+# trades, which is the silence this file's own test exists to detect.
+CHAIN = synthetic_chain_series(
+    dte=21, ladder=tuple(round(-0.30 + 0.025 * i, 3) for i in range(25)),
+    min_px=0.001)
 F = BaselineDensityForecaster()
 
 
@@ -291,8 +299,14 @@ def _ladder(spot=680.0, dtes=(1, 2, 3, 23, 30, 35), iv=0.16):
     """A realistic ETF book: near-daily expiries plus a monthly, penny quotes.
 
     The wings matter. At 1-3 DTE a strike 10% out is worth fractions of a cent
-    and the zero-bid filter drops it, so rnd._coverage_ok (needs +/-10% cover)
-    fails there and only there.
+    and the zero-bid filter drops it, so rnd._coverage_ok fails there and only
+    there — which is the whole point of this fixture.
+
+    The ladder reaches +/-18% and the floor is a tenth of a cent, because coverage
+    is now measured in sigma*sqrt(T) rather than as a fixed +/-10%: at 35 DTE and a
+    16% vol it needs +/-12.4%, and the old +/-15% ladder lost its -12% put to a
+    one-cent floor and came up 0.4 points short. Short tenors still fail, exactly as
+    before — a 10%-OTM put one day out is worth ~1e-30 and no floor saves it.
     """
     from engine import pricing
     from engine.data import OptionChain, OptionQuote
@@ -300,10 +314,11 @@ def _ladder(spot=680.0, dtes=(1, 2, 3, 23, 30, 35), iv=0.16):
     for dte in dtes:
         t = dte / 365.0
         for k in [round(spot * m, 1) for m in
-                  (0.85, 0.88, 0.90, 0.95, 1.0, 1.05, 1.10, 1.12, 1.15)]:
+                  (0.82, 0.85, 0.88, 0.90, 0.95, 1.0, 1.05, 1.10, 1.12,
+                   1.15, 1.18)]:
             for kind in ("call", "put"):
                 px = pricing.price(spot, k, t, 0.04, 0.0, iv, kind)
-                if px < 0.01:                    # the vendor's zero-bid wings
+                if px < 0.001:                   # the vendor's zero-bid wings
                     continue
                 quotes.append(OptionQuote(dte, k, kind,
                                           round(px * 0.995, 2), round(px * 1.005, 2)))

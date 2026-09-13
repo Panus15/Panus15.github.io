@@ -290,6 +290,22 @@ only thing the shuffle changes is the labels. The p-value is now invariant to
 
 *(Amendment discipline: 6.1 changes a control that was demonstrably broken. It
 does not change any parameter in §2, and no §7 verdict moves because of it.)*
+### 6.2 Coverage is measured in σ√T, not in a fixed ±10% (2026-09-13)
+
+`rnd._coverage_ok` gated which chains produce a tradeable Q, and it was a fixed
+±10% of spot with no tenor in it. Measured on European chains — no early exercise
+involved — the truncation error of the model-free integral depends on coverage in
+σ√T units and barely on tenor or vol: 1.0σ costs 1.2–2.7 vol points, 2.5σ costs
+0.001–0.10. The fixed rule was worth 2.33σ on a 30-day 15%-vol chain and **0.41σ**
+on a 180-day 35%-vol one, where the recovered vol is ~2.7 points too LOW while the
+flag reads True — the direction that makes the market look cheap.
+
+`COVERAGE_SIGMAS = 2.5`, sized from an ATM implied vol rather than from the
+model-free estimate being tested. This makes the gate STRICTER and therefore
+**cannot manufacture a result**: it can only remove dates from the ledger, never
+add them. It is recorded here because it changes which dates are eligible to be
+recorded at all, and because the §2.2/§2.3 studies must be read knowing that the
+admission rule changed on this date.
 
 ## §7 — Results
 

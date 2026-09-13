@@ -30,7 +30,13 @@ PRICES = [round(x * 100.0 / _walk[-1], 4) for x in _walk]      # end at 100
 SPOT = PRICES[-1]
 
 
-def _chain(iv=0.26, spot=SPOT, strikes=range(70, 131, 5), min_px=0.02):
+def _chain(iv=0.26, spot=SPOT, strikes=range(70, 131, 5), min_px=0.001):
+    """A chain with WINGS. The floor was $0.02, which on a flat-vol synthetic
+    chain deletes everything past about -15% — real markets keep those puts
+    quotable because skew prices them far above flat-vol value. With the wings
+    gone this fixture could not satisfy a coverage test that scales with
+    sigma*sqrt(T), and the card correctly refused to trade on it. Pass a higher
+    min_px to build the truncated case on purpose."""
     quotes = []
     for k in strikes:
         for kind in ("call", "put"):

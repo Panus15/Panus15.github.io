@@ -58,12 +58,17 @@ def _chain_files(*, dense=True, dte=30, iv_mult=1.35, days=600):
     spot = prices[-1]
     iv = volforecast.har_rv_forecast(prices) * iv_mult
     T, r = dte / 365.0, 0.03
-    quotes, k = [], round(spot * (0.78 if dense else 0.97))
+    quotes, k = [], round(spot * (0.70 if dense else 0.97))
     step = max(round(spot * (0.01 if dense else 0.05)), 1)
-    while k <= spot * (1.22 if dense else 1.03):
+    while k <= spot * (1.30 if dense else 1.03):
         for kind in ("call", "put"):
             mid = pricing.price(spot, k, T, r, 0.0, iv, kind)
-            if mid < 0.02:
+            # a tenth of a cent, not two cents: on a flat-vol synthetic chain a
+            # $0.02 floor deletes everything past about -15%, and coverage is
+            # measured in sigma*sqrt(T), which at a 25% vol over 30 days wants
+            # +/-18%. Real markets keep those puts quotable because skew prices
+            # them far above flat-vol value.
+            if mid < 0.001:
                 continue
             half = max(mid * 0.01, 0.01)
             quotes.append({"expiry_days": dte, "strike": float(k), "kind": kind,
