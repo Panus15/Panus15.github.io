@@ -4,12 +4,13 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 46 test files · **539 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **547 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
-of PASS lines for work that did not happen, so a stdlib machine runs 539 and CI —
-which installs numpy on purpose — runs **549**. `tests/test_wiring.py` fails if this
-sentence stops matching the tree.
+of PASS lines for work that did not happen, so a stdlib machine runs 547 and CI —
+which installs numpy on purpose — runs **557**. `tests/test_wiring.py` fails if this
+sentence stops matching the tree, and `tools/check_offline.py` proves every file
+passes with the network denied.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
 (sector rotation, PREREGISTRATION.md §7.1). The forward options ledger has settled
@@ -763,7 +764,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 539 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done      # 547 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

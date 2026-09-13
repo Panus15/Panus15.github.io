@@ -113,6 +113,34 @@ def test_every_internal_exemption_carries_a_reason():
     assert not blank, f"exemptions without a reason: {blank}"
 
 
+def test_no_test_file_imports_a_name_that_its_runner_would_collect():
+    """Every file here collects tests with `globals()` filtered on a `test_` prefix,
+    so ANY imported name with that prefix is called as if it were a test.
+
+    `test_check_offline.py` imported `tools.check_offline.test_files` — a production
+    helper that enumerates the suite. It takes no arguments, returns a list and
+    raises nothing, so the runner called it, counted it, and printed
+    `PASS test_files`: a seventh result for six tests. That is the failure this repo
+    keeps finding in other forms — work that did not happen looking like work that
+    succeeded — and here it inflates the very count the docs quote.
+    """
+    import ast
+    bad = []
+    for f in sorted(os.listdir(os.path.join(ROOT, "tests"))):
+        if not (f.startswith("test_") and f.endswith(".py")):
+            continue
+        tree = ast.parse(io.open(os.path.join(ROOT, "tests", f),
+                                 encoding="utf-8").read())
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.Import, ast.ImportFrom)):
+                for al in n.names:
+                    bound = al.asname or al.name.split(".")[0]
+                    if bound.startswith("test_"):
+                        bad.append(f"tests/{f}:{n.lineno} imports {bound!r}")
+    assert not bad, ("; ".join(bad) + " — the runner collects anything named test_*, "
+                     "so import it under another name (`as something_else`)")
+
+
 def test_the_documented_test_count_is_the_real_one():
     """The docs advertise a scale. It was maintained by hand and edited six times
     in one session, which is the reliable signal that it should not be.

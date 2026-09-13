@@ -43,6 +43,18 @@ jobs:
             exit 1
           fi
 
+      # This runner HAS outbound access, and that is exactly why this check
+      # belongs here. Three tests once passed only because the dev sandbox had
+      # none: one asserted a vendor was unreachable, one had its fixture CSV
+      # overwritten by a real download, one had live vendor entries appended to
+      # its ledger mid-test. The suite was making real API calls and nothing said
+      # so. This re-runs every file with EXTERNAL connections denied (loopback
+      # stays open, so local-server fixtures still work) and fails if any file
+      # needs a network it should not need.
+      - name: Prove the suite needs no network
+        working-directory: options-alpha-engine
+        run: python3 -m tools.check_offline
+
       - name: Smoke-test the demo (stdlib-only, no deps)
         working-directory: options-alpha-engine
         run: python3 demo.py
