@@ -187,9 +187,88 @@ def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
     }
 
 
+def ledger_panel(ledger_path: str, *, dte_hint: int = 30) -> dict:
+    """The FORWARD TEST over time — or a named reason it is empty.
+
+    Why this is on the page. Every other panel here is one snapshot: today's
+    decision, today's quadrant. Neither can answer the only question that matters,
+    which is whether the edge PERSISTS. `tools/paper_trade.py` already records a
+    dated (P, Q) pair every day it is run, so the trend exists the moment the clock
+    starts — it was simply never rendered, and an invisible clock is one nobody
+    winds. The largest risk to this project is not a modelling error, it is that
+    the daily job stops being run.
+
+    An empty ledger is reported as EMPTY with the command that starts it, never as
+    a blank panel. 0 recorded and 0 settled is the honest current state and it is
+    what a reader most needs to see before trusting anything else on this page.
+    """
+    if not ledger_path:
+        return {"available": False, "recorded": 0, "settled": 0,
+                "reason": "no forward-test ledger was supplied, so nothing on this "
+                          "page has been graded against an outcome that had not "
+                          "happened yet",
+                "how": "python3 -m tools.paper_trade record --source tradier "
+                       "--symbol SPX --dte 30 --ledger spx.jsonl   (once per "
+                       "trading day), then pass --ledger spx.jsonl"}
+    if not os.path.exists(ledger_path):
+        return {"available": False, "recorded": 0, "settled": 0,
+                "reason": f"the ledger {ledger_path!r} does not exist yet",
+                "how": "python3 -m tools.paper_trade record ... --ledger "
+                       + ledger_path}
+    try:
+        from tools.paper_trade import PaperLedger
+        led = PaperLedger.load(ledger_path)
+        rep = led.report()
+    except (OSError, ValueError, KeyError, ZeroDivisionError) as e:
+        return {"available": False, "recorded": 0, "settled": 0,
+                "reason": f"the ledger could not be read ({e})",
+                "how": "a half-written line is the usual cause; the file is "
+                       "append-only JSON lines"}
+    if not led.entries:
+        return {"available": False, "recorded": 0, "settled": 0,
+                "reason": "the ledger exists but holds 0 recorded dates — the "
+                          "clock has not started",
+                "how": "python3 -m tools.paper_trade record ... --ledger "
+                       + ledger_path}
+
+    series = []
+    for e in led.entries:
+        series.append({
+            "date": str(e.get("asof") or ""),
+            "pVol": e.get("p_vol"), "qVol": e.get("q_vol"), "vrp": e.get("vrp"),
+            "traded": bool(e.get("traded")),
+            "settled": e.get("status") == "settled",
+            # A date whose wings did not cover +/-10% has a Q biased LOW, so it is
+            # marked rather than quietly averaged in with the trustworthy ones. A
+            # date that never RECORDED the flag is unknown, not fine: an unmarked
+            # point on the chart reads as "checked and good", so it is marked too,
+            # with its own reason.
+            "coverage": (bool(e["coverage_ok"]) if "coverage_ok" in e else False),
+            "coverageKnown": "coverage_ok" in e,
+            "pnl": e.get("trade_pnl"),
+        })
+    dtes = [int(e.get("dte") or dte_hint) for e in led.entries] or [dte_hint]
+    return {
+        "available": True,
+        "recorded": rep.n_recorded, "settled": rep.n_settled, "open": rep.n_open,
+        "firstDate": series[0]["date"], "lastDate": series[-1]["date"],
+        "dte": max(dtes),
+        "series": series,
+        "pNll": rep.p_nll, "qNll": rep.q_nll, "nllWinRate": rep.nll_win_rate,
+        "pLeftTail": rep.p_left_tail, "qLeftTail": rep.q_left_tail,
+        "leftTailWinRate": rep.left_tail_win_rate,
+        "nTrades": rep.n_trades, "totalPnl": rep.total_pnl,
+        "hitRate": rep.trade_hit_rate, "annSharpe": rep.ann_sharpe,
+        "verdict": rep._verdict(),
+        # the honest lag: a score exists only once a horizon has elapsed
+        "needMoreRecords": max(max(dtes) - rep.n_recorded, 0) if rep.n_settled == 0
+                           else 0,
+    }
+
+
 def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: int,
                   tail: int, horizon: int, spark: int = 120, run_test: bool = True,
-                  options: dict | None = None):
+                  options: dict | None = None, ledger: dict | None = None):
     pts = rotation_map(px, bench, window=window, mom_lag=mom_lag, tail=tail)
     if not pts:
         raise SystemExit(f"no symbol has the {2 * window + mom_lag + tail} bars this "
@@ -230,6 +309,7 @@ def build_payload(px: dict, bench: list, dates: list, *, window: int, mom_lag: i
         # Always a dict, never None: the options panel renders its own ABSENCE, so
         # "no chain supplied" must reach the page rather than be falsy and skipped.
         "options": options if options is not None else options_panel("", ""),
+        "ledger": ledger if ledger is not None else ledger_panel(""),
     }
 
     if run_test:
@@ -409,6 +489,33 @@ td.excess{white-space:nowrap}
 #opt ul.inp .st{font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-3);white-space:nowrap}
 #opt .ev{margin:14px 0 0;font-size:12.5px;color:var(--ink-3);max-width:80ch}
+
+/* --- forward-test ledger: the only panel that can show PERSISTENCE --- */
+#fwd{margin-bottom:22px}
+#fwd .clocks{display:grid;gap:1px;background:var(--edge);
+  grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin:2px 0 16px}
+#fwd .clocks div{background:var(--panel);padding:10px 13px}
+#fwd .clocks .k{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3)}
+#fwd .clocks .v{font:600 20px/1.2 ui-sans-serif,system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;margin-top:3px}
+#fwd .vq{display:block;width:100%;height:150px;border:1px solid var(--edge);
+  border-radius:8px;background:var(--ground)}
+#fwd .key{display:flex;flex-wrap:wrap;gap:6px 18px;margin:10px 0 0;font-size:12.5px;
+  color:var(--ink-2)}
+#fwd .key i{display:inline-block;width:18px;height:3px;border-radius:2px;
+  vertical-align:middle;margin-right:6px}
+#fwd .score{display:grid;gap:1px;background:var(--edge);margin-top:16px;
+  grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+#fwd .score div{background:var(--panel);padding:10px 13px;font-size:13px}
+#fwd .verdict-line{margin:16px 0 0;padding:12px 14px;border:1px solid var(--edge);
+  border-left:3px solid var(--accent);border-radius:8px;font-size:13.5px;
+  color:var(--ink);max-width:86ch}
+#fwd .absent{border:1px dashed var(--edge);border-radius:8px;padding:14px;
+  color:var(--ink-2);font-size:13.5px;max-width:84ch}
+#fwd .absent code{background:var(--ground);border:1px solid var(--edge);
+  border-radius:5px;padding:1px 6px;font-size:12.5px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
 </style>
 
 <div class="wrap">
@@ -428,6 +535,8 @@ td.excess{white-space:nowrap}
 </header>
 
 <section class="card section" id="opt"></section>
+
+<section class="card section" id="fwd"></section>
 
 <div class="grid">
   <section class="card">
@@ -619,6 +728,95 @@ function drawOptions(){
     ${(o.warnings||[]).map(w=>`<p class="ev" style="color:var(--weak)">!! ${esc(w)}</p>`).join("")}`;
 }
 
+function drawForward(){
+  const f = DATA.ledger, el = document.getElementById("fwd");
+  if(!f || !f.available){
+    el.innerHTML = `<header><h2>The forward test</h2>
+        <span class="eyebrow">0 recorded &middot; 0 settled</span></header>
+      <div class="absent"><b>Nothing on this page has been graded against an
+        outcome that had not already happened.</b><br>
+        ${esc(f ? f.reason : "no ledger reached this page")}.
+        <div style="margin-top:10px">To start the clock:
+          <code>${esc(f ? f.how : "")}</code></div>
+        <div style="margin-top:10px;color:var(--ink-3)">The first score appears only
+          after a full horizon has elapsed. That lag is the honest cost of an
+          out-of-sample test, not a delay worth engineering away.</div>
+      </div>`;
+    return;
+  }
+  const S = f.series || [];
+  // P vs Q over time. The gap between the lines IS the variance risk premium, so
+  // a reader can see whether the edge persists or was one rich afternoon.
+  const vals = S.flatMap(d=>[d.pVol, d.qVol]).filter(v=>typeof v === "number");
+  const lo = Math.min(...vals, 0), hi = Math.max(...vals, 0.01);
+  const W = 800, H = 150, PAD = 8;
+  const x = i => PAD + (S.length<2 ? 0 : i*(W-2*PAD)/(S.length-1));
+  const y = v => H-PAD - (v-lo)/((hi-lo)||1)*(H-2*PAD);
+  const path = key => S.map((d,i)=> (typeof d[key]==="number"
+      ? `${i&&typeof S[i-1][key]==="number"?"L":"M"}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`
+      : "")).join("");
+  const flags = S.map((d,i)=> d.coverage ? "" :
+      `<circle cx="${x(i).toFixed(1)}" cy="${(H-PAD).toFixed(1)}" r="2.5"
+        fill="var(--weak)"><title>${esc(d.date)}: ${d.coverageKnown
+        ? "wings did not cover +/-10%, so this date's Q is biased LOW"
+        : "this date did not record whether its wings covered +/-10%, so its Q "
+          + "cannot be shown to be unbiased"}</title></circle>`).join("");
+  const chart = `<svg class="vq" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+      role="img" aria-label="forecast vol versus implied vol over time">
+      <path d="${path("qVol")}" fill="none" stroke="var(--lag)" stroke-width="2"/>
+      <path d="${path("pVol")}" fill="none" stroke="var(--lead)" stroke-width="2"/>
+      ${flags}</svg>
+    <div class="key">
+      <span><i style="background:var(--lag)"></i>Q &mdash; what the market implies</span>
+      <span><i style="background:var(--lead)"></i>P &mdash; what we forecast</span>
+      <span style="color:var(--ink-3)">Q above P = variance premium to sell.
+        ${S.some(d=>!d.coverage) ? "Amber marks = thin wings, Q biased LOW." : ""}</span>
+    </div>`;
+
+  const lag = f.needMoreRecords > 0
+    ? `<div class="clocks"><div><div class="k">First score in</div>
+        <div class="v">${f.needMoreRecords}</div>
+        <div class="k" style="text-transform:none;letter-spacing:0">more daily
+          records</div></div></div>` : "";
+
+  const score = f.settled > 0 ? `<div class="score">
+      <div><div class="k">Mean NLL</div>P ${f.pNll.toFixed(4)} vs Q ${f.qNll.toFixed(4)}
+        &mdash; <b style="color:${f.pNll<f.qNll?"var(--lead)":"var(--lag)"}">P wins
+        ${(f.nllWinRate*100).toFixed(0)}% of dates</b></div>
+      <div><div class="k">Left-tail loss</div>P ${f.pLeftTail.toFixed(4)} vs Q
+        ${f.qLeftTail.toFixed(4)} &mdash; P wins
+        ${(f.leftTailWinRate*100).toFixed(0)}%</div>
+      <div><div class="k">Graded trades</div>${f.nTrades} &middot; total
+        <b style="color:${f.totalPnl>=0?"var(--lead)":"var(--lag)"}">
+        ${f.totalPnl>=0?"+":""}${money(f.totalPnl)}</b> &middot; hit
+        ${(f.hitRate*100).toFixed(0)}%</div>
+      <div><div class="k">~Annualised Sharpe</div>${f.annSharpe===f.annSharpe
+        ? f.annSharpe.toFixed(2) : "n/a"}
+        <span style="color:var(--ink-3)">read the interval, not the point</span></div>
+    </div>` : "";
+
+  // A chain carrying no asof gives entries with no date. Printing " - " would be
+  // a broken range; saying the dates are missing is the actual state.
+  const span = (f.firstDate && f.lastDate)
+    ? `${esc(f.firstDate)} &ndash; ${esc(f.lastDate)}`
+    : "dates not recorded by this source";
+  el.innerHTML = `<header><h2>The forward test</h2>
+      <span class="eyebrow">${span} &middot; ${f.dte}d horizon</span></header>
+    <div class="clocks">
+      <div><div class="k">Recorded</div><div class="v">${f.recorded}</div></div>
+      <div><div class="k">Settled</div><div class="v">${f.settled}</div></div>
+      <div><div class="k">Open</div><div class="v">${f.open}</div></div>
+      <div><div class="k">Signal fired</div><div class="v">${
+        S.filter(d=>d.traded).length}</div>
+        <div class="k" style="text-transform:none;letter-spacing:0">${f.nTrades
+        } graded so far</div></div>
+    </div>
+    ${lag}
+    ${chart}
+    ${score}
+    <div class="verdict-line">${esc(f.verdict)}</div>`;
+}
+
 function drawTest(){
   const t = DATA.test, el = document.getElementById("testcard");
   if(!t){ el.remove(); return; }
@@ -724,7 +922,7 @@ function link(){
     const h=e.target.closest("[data-sym]"); if(h) set(h.getAttribute("data-sym"), true);});
 }
 
-drawOptions(); drawRRG(); drawBoard(); drawTest(); drawSparks(); link();
+drawOptions(); drawForward(); drawRRG(); drawBoard(); drawTest(); drawSparks(); link();
 </script>
 """
 
@@ -778,8 +976,9 @@ def main(argv=None):
     ap.add_argument("--max-risk-frac", dest="max_risk_frac", type=float, default=0.02,
                     help="fraction of equity the ticket may put at MAXIMUM LOSS")
     ap.add_argument("--ledger", default="",
-                    help="paper-trade ledger; its settled count is the ticket's "
-                         "evidence label (read from disk, never typed)")
+                    help="paper-trade ledger; renders the FORWARD TEST panel (P vs Q "
+                         "over time) and supplies the ticket's evidence label, read "
+                         "from disk and never typed")
     a = ap.parse_args(argv)
 
     if a.demo or not a.csv:
@@ -794,7 +993,8 @@ def main(argv=None):
                          ledger=a.ledger)
     payload = build_payload(px, bench, dates, window=a.window, mom_lag=a.mom_lag,
                             tail=a.tail, horizon=a.horizon, run_test=not a.no_test,
-                            options=opts)
+                            options=opts,
+                            ledger=ledger_panel(a.ledger, dte_hint=a.dte))
     # utf-8 explicitly: the page carries em dashes and Python would otherwise
     # write them in the machine's own codepage, which the browser has no way to
     # know about. A dashboard that renders as mojibake on a non-English Windows
@@ -813,6 +1013,9 @@ def main(argv=None):
                  else "REFUSED: " + ", ".join(r["code"] for r in o["refusals"])))
     else:
         print("  options: not on the page — " + o.get("reason", ""))
+    f = payload["ledger"]
+    print(f"  forward: {f['recorded']} recorded, {f['settled']} settled"
+          if f.get("available") else "  forward: EMPTY — " + f.get("reason", ""))
     return 0
 
 

@@ -38,7 +38,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from engine import pricing, volforecast
 from engine.data import SyntheticAdapter
 from tools.rotation_dashboard import (TEMPLATE, build_payload, demo_world,
-                                      options_panel, render)
+                                      ledger_panel, options_panel, render)
 
 #: One temp dir for the process. The first draft cached paths INSIDE a
 #: TemporaryDirectory that a later test had already deleted, so four tests read a
@@ -280,6 +280,228 @@ def test_every_colour_the_panel_uses_is_defined_in_the_palette():
     defined = set(re.findall(r"--([a-z0-9-]+)\s*:", TEMPLATE))
     missing = sorted(used - defined)
     assert not missing, f"undefined CSS variables: {missing}"
+
+
+# --------------------------------------------------------------------------
+# The forward-test panel — the only one that can show PERSISTENCE
+# --------------------------------------------------------------------------
+
+_LEDGER: list = []
+
+
+def _ledger_file():
+    """A real ledger, recorded and settled offline. Built once per process."""
+    if _LEDGER:
+        return _LEDGER[0]
+    from engine.signal_backtest import synthetic_chain_series
+    from models.baseline import BaselineDensityForecaster
+    from tools.paper_trade import paper_trade_series
+    ladder = tuple(round(-0.20 + 0.025 * i, 3) for i in range(17))
+    prices = SyntheticAdapter(seed=7).price_history("SPY", days=700)
+    led = paper_trade_series(prices, synthetic_chain_series(dte=21, ladder=ladder,
+                                                           min_px=0.005),
+                             BaselineDensityForecaster(), dte=21, warmup=120, step=9)
+    path = os.path.join(_TMP, "ledger.jsonl")
+    led.save(path)
+    _LEDGER.append(path)
+    return path
+
+
+def test_with_no_ledger_the_panel_says_the_clock_has_not_started():
+    f = ledger_panel("")
+    assert f["available"] is False
+    assert f["recorded"] == 0 and f["settled"] == 0
+    assert "graded" in f["reason"]
+    assert "paper_trade record" in f["how"]
+
+
+def test_a_missing_ledger_file_names_itself():
+    f = ledger_panel(os.path.join(_TMP, "not-there.jsonl"))
+    assert f["available"] is False and "does not exist" in f["reason"]
+    assert f["recorded"] == 0
+
+
+def test_an_empty_ledger_file_is_zero_recorded_not_an_error():
+    """A file that exists with nothing in it is the state right after someone sets
+    up the job and before the first run. It must read as 0, not as broken."""
+    p = os.path.join(_TMP, "empty.jsonl")
+    io.open(p, "w", encoding="utf-8").write("")
+    f = ledger_panel(p)
+    assert f["available"] is False and f["recorded"] == 0
+    assert "0 recorded" in f["reason"], f["reason"]
+
+
+def test_a_corrupt_ledger_line_is_reported_not_silently_skipped():
+    p = os.path.join(_TMP, "corrupt.jsonl")
+    io.open(p, "w", encoding="utf-8").write('{"id":0,"status":"open"}\n{not json\n')
+    f = ledger_panel(p)
+    assert f["available"] is False and f["reason"]
+
+
+def test_a_real_ledger_reaches_the_panel_with_its_counts_and_series():
+    f = ledger_panel(_ledger_file(), dte_hint=21)
+    assert f["available"] is True
+    assert f["recorded"] > 0 and f["settled"] > 0
+    assert f["recorded"] == f["settled"] + f["open"], (
+        "recorded must equal settled plus open, or one of the three is wrong")
+    assert len(f["series"]) == f["recorded"]
+    for d in f["series"]:
+        assert set(d) >= {"date", "pVol", "qVol", "vrp", "traded", "settled",
+                          "coverage", "pnl"}
+
+
+def test_the_panel_counts_agree_with_the_ledger_itself():
+    """The panel must not become a second, drifting source of truth for the two
+    numbers the whole project is waiting on."""
+    from tools.paper_trade import PaperLedger
+    path = _ledger_file()
+    rep = PaperLedger.load(path).report()
+    f = ledger_panel(path, dte_hint=21)
+    assert (f["recorded"], f["settled"], f["open"]) == (rep.n_recorded,
+                                                        rep.n_settled, rep.n_open)
+    assert f["nTrades"] == rep.n_trades and f["totalPnl"] == rep.total_pnl
+    assert f["verdict"] == rep._verdict()
+
+
+def test_the_signal_fired_count_and_the_graded_count_are_kept_separate():
+    """They differ — a date the signal traded stays ungraded until its horizon
+    elapses — and showing them under one label reads as an inconsistency."""
+    f = ledger_panel(_ledger_file(), dte_hint=21)
+    fired = sum(1 for d in f["series"] if d["traded"])
+    assert fired >= f["nTrades"], (fired, f["nTrades"])
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    draw = page[page.index("function drawForward()"):page.index("function drawTest()")]
+    assert "Signal fired" in draw and "Graded trades" in draw
+    assert "graded so far" in draw
+
+
+def test_dates_missing_from_the_source_do_not_render_a_broken_range():
+    """A synthetic chain carries no asof, so every entry's date is empty. " - "
+    is a broken range; saying the dates are absent is the actual state."""
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    draw = page[page.index("function drawForward()"):page.index("function drawTest()")]
+    assert "dates not recorded" in draw
+    f = ledger_panel(_ledger_file(), dte_hint=21)
+    assert f["firstDate"] == "", "the fixture is supposed to have no dates"
+
+
+def test_the_lag_to_a_first_score_is_shown_while_nothing_has_settled():
+    """The honest cost of an out-of-sample test. Zero settled with no explanation
+    looks like a broken panel rather than a clock that has not run long enough."""
+    path = os.path.join(_TMP, "young.jsonl")
+    src = [l for l in io.open(_ledger_file(), encoding="utf-8")][:3]
+    out = []
+    for line in src:
+        e = json.loads(line)
+        e["status"] = "open"
+        e.pop("trade_pnl", None)
+        out.append(json.dumps(e))
+    io.open(path, "w", encoding="utf-8").write("\n".join(out) + "\n")
+    f = ledger_panel(path, dte_hint=21)
+    assert f["available"] is True and f["settled"] == 0
+    assert f["needMoreRecords"] > 0, f
+    assert f["needMoreRecords"] == max(f["dte"] - f["recorded"], 0)
+
+
+def test_the_forward_panel_sits_between_the_decision_and_the_rotation_chart():
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    assert page.index('id="opt"') < page.index('id="fwd"') < page.index('id="rrg"')
+    assert "function drawForward()" in page
+    body = page[page.rindex("function drawForward()"):]
+    assert "drawForward();" in body, "defined but never invoked"
+
+
+def test_thin_coverage_dates_are_flagged_rather_than_averaged_in_silently():
+    """A date whose wings did not reach +/-10% has a Q biased LOW, which inflates
+    the apparent variance premium in exactly the regimes that matter."""
+    f = ledger_panel(_ledger_file(), dte_hint=21)
+    assert any("coverage" in d for d in f["series"])
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    draw = page[page.index("function drawForward()"):page.index("function drawTest()")]
+    assert "biased LOW" in draw and "d.coverage" in draw
+
+
+def test_a_date_that_never_recorded_its_coverage_is_not_treated_as_clean():
+    """An UNMARKED point on the chart reads as "checked and good". A date missing
+    the flag was never checked, so defaulting it to trustworthy is a claim nobody
+    made — it is marked, with its own reason."""
+    p = os.path.join(_TMP, "nocov.jsonl")
+    rows = []
+    for line in list(io.open(_ledger_file(), encoding="utf-8"))[:4]:
+        e = json.loads(line)
+        e.pop("coverage_ok", None)
+        rows.append(json.dumps(e))
+    io.open(p, "w", encoding="utf-8").write("\n".join(rows) + "\n")
+    f = ledger_panel(p, dte_hint=21)
+    assert f["available"] is True
+    assert all(d["coverage"] is False for d in f["series"]), (
+        "a missing coverage flag was read as coverage confirmed")
+    assert all(d["coverageKnown"] is False for d in f["series"])
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    draw = page[page.index("function drawForward()"):page.index("function drawTest()")]
+    assert "did not record whether" in draw, "the two reasons read the same"
+
+
+def test_a_losing_ledger_is_printed_as_losing():
+    """abs() on a total is the single cheapest way to turn a failing forward test
+    into a passing-looking one, and the positive fixture cannot catch it."""
+    p = os.path.join(_TMP, "losing.jsonl")
+    rows = []
+    for line in io.open(_ledger_file(), encoding="utf-8"):
+        e = json.loads(line)
+        if e.get("trade_pnl") is not None:
+            e["trade_pnl"] = -abs(e["trade_pnl"]) - 1.0
+        rows.append(json.dumps(e))
+    io.open(p, "w", encoding="utf-8").write("\n".join(rows) + "\n")
+    f = ledger_panel(p, dte_hint=21)
+    assert f["nTrades"] > 0
+    assert f["totalPnl"] < 0, f["totalPnl"]
+
+
+def test_the_lag_line_disappears_once_something_has_settled():
+    """Telling an operator to keep waiting when the score already exists is worse
+    than showing nothing: it hides the answer behind a countdown.
+
+    The short ledger is the case that matters. With 3 settled entries at a 21-day
+    horizon the arithmetic `horizon - recorded` still returns 18, so a countdown
+    that is not gated on `settled == 0` would demand 18 more records from someone
+    already holding a graded result."""
+    f = ledger_panel(_ledger_file(), dte_hint=21)
+    assert f["settled"] > 0 and f["recorded"] > f["dte"]
+    assert f["needMoreRecords"] == 0, f["needMoreRecords"]
+
+    short = os.path.join(_TMP, "short_settled.jsonl")
+    rows = [l for l in io.open(_ledger_file(), encoding="utf-8")
+            if json.loads(l).get("status") == "settled"][:3]
+    io.open(short, "w", encoding="utf-8").writelines(rows)
+    g = ledger_panel(short, dte_hint=21)
+    assert (g["recorded"], g["settled"]) == (3, 3), (g["recorded"], g["settled"])
+    assert g["dte"] - g["recorded"] == 18, "the fixture no longer tests the gate"
+    assert g["needMoreRecords"] == 0, (
+        f"asked for {g['needMoreRecords']} more records while already holding "
+        f"{g['settled']} graded results")
+
+
+def test_the_payload_always_carries_a_ledger_key():
+    payload = build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                            horizon=21, run_test=False)
+    assert isinstance(payload["ledger"], dict)
+    assert payload["ledger"]["available"] is False
+
+
+def test_an_absent_date_range_is_guarded_in_the_page_itself():
+    """The fixture has no dates, so an unguarded range renders as a bare dash. The
+    guard is pinned in the source because a portable test cannot run the DOM."""
+    page = render(build_payload(*demo_world(n=700), window=63, mom_lag=5, tail=12,
+                                horizon=21, run_test=False))
+    draw = page[page.index("function drawForward()"):page.index("function drawTest()")]
+    assert "f.firstDate && f.lastDate" in draw, (
+        "the date range is printed unconditionally")
 
 
 def _run_all():

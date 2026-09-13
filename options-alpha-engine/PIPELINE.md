@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 46 test files · **509 tests, all green** · pure stdlib, no
+**Scale:** 46 test files · **525 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -338,6 +338,46 @@ the measurement drifted apart in the first place. **13/13 mutants killed**, afte
 first sweep where **7 of 13 survived**: the tests had exercised the rule through
 one real trade, which happened to exit on time and never once touched the profit
 target. Deterministic constructed series replaced it.
+
+### 2.7d The forward test existed and was invisible
+
+Every other panel on the page is one snapshot — today's decision, today's quadrant
+— and no snapshot can answer the only question that matters, which is whether the
+edge **persists**. `tools/paper_trade.py` has been recording a dated `(P, Q)` pair
+on every run since it was written. The trend existed. Nothing rendered it.
+
+That matters more than it sounds, because the largest risk to this project is not a
+modelling error — it is that the daily job stops being run, and **an invisible clock
+is one nobody winds**. The dashboard now carries a forward-test panel: recorded /
+settled / open, P against Q over time with the gap between the lines being the
+variance premium itself, the calibration and profit scoreboards, and the ledger's
+own verdict. Verified on a 112-record offline ledger (109 settled, 73 graded
+trades), and the verdict it printed was `P does NOT beat the market's Q density OOS`
+**while the trades showed +$2,934 at a 1.84 Sharpe** — the two questions kept
+separate, which is the whole point of that split.
+
+An empty ledger renders as **0 recorded, 0 settled** with the command that starts
+the clock, never as a blank panel, and while nothing has settled it prints how many
+more daily records the first score needs. That lag is the honest cost of an
+out-of-sample test, not a delay to engineer away.
+
+Four display defects found by testing it, each one a number that would have misled:
+
+- **"Traded 74" beside "Trades 73"** read as an inconsistency. They are different
+  events — the signal fired on 74 dates, 73 of those have been graded — now labelled
+  *Signal fired* and *Graded trades*.
+- A chain carrying no `asof` gave every entry an empty date, so the header rendered a
+  bare dash as its range. It now says the dates were not recorded.
+- A ledger entry **missing** `coverage_ok` was read as coverage *confirmed*. An
+  unmarked point on the chart reads as "checked and good", so a date that never
+  recorded the flag is marked too, with its own reason.
+- The countdown to a first score was not gated on `settled == 0`, so a ledger with 3
+  graded results at a 21-day horizon would still have demanded **18 more records**
+  from someone already holding the answer.
+
+**16/16 mutants killed**, after a first sweep where 5 of 16 survived — including
+`abs()` on the total P&L, which the positive fixture could not catch and which is
+the cheapest possible way to turn a failing forward test into a passing-looking one.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -605,7 +645,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 509 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done      # 525 tests, 46 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

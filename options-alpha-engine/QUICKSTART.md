@@ -37,15 +37,21 @@ python3 -m tools.quickstart --chain-json spx.json --price-json spx_px.json \
 
 The page then leads with the vol side, P vs Q, the VRP, the fused size multiplier,
 and **the order itself** — every leg, the limit, the dollar worst case — or a named
-refusal. `--ledger` supplies the evidence label from the settled-trade count on
-disk; it is read, never typed.
+refusal.
+
+`--ledger` adds the second panel, and it is the one that can answer *"does the edge
+persist?"* — recorded / settled / open, **P against Q over time** (the gap between
+the lines is the variance premium), the calibration and profit scoreboards, and the
+verdict. It also supplies the ticket's evidence label from the settled count on
+disk: read, never typed. With no ledger it prints **0 recorded, 0 settled** and the
+command that starts the clock, because an invisible clock is one nobody winds.
 
 ## 0b. Everything else, no network, no installs
 
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 509 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done   # 525 tests, 46 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

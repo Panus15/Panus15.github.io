@@ -211,8 +211,9 @@ def main(argv=None):
     opts = rotation_dashboard.options_panel(
         a.chain_json, a.price_json, symbol=a.symbol, equity=a.equity,
         ledger=a.ledger)
-    payload = rotation_dashboard.build_payload(px, bench, dates, options=opts,
-                                               **PARAMS)
+    payload = rotation_dashboard.build_payload(
+        px, bench, dates, options=opts,
+        ledger=rotation_dashboard.ledger_panel(a.ledger), **PARAMS)
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(rotation_dashboard.render(payload))
     print(f"  wrote {a.out}  ({len(payload['points'])} sectors, "
@@ -231,6 +232,11 @@ def main(argv=None):
         # Said out loud rather than left off: the validated half being absent is
         # the most important thing about a page that is only showing context.
         lines.append("options: NOT ON THIS PAGE — " + o.get("reason", ""))
+    f = payload["ledger"]
+    lines.append(f"forward: {f['recorded']} recorded, {f['settled']} settled"
+                 if f.get("available")
+                 else "forward: EMPTY — nothing here has been graded against an "
+                      "outcome that had not already happened")
     if payload["test"]:
         t = payload["test"]
         lines += ["panel: " + t["panelVerdict"], "book : " + t["bookVerdict"]]
