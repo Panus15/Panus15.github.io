@@ -112,6 +112,19 @@ class ShareReport:
         return sum(r.fund_contracts for r in known) / float(oi)
 
     def verdict(self) -> str:
+        if not self.rows:
+            # DISTINCT from the case below. "No fund line matched a listed quote"
+            # and "matched quotes carried no open interest" have different causes
+            # and different fixes, and both used to print the same sentence —
+            # sending an operator to re-dump a chain whose open interest was fine
+            # when the real problem was an as-of date or an expiry that is not in
+            # the chain. It can also be the ANSWER: a fund that overwrites through
+            # OTC notes holds no listed options to have a share of.
+            return (f"NOTHING MATCHED — {self.unmatched} fund line(s) found no "
+                    f"listed quote at the same kind, strike and days-to-expiry. "
+                    f"Check the book's as-of date and that the chain covers that "
+                    f"expiry before blaming the chain; and if the fund holds no "
+                    f"LISTED options at all, that is itself the answer.")
         if not self.known_rows:
             return ("NO OPEN INTEREST DATA — every matched strike had OI 0, which "
                     "means unknown here, not zero. Nothing can be concluded; "

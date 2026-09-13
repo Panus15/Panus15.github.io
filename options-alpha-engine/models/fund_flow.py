@@ -195,7 +195,16 @@ class FundBook:
                     # its option at all - if it did not, the symbol IS the row.
                     had_cols = strike > 0
                     if not had_cols:
-                        underlying = underlying or root
+                        # `underlying` may itself BE the OSI symbol: `pick` reads
+                        # "symbol" as a ticker column, and issuer files routinely
+                        # name that column "symbol" while putting the contract in
+                        # it. "QQQ   261016C00570000" is truthy, so `underlying or
+                        # root` kept the whole symbol as the ticker — and then
+                        # every line was filtered out downstream against "QQQ",
+                        # yielding zero rows AND zero unmatched, so the tool
+                        # blamed the chain for carrying no open interest.
+                        if not underlying or parse_osi(underlying):
+                            underlying = root
                         kind = k
                         strike = strk
                     expiry = expiry or exp

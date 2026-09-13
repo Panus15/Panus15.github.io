@@ -52,7 +52,7 @@ command that starts the clock, because an invisible clock is one nobody winds.
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
 python3 -m tools.check_offline      # prove no test needs a network
-for t in tests/test_*.py; do python3 "$t"; done   # 547 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done   # 554 tests, 47 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)

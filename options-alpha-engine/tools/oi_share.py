@@ -25,6 +25,17 @@ from models.fund_flow import FundBook                       # noqa: E402
 from models.oi_share import share_of_open_interest          # noqa: E402
 
 
+def asof_from_path(path: str) -> str:
+    """`tools/archive_holdings.py` writes `outdir/FUND/YYYY-MM-DD.csv`, so the date
+    is the archiver's own convention rather than a guess. Returns "" if the name
+    does not carry one — an empty as-of is reported, never silently replaced with
+    today, because a book dated a week ago read as today shifts every line's days
+    to expiry by seven and matches nothing."""
+    import re
+    m = re.search(r"(\d{4}-\d{2}-\d{2})", os.path.basename(path))
+    return m.group(1) if m else ""
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--holdings", required=True,
@@ -41,10 +52,25 @@ def main(argv=None):
     ap.add_argument("--max-expirations", dest="max_expirations", type=int, default=12,
                     help="how many expiries to pull; the fund's book can be spread "
                          "across several, and a short window looks like a mismatch")
+    ap.add_argument("--asof", default="",
+                    help="the book's as-of date (default: taken from the archived "
+                         "filename, which tools/archive_holdings.py names by date)")
     a = ap.parse_args(argv)
 
     symbol = a.symbol or a.underlying
-    book = FundBook.from_file(a.holdings, fund=a.fund or os.path.basename(a.holdings))
+    asof = a.asof or asof_from_path(a.holdings)
+    book = FundBook.from_file(a.holdings, fund=a.fund or os.path.basename(a.holdings),
+                              asof=asof)
+    # Said out loud because the match is on DAYS to expiry: an as-of a week wrong
+    # shifts every line by seven days and matches nothing, which reads as "the fund
+    # holds no listed options" rather than as "the date was wrong".
+    if not getattr(book, "asof", ""):
+        print("  !! this book carries no as-of date and none was supplied, so days "
+              "to expiry\n     cannot be computed and nothing will match. Pass "
+              "--asof YYYY-MM-DD.\n")
+    else:
+        print(f"  book as of {book.asof}"
+              + ("" if a.asof else "  (from the filename)"))
 
     if a.source == "tradier":
         from engine.tradier import TradierAdapter
@@ -62,12 +88,21 @@ def main(argv=None):
     print(rep.summary())
 
     if not rep.known_rows:
-        # A chain with no open interest cannot answer the question, and saying so
-        # is the result. Reporting 'refuted' from missing data would close a study
-        # on an absence of evidence.
+        # Two different failures used to print the same sentence. "No strike
+        # matched" and "strikes matched but carried no open interest" have
+        # different causes and different fixes, and blaming the chain for a date
+        # mismatch sends the operator to re-dump a chain that was fine.
+        if not rep.rows:
+            # the verdict above already names this case; add only what the model
+            # cannot know, which is which funds are known to overwrite off-exchange
+            print("\n  JEPI and JEPQ, for two, run their overwriting through OTC\n"
+                  "  equity-linked notes and hold no listed options at all, so for\n"
+                  "  those there is nothing to find a share OF.")
+            return 1
         print("\n  The chain carried no open interest. In this codebase OI 0 means\n"
               "  UNKNOWN, not zero, so nothing is concluded. Tradier supplies it;\n"
-              "  a replayed chain only does if it was dumped with it.")
+              "  a replayed chain carries it only if it was dumped with it — which,\n"
+              "  until engine/deribit.save_chain_json was fixed, it never was.")
         return 1
     if rep.unmatched and rep.unmatched >= len(rep.rows):
         print(f"\n  NOTE: {rep.unmatched} fund line(s) matched no listed quote, more\n"

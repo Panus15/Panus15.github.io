@@ -86,18 +86,40 @@ def book_summary_to_chain(
             kind=kind,
             bid=round(bid_coin * px, 4),
             ask=round(ask_coin * px, 4),
+            # Carried, like Tradier's. Absent or 0 means UNKNOWN downstream, never
+            # zero — `models/oi_share.py` refuses to conclude from missing data.
+            open_interest=int(item.get("open_interest") or 0),
         ))
     return OptionChain(symbol=symbol, spot=index_price, r=r, q=q,
                        quotes=quotes, asof=asof.isoformat())
 
 
 def save_chain_json(chain: OptionChain, path: str) -> None:
-    """Dump to the JsonFileAdapter schema — freeze a live pull as a CI fixture."""
+    """Dump to the JsonFileAdapter schema — freeze a live pull as a CI fixture.
+
+    OPEN INTEREST IS WRITTEN. It used to be dropped, and that broke the one study
+    this repo can finish in an afternoon. `TradierAdapter` parses `open_interest`
+    into every quote; this dropped it; `JsonFileAdapter` did not read it either. So
+    the documented route —
+
+        run_live tradier --symbol QQQ --dump qqq.json
+        oi_share --source replay --chain-json qqq.json
+
+    — could never answer the crowding question, because the field was gone by the
+    second line. `tools/oi_share.py` even printed "a replayed chain only does if it
+    was dumped with it", naming a precondition the dump command could not satisfy.
+
+    A quote with no OI is written as 0, which this codebase reads as UNKNOWN rather
+    than as zero: the distinction is load-bearing, because a 0 read as real would
+    make a fund's share of open interest look infinite or refute the premise on an
+    absence of data.
+    """
     obj = {
         "symbol": chain.symbol, "spot": chain.spot, "r": chain.r, "q": chain.q,
         "asof": chain.asof,
         "quotes": [{"expiry_days": qt.expiry_days, "strike": qt.strike,
-                    "kind": qt.kind, "bid": qt.bid, "ask": qt.ask}
+                    "kind": qt.kind, "bid": qt.bid, "ask": qt.ask,
+                    "open_interest": int(getattr(qt, "open_interest", 0) or 0)}
                    for qt in chain.quotes],
     }
     with open(path, "w") as f:

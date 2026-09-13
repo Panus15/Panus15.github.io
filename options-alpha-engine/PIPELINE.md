@@ -4,11 +4,11 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 47 test files · **547 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **554 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
-of PASS lines for work that did not happen, so a stdlib machine runs 547 and CI —
-which installs numpy on purpose — runs **557**. `tests/test_wiring.py` fails if this
+of PASS lines for work that did not happen, so a stdlib machine runs 554 and CI —
+which installs numpy on purpose — runs **564**. `tests/test_wiring.py` fails if this
 sentence stops matching the tree, and `tools/check_offline.py` proves every file
 passes with the network denied.
 
@@ -480,6 +480,45 @@ with a raising stub, so a test that reaches a vendor **fails by name** instead o
 depending on whether the machine it runs on happens to have access. Verified both
 ways: the guard blocks and restores, and running the old style of call under it turns
 the hidden access into `AssertionError: this test reached the network`.
+
+### 2.7i The one study that could finish in an afternoon could not run at all
+
+`tools/oi_share.py` exists to answer the crowding premise in a day instead of
+eighteen months: does a fund hold a meaningful share of the open interest at its own
+strikes? Run it and it reported **NO OPEN INTEREST DATA**, every time, whatever it
+was given. Three defects were stacked and each one presented as the same message —
+blaming the chain:
+
+1. **The dump threw the field away.** `TradierAdapter` parses `open_interest` into
+   every quote. `save_chain_json` — the `--dump` command the docs recommend — did
+   not write it, and `JsonFileAdapter` did not read it. The documented capture route
+   lost the one field the screen needs. `tools/oi_share.py` even printed *"a
+   replayed chain only does if it was dumped with it"*, naming a precondition the
+   repo's own dump command could not satisfy. Deribit's adapter dropped it too.
+2. **A contract in a column called `symbol` lost its root.** `pick` reads "symbol"
+   as a ticker column, and issuer files routinely put the CONTRACT there.
+   `"QQQ   261016C00570000"` is truthy, so `underlying or root` kept the whole
+   symbol — and the screen then filtered every line out against `"QQQ"` *before* the
+   unmatched counter, giving **zero rows and zero unmatched**. The comment directly
+   above that line explains the OSI fallback exists because "guessing the name is
+   how a real file parses to zero option lines"; the code then did exactly that to
+   the underlying.
+3. **The CLI passed no as-of date**, so days-to-expiry was None for every line. The
+   archiver names its files `FUND/YYYY-MM-DD.csv`, so the date is its own convention
+   rather than a guess — and it is reported when used, never silently replaced with
+   today, because a book read a week late shifts every line by seven days and
+   matches nothing.
+
+It now reaches a verdict. On a fixture, `MECHANISM PLAUSIBLE — max share 28.8% at
+one strike, 27.2% pooled` — which is what the output looks like, not a result about
+any real fund.
+
+**The path the operator runs was untested.** Every existing test built a `FundBook`
+in memory while the CLI reads a CSV through `from_file` and a chain through
+`JsonFileAdapter`; all three defects lived in that gap. And the model itself printed
+one sentence for two different failures — "nothing matched" now says so, because
+blaming a chain's open interest for an expiry mismatch sends the operator to re-dump
+a chain that was fine. **10/10 mutants killed.**
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -764,7 +803,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 547 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done      # 554 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

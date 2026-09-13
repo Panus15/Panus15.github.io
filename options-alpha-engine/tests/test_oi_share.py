@@ -14,9 +14,26 @@ in opposite directions:
 Both are tested directly. The decision bands are asserted against the values the
 module registered in advance, so they cannot drift toward a result.
 
+THE PATH THE OPERATOR ACTUALLY RUNS WAS UNTESTED. Everything above builds a
+`FundBook` in memory, while `tools/oi_share.py` reads a CSV through
+`FundBook.from_file` and a chain through `JsonFileAdapter`. Three defects were
+stacked in that gap and each one presented as "the chain carries no open interest":
+
+  - `save_chain_json` — the dump command the docs recommend — did not WRITE open
+    interest, and `JsonFileAdapter` did not READ it, so a replayed chain never had
+    the field the screen needs;
+  - a row whose contract sits in a column called `symbol` had the whole OSI string
+    kept as its underlying, so every line was filtered out against "QQQ" before it
+    could even be counted as unmatched;
+  - the CLI passed no as-of date, so days-to-expiry came out None for every line.
+
+The file path is tested from here on.
+
 Run: python3 tests/test_oi_share.py
 """
 
+import io
+import json
 import os
 import sys
 
@@ -144,6 +161,157 @@ def test_a_short_and_a_long_line_both_count_as_presence_at_the_strike():
     a = share_of_open_interest(short, chain, "QQQ").max_share
     b = share_of_open_interest(long_, chain, "QQQ").max_share
     assert a == b == 0.40
+
+
+# --------------------------------------------------------------------------
+# The path the operator actually runs: a file on disk, a dumped chain
+# --------------------------------------------------------------------------
+
+_OSI_BOOK = (
+    "symbol,description,quantity\n"
+    'QQQ   261016C00570000,"QQQ 10/16/2026 570.00 C",-9500\n'
+    'QQQ   261016C00580000,"QQQ 10/16/2026 580.00 C",-15000\n'
+)
+
+
+def _tmpdir():
+    import tempfile
+    return tempfile.mkdtemp(prefix="oi-share-")
+
+
+def test_a_contract_in_a_column_called_symbol_still_yields_its_root():
+    """`pick` reads "symbol" as a ticker column and issuer files routinely put the
+    CONTRACT there. "QQQ   261016C00570000" is truthy, so `underlying or root` kept
+    the whole symbol — and the screen then filtered every line out against "QQQ",
+    reporting zero rows AND zero unmatched, which reads as a chain problem."""
+    import os as _os
+    d = _tmpdir()
+    path = _os.path.join(d, "2026-09-13.csv")
+    io.open(path, "w", encoding="utf-8").write(_OSI_BOOK)
+    book = FundBook.from_file(path, fund="QQQI", asof="2026-09-13")
+    assert len(book.positions) == 2, book.positions
+    assert {p.underlying for p in book.positions} == {"QQQ"}, (
+        [p.underlying for p in book.positions])
+    assert {p.strike for p in book.positions} == {570.0, 580.0}
+    assert all(p.kind == "call" for p in book.positions)
+    assert all(p.expiry == "2026-10-16" for p in book.positions)
+
+
+def test_an_explicit_ticker_column_still_wins_over_the_symbol():
+    """The fix must not go the other way: a file that tabulates its underlying is
+    more trustworthy than a symbol string, which may be stale."""
+    import os as _os
+    d = _tmpdir()
+    path = _os.path.join(d, "2026-09-13.csv")
+    io.open(path, "w", encoding="utf-8").write(
+        "ticker,symbol,quantity\n"
+        'NDX,QQQ   261016C00570000,-100\n')
+    book = FundBook.from_file(path, fund="F", asof="2026-09-13")
+    assert book.positions[0].underlying == "NDX", book.positions[0].underlying
+
+
+def test_open_interest_survives_the_dump_and_the_replay():
+    """The documented capture route. It lost the field at BOTH ends, so the screen
+    could never be answered from a replay however good the chain was."""
+    import os as _os
+    from engine.adapters import JsonFileAdapter
+    from engine.deribit import save_chain_json
+    d = _tmpdir()
+    path = _os.path.join(d, "chain.json")
+    ch = OptionChain(symbol="QQQ", spot=555.0, r=0.03, q=0.0, asof="2026-09-13",
+                     quotes=[OptionQuote(expiry_days=33, strike=570.0, kind="call",
+                                         bid=2.1, ask=2.2, open_interest=38_000),
+                             OptionQuote(expiry_days=33, strike=580.0, kind="call",
+                                         bid=1.1, ask=1.2, open_interest=0)])
+    save_chain_json(ch, path)
+    payload = json.load(io.open(path, encoding="utf-8"))
+    assert all("open_interest" in row for row in payload["quotes"]), payload["quotes"]
+    back = JsonFileAdapter(chain_json=path).option_chain("QQQ")
+    assert [q.open_interest for q in back.quotes] == [38_000, 0], (
+        "a 0 must survive as 0 — it means UNKNOWN downstream, not missing")
+
+
+def test_a_chain_file_without_the_field_still_loads_as_unknown():
+    """Older dumps have no `open_interest` key at all. They must read as UNKNOWN
+    rather than crash, so an old fixture keeps working and says nothing."""
+    import os as _os
+    from engine.adapters import JsonFileAdapter
+    d = _tmpdir()
+    path = _os.path.join(d, "old.json")
+    io.open(path, "w", encoding="utf-8").write(json.dumps({
+        "symbol": "QQQ", "spot": 555.0, "r": 0.03, "q": 0.0, "asof": "2026-09-13",
+        "quotes": [{"expiry_days": 33, "strike": 570.0, "kind": "call",
+                    "bid": 2.1, "ask": 2.2}]}))
+    back = JsonFileAdapter(chain_json=path).option_chain("QQQ")
+    assert back.quotes[0].open_interest == 0
+
+
+def test_the_asof_comes_from_the_archivers_own_filename():
+    from tools.oi_share import asof_from_path
+    assert asof_from_path("holdings/QQQI/2026-09-13.csv") == "2026-09-13"
+    assert asof_from_path("/a/b/QQQI/2025-01-02.json") == "2025-01-02"
+    # and it is NEVER guessed: a name with no date yields nothing, so the caller
+    # reports an empty as-of instead of silently substituting today
+    assert asof_from_path("holdings/QQQI/latest.csv") == ""
+    assert asof_from_path("QQQI_holdings.csv") == ""
+
+
+def test_the_whole_cli_path_reaches_a_verdict():
+    """File on disk, chain dumped to JSON, a real share printed. This is the run
+    that could close PREREGISTRATION §2.2 in an afternoon, and before these fixes
+    it reported NO OPEN INTEREST DATA no matter what it was given."""
+    import datetime
+    import os as _os
+    from engine.deribit import save_chain_json
+    from tools.oi_share import main as oi_main
+    d = _tmpdir()
+    today = datetime.date.today()
+    dte = (datetime.date(2026, 10, 16) - today).days
+    book_path = _os.path.join(d, today.isoformat() + ".csv")
+    io.open(book_path, "w", encoding="utf-8").write(_OSI_BOOK)
+    chain_path = _os.path.join(d, "chain.json")
+    save_chain_json(OptionChain(
+        symbol="QQQ", spot=555.0, r=0.03, q=0.0, asof=today.isoformat(),
+        quotes=[OptionQuote(expiry_days=dte, strike=570.0, kind="call", bid=2.1,
+                            ask=2.2, open_interest=38_000),
+                OptionQuote(expiry_days=dte, strike=580.0, kind="call", bid=1.1,
+                            ask=1.2, open_interest=52_000)]), chain_path)
+    rc = oi_main(["--holdings", book_path, "--underlying", "QQQ", "--fund", "QQQI",
+                  "--source", "replay", "--chain-json", chain_path])
+    assert rc == 0, "the screen could not reach a verdict from a complete input"
+
+
+def test_nothing_matching_is_reported_as_such_and_not_blamed_on_the_chain():
+    """Two failures used to print the same sentence. "No strike matched" and
+    "matched but no open interest" have different causes and different fixes, and
+    blaming the chain for a date mismatch sends the operator to re-dump a chain
+    that was fine."""
+    import contextlib
+    import datetime
+    import io as _io
+    import os as _os
+    from engine.deribit import save_chain_json
+    from tools.oi_share import main as oi_main
+    d = _tmpdir()
+    today = datetime.date.today()
+    book_path = _os.path.join(d, today.isoformat() + ".csv")
+    io.open(book_path, "w", encoding="utf-8").write(_OSI_BOOK)
+    chain_path = _os.path.join(d, "chain.json")
+    # a chain at a DIFFERENT expiry: nothing can match, and the open interest is
+    # perfectly good
+    save_chain_json(OptionChain(
+        symbol="QQQ", spot=555.0, r=0.03, q=0.0, asof=today.isoformat(),
+        quotes=[OptionQuote(expiry_days=3, strike=570.0, kind="call", bid=2.1,
+                            ask=2.2, open_interest=38_000)]), chain_path)
+    buf = _io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = oi_main(["--holdings", book_path, "--underlying", "QQQ",
+                      "--source", "replay", "--chain-json", chain_path])
+    out = buf.getvalue()
+    assert rc == 1
+    assert "NOTHING MATCHED" in out, out
+    assert "no open interest" not in out.lower(), (
+        "a date mismatch was blamed on the chain's open interest:\n" + out)
 
 
 def _run_all():

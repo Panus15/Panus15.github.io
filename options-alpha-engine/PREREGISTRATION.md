@@ -234,6 +234,16 @@ Stated up front so they are not later presented as surprises.
    mean ÷ sd more negative. This is NOT a walk-forward-selected parameter: 0.50
    and 7 DTE are conventional retail defaults adopted as-is, and they are now
    locked here like everything else in §2 (PIPELINE.md §2.7c).
+9. **The screen that could close §2.2 in an afternoon could not run at all.** Three
+   defects in the path an operator actually uses — `save_chain_json` and
+   `JsonFileAdapter` both dropping `open_interest`, a contract in a `symbol` column
+   keeping the whole OSI string as its underlying, and the CLI supplying no as-of
+   date — made `tools/oi_share.py` report NO OPEN INTEREST DATA whatever it was
+   given. **FIXED**, with the file path now tested (it never was: every existing
+   test built the book in memory). This changes nothing about §2.2's bands, which
+   were fixed in §2.2a before any data was seen and are unchanged; it means the
+   question can now be asked. Nothing here has yet been run against a real fund
+   book — the numbers in PIPELINE.md §2.7i are from a fixture.
 
 ## §5 — Order of execution
 
