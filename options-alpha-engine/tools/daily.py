@@ -16,9 +16,15 @@ and reports the clocks in the only units that matter: how many days are banked a
 what date the study becomes possible. Progress you can see is progress that keeps
 happening.
 
+With ``--dashboard`` it also renders the page at the end, from whatever the steps
+above actually produced. That is not decoration: the clocks this job advances were
+visible only as text from a command nobody had to run twice, and a clock nobody
+looks at is one nobody winds. It renders on a partial capture too — a page reading
+"0 settled" is the honest state and more use than no page.
+
 WHAT IT DELIBERATELY DOES NOT DO. It does not trade, place orders, or size
-anything. It captures data and records forecasts. Everything downstream of that is
-a decision a human makes after reading a report.
+anything. It captures data, records forecasts, and draws a picture of both.
+Everything downstream of that is a decision a human makes after reading a report.
 """
 
 from __future__ import annotations
@@ -51,8 +57,17 @@ def _step(name: str, fn) -> dict:
         detail = fn()
         return {"step": name, "ok": True, "detail": detail or ""}
     except SystemExit as e:                      # argparse/main() returning non-zero
-        return {"step": name, "ok": int(getattr(e, "code", 1) or 0) == 0,
-                "detail": f"exit {getattr(e, 'code', 1)}"}
+        # `sys.exit("message")` sets code to a STRING, and int() on it raised
+        # ValueError straight out of this handler — so the one construct this
+        # function exists to contain was the one that escaped it, taking the
+        # remaining steps with it. A non-integer code is a message and a failure.
+        code = getattr(e, "code", 1)
+        try:
+            ok = int(code or 0) == 0
+            detail = f"exit {code}"
+        except (TypeError, ValueError):
+            ok, detail = False, f"exit: {code}"
+        return {"step": name, "ok": ok, "detail": detail}
     except Exception as e:                       # noqa: BLE001
         return {"step": name, "ok": False, "detail": f"{type(e).__name__}: {e}"}
 
@@ -98,6 +113,40 @@ def run(cfg: dict) -> list:
                 raise RuntimeError(f"fetch_prices returned {rc}")
             return f"refreshed {os.path.basename(cfg['prices'])}"
         out.append(_step("price basket", _prices))
+
+    # The dashboard is rendered LAST, from whatever the steps above actually
+    # produced. This module's whole argument is that progress you can see is
+    # progress that keeps happening — and the clocks it advances were, until now,
+    # visible only as text from a command nobody had to run twice. It renders on a
+    # partial capture too: a page that says "0 settled" is the honest state and is
+    # more use than no page.
+    if cfg.get("dashboard"):
+        def _dash():
+            from tools import rotation_dashboard as rd
+            csv_path = cfg.get("prices") or ""
+            if csv_path and os.path.exists(csv_path):
+                px, bench, dates = rd.load_csv(csv_path)
+                src = os.path.basename(csv_path)
+            else:
+                px, bench, dates = rd.demo_world()
+                src = "GENERATED FIXTURE (no price basket yet)"
+            payload = rd.build_payload(
+                px, bench, dates, window=63, mom_lag=5, tail=12, horizon=21,
+                options=rd.options_panel(cfg.get("chain_json", ""),
+                                         cfg.get("price_json", ""),
+                                         symbol=cfg.get("symbol", ""),
+                                         dte=cfg.get("dte", 30),
+                                         equity=cfg.get("equity", 100_000.0),
+                                         ledger=cfg.get("ledger", "")),
+                ledger=rd.ledger_panel(cfg.get("ledger", ""),
+                                       dte_hint=cfg.get("dte", 30)))
+            with open(cfg["dashboard"], "w", encoding="utf-8") as fh:
+                fh.write(rd.render(payload))
+            f = payload["ledger"]
+            return (f"{os.path.basename(cfg['dashboard'])} from {src}  |  forward: "
+                    + (f"{f['recorded']} recorded, {f['settled']} settled"
+                       if f.get("available") else "0 recorded"))
+        out.append(_step("dashboard", _dash))
 
     return out
 
@@ -168,6 +217,11 @@ def status(cfg: dict) -> str:
             lines.append("  price basket    not fetched yet — "
                          "`python3 -m tools.fetch_prices --out sectors.csv`")
 
+    if cfg.get("dashboard"):
+        d = cfg["dashboard"]
+        lines.append(f"  dashboard       {d}"
+                     + ("" if os.path.exists(d) else "  (not rendered yet — "
+                        "`daily run` writes it)"))
     return "\n".join(lines) or "  nothing configured; see --help"
 
 
@@ -186,6 +240,10 @@ _EMIT = {
     "dte": lambda c: True,
     "currency": lambda c: c.get("source") == "deribit",
     "symbol": lambda c: c.get("source") == "tradier",
+    "dashboard": lambda c: bool(c.get("dashboard")),
+    "chain_json": lambda c: bool(c.get("chain_json")),
+    "price_json": lambda c: bool(c.get("price_json")),
+    "equity": lambda c: bool(c.get("dashboard")),
 }
 
 
@@ -277,7 +335,9 @@ def install_line(cfg: dict, *, hour: int = 18) -> str:
 def _cfg(a) -> dict:
     return {"holdings": a.holdings, "ledger": a.ledger, "prices": a.prices,
             "events": a.events, "sources": a.sources, "source": a.source,
-            "dte": a.dte, "currency": a.currency, "symbol": a.symbol}
+            "dte": a.dte, "currency": a.currency, "symbol": a.symbol,
+            "chain_json": a.chain_json,
+            "price_json": a.price_json, "equity": a.equity}
 
 
 def main(argv=None):
@@ -294,6 +354,15 @@ def main(argv=None):
     ap.add_argument("--dte", type=int, default=30)
     ap.add_argument("--currency", default="BTC")
     ap.add_argument("--symbol", default="SPX")
+    ap.add_argument("--dashboard", default="",
+                    help="render the dashboard here after the capture ('' to skip) "
+                         "— the clocks this job advances are only visible on it")
+    ap.add_argument("--chain-json", dest="chain_json", default="",
+                    help="option chain for the dashboard's options panel")
+    ap.add_argument("--price-json", dest="price_json", default="",
+                    help="price history for that chain's underlying")
+    ap.add_argument("--equity", type=float, default=100_000.0,
+                    help="account equity the dashboard's order ticket sizes against")
     ap.add_argument("--hour", type=int, default=18)
     ap.add_argument("--apply", action="store_true",
                     help="install: actually register the scheduled task")

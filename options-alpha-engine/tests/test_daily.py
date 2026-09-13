@@ -65,6 +65,24 @@ def test_a_failing_step_is_caught_and_reported_not_raised():
     assert _step("x", exits)["ok"] is False
 
 
+def test_a_step_exiting_with_a_message_is_contained_like_any_other_failure():
+    """`sys.exit("message")` sets SystemExit.code to a STRING, and int() on it
+    raised ValueError out of the handler whose entire job is to contain failures —
+    so the one construct it exists to catch was the one that escaped it, taking
+    every remaining step with it."""
+    def _boom():
+        raise SystemExit("benchmark column 'SPY' not found")
+    st = daily._step("noisy", _boom)
+    assert st["ok"] is False
+    assert "SPY" in st["detail"], st["detail"]
+
+
+def test_a_clean_exit_zero_still_counts_as_success():
+    def _fine():
+        raise SystemExit(0)
+    assert daily._step("quiet", _fine)["ok"] is True
+
+
 def test_one_broken_step_does_not_cost_the_others():
     """The day's capture must survive one vendor being down."""
     d = tempfile.mkdtemp()
@@ -211,7 +229,8 @@ def test_a_totally_failed_run_exits_nonzero_but_a_partial_one_does_not():
 def _cfg(**kw):
     base = {"holdings": "holdings", "ledger": "", "prices": "", "events": "",
             "sources": "", "source": "deribit", "dte": 30, "currency": "BTC",
-            "symbol": "SPX"}
+            "symbol": "SPX", "dashboard": "", "chain_json": "", "price_json": "",
+            "equity": 100_000.0}
     base.update(kw)
     return base
 
@@ -222,18 +241,67 @@ def test_every_configured_flag_reaches_the_scheduled_command():
     scheduled itself without it and fell back to SPX at record time, forever,
     silently recording a different underlying than the operator chose.
 
-    So this asserts on the WHOLE table rather than on the one flag that broke —
-    a seventh flag added tomorrow and forgotten fails here.
+    This test USED to claim that "a seventh flag added tomorrow and forgotten
+    fails here" while asserting on a hardcoded list of eight — so it could not
+    have caught the very thing it promised. The expectation is now derived from
+    what `main()` accepts, so a flag added to the job and forgotten in `_EMIT`
+    fails here by construction.
     """
     cfg = _cfg(ledger="paper.jsonl", prices="sectors.csv", events="ev.json",
-               sources="src.json", source="tradier", symbol="SPY", dte=45)
+               sources="src.json", source="tradier", symbol="SPY", dte=45,
+               dashboard="rotation.html", chain_json="c.json",
+               price_json="p.json", equity=250_000.0)
     cmd = daily.job_command(cfg, python="/usr/bin/python3")
+
+    # 1. every cfg key the job understands has a rule in the emit table
+    missing = sorted(set(cfg) - set(daily._EMIT))
+    assert not missing, (f"no _EMIT rule for {missing} — a job configured with "
+                         f"them schedules itself without them, silently")
+
+    # 2. and every rule that fires actually puts its flag on the line
+    for key, want in daily._EMIT.items():
+        flag = "--" + key.replace("_", "-")
+        if want(cfg) and cfg.get(key) not in (None, ""):
+            assert f"{flag} " in cmd, f"{flag} missing from: {cmd}"
+        else:
+            assert flag not in cmd, f"{flag} leaked into: {cmd}"
+
+    # 3. spot-check the values, since presence alone would pass on a wrong one
     for flag, value in (("--holdings", "holdings"), ("--ledger", "paper.jsonl"),
-                        ("--prices", "sectors.csv"), ("--events", "ev.json"),
-                        ("--sources", "src.json"), ("--source", "tradier"),
-                        ("--dte", "45"), ("--symbol", "SPY")):
-        assert f"{flag} {value}" in cmd, f"{flag} missing from: {cmd}"
+                        ("--dte", "45"), ("--symbol", "SPY"),
+                        ("--dashboard", "rotation.html")):
+        assert f"{flag} {value}" in cmd, f"{flag} {value} missing from: {cmd}"
     assert "--currency" not in cmd, "a deribit-only flag leaked into a tradier job"
+
+
+def test_the_config_covers_every_flag_the_parser_accepts():
+    """The other half of the same leak: a flag added to the parser but not to
+    `_cfg` is accepted on the command line and then ignored."""
+    import argparse
+    seen = {}
+    real_add = argparse.ArgumentParser.add_argument
+
+    def spy(self, *args, **kw):
+        act = real_add(self, *args, **kw)
+        if args and str(args[0]).startswith("--"):
+            seen[act.dest] = True
+        return act
+
+    argparse.ArgumentParser.add_argument = spy
+    try:
+        try:
+            daily.main(["status", "--holdings", ""])
+        except SystemExit:
+            pass
+    finally:
+        argparse.ArgumentParser.add_argument = real_add
+
+    # flags that configure the scheduler itself rather than the job
+    NOT_JOB = {"apply", "hour"}
+    cfg_keys = set(_cfg())
+    orphans = sorted(set(seen) - cfg_keys - NOT_JOB)
+    assert not orphans, (f"{orphans} can be passed on the command line but never "
+                         f"reach the job config, so they are silently ignored")
 
 
 def test_the_underlying_flag_matches_the_source():
@@ -339,6 +407,117 @@ def test_the_wrapper_enters_the_repo_before_running():
         finally:
             platform.system = real
             shutil.rmtree(d)
+
+
+# --------------------------------------------------------------------------
+# The dashboard step — the clocks are only visible on the page
+# --------------------------------------------------------------------------
+
+def test_the_run_renders_the_dashboard_from_what_it_captured():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "page.html")
+        steps = daily.run(_cfg(holdings="", dashboard=out))
+        names = [st["step"] for st in steps]
+        assert "dashboard" in names, names
+        st = [x for x in steps if x["step"] == "dashboard"][0]
+        assert st["ok"], st["detail"]
+        assert os.path.exists(out)
+        page = io.open(out, encoding="utf-8").read()
+        assert page.lstrip().startswith("<!doctype html>")
+        assert "@@" not in page, "an unfilled template token reached the page"
+        assert 'id="fwd"' in page and 'id="opt"' in page
+        assert "0 recorded" in st["detail"], st["detail"]
+
+
+def test_the_dashboard_renders_even_when_the_capture_produced_nothing():
+    """A page reading "0 settled" is the honest state and is more use than no
+    page. A step that only works on a complete capture would stop drawing exactly
+    when the operator most needs to see where the clocks stand."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "page.html")
+        steps = daily.run(_cfg(holdings="", prices=os.path.join(tmp, "nope.csv"),
+                               dashboard=out))
+        prices = [x for x in steps if x["step"] == "price basket"][0]
+        dash = [x for x in steps if x["step"] == "dashboard"][0]
+        assert not prices["ok"], "the fixture is meant to fail the price step"
+        assert dash["ok"], dash["detail"]
+        assert "FIXTURE" in dash["detail"], dash["detail"]
+
+
+def test_the_dashboard_step_reports_the_ledger_counts_it_drew():
+    """So the operator sees the clock move in the run log, not only in a browser."""
+    import tempfile
+    from engine.data import SyntheticAdapter
+    from engine.signal_backtest import synthetic_chain_series
+    from models.baseline import BaselineDensityForecaster
+    from tools.paper_trade import paper_trade_series
+    with tempfile.TemporaryDirectory() as tmp:
+        ladder = tuple(round(-0.20 + 0.025 * i, 3) for i in range(17))
+        prices = SyntheticAdapter(seed=7).price_history("SPY", days=400)
+        led = paper_trade_series(prices, synthetic_chain_series(dte=21, ladder=ladder,
+                                                               min_px=0.005),
+                                 BaselineDensityForecaster(), dte=21, warmup=120,
+                                 step=21)
+        lp = os.path.join(tmp, "led.jsonl")
+        led.save(lp)
+        out = os.path.join(tmp, "page.html")
+        # ledger="" on the RECORD step: this asserts the dashboard reads the file,
+        # not that the job recorded into it
+        cfg = _cfg(holdings="", dashboard=out)
+        cfg["ledger"] = lp
+        steps = daily.run(cfg)
+        dash = [x for x in steps if x["step"] == "dashboard"][0]
+        rec = led.report()
+        assert f"{rec.n_recorded} recorded" in dash["detail"], dash["detail"]
+        assert f"{rec.n_settled} settled" in dash["detail"], dash["detail"]
+
+
+def test_a_real_price_basket_is_used_rather_than_the_fixture():
+    """The complement of the test above. Falling back to the generated world when
+    a real CSV exists would draw a page of invented prices while labelling nothing
+    — the single most misleading thing this job could produce."""
+    import tempfile
+    from tools import rotation_dashboard as rd
+    with tempfile.TemporaryDirectory() as tmp:
+        px, bench, dates = rd.demo_world(n=700)
+        csv = os.path.join(tmp, "sectors.csv")
+        cols = dict(px)
+        cols[rd.BENCHMARK] = bench      # load_csv needs the benchmark column too
+        syms = sorted(cols)
+        with io.open(csv, "w", encoding="utf-8") as fh:
+            fh.write("date," + ",".join(syms) + "\n")
+            for i, d in enumerate(dates):
+                fh.write(d + "," + ",".join(f"{cols[sy][i]:.4f}" for sy in syms) + "\n")
+        out = os.path.join(tmp, "page.html")
+        cfg = _cfg(holdings="", dashboard=out)
+        cfg["prices"] = csv           # set directly: the FETCH step would need a net
+        steps = daily.run(cfg)
+        dash = [x for x in steps if x["step"] == "dashboard"][0]
+        assert dash["ok"], dash["detail"]
+        assert "sectors.csv" in dash["detail"], dash["detail"]
+        assert "FIXTURE" not in dash["detail"], (
+            "a real price basket was ignored in favour of generated data")
+        # and the page carries that basket's own last date, not the fixture's
+        page = io.open(out, encoding="utf-8").read()
+        assert dates[-1] in page, "the page was not drawn from the supplied CSV"
+
+
+def test_status_names_the_dashboard_and_whether_it_exists_yet():
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "page.html")
+        txt = daily.status(_cfg(holdings="", dashboard=out))
+        assert "dashboard" in txt and "not rendered yet" in txt
+        io.open(out, "w", encoding="utf-8").write("x")
+        txt2 = daily.status(_cfg(holdings="", dashboard=out))
+        assert "not rendered yet" not in txt2
+
+
+def test_a_job_with_no_dashboard_configured_does_not_render_one():
+    steps = daily.run(_cfg(holdings="", dashboard=""))
+    assert "dashboard" not in [st["step"] for st in steps]
 
 
 def _run_all():

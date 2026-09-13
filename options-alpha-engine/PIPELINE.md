@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 46 test files · **525 tests, all green** · pure stdlib, no
+**Scale:** 46 test files · **534 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
@@ -378,6 +378,38 @@ Four display defects found by testing it, each one a number that would have misl
 **16/16 mutants killed**, after a first sweep where 5 of 16 survived — including
 `abs()` on the total P&L, which the positive fixture could not catch and which is
 the cheapest possible way to turn a failing forward test into a passing-looking one.
+
+### 2.7e The job that advances the clocks never drew the page that shows them
+
+`tools/daily.py` captures fund books, records the forward ledger and refreshes
+prices. Its own docstring argues that *progress you can see is progress that keeps
+happening* — and it printed its progress as text, from a command nobody had to run
+twice, while the dashboard that now renders both clocks had to be invoked
+separately. `--dashboard` closes that: the page is rendered last, from whatever the
+steps actually produced. Verified end to end with the ledger record step **failing**
+(no vendor token in this sandbox) — the page still rendered and reported the
+ledger's real `112 recorded, 109 settled`.
+
+Two defects found while wiring it, both in code that already existed:
+
+**The flag-coverage test could not catch the thing it promised.** Its docstring said
+"a seventh flag added tomorrow and forgotten fails here" while the body asserted on
+a hardcoded list of eight — so adding four dashboard flags, exactly its stated case,
+would have passed. The expectation is now derived from `_cfg` and `_EMIT`, plus a
+second test that spies on the parser for the other half of the same leak: a flag
+accepted on the command line that never reaches the job config and is therefore
+silently ignored.
+
+**`_step` leaked the one exception it exists to contain.** Its handler computed
+`int(e.code)`, and `sys.exit("some message")` sets `code` to a *string* — so a step
+exiting with a message raised `ValueError` out of the very function whose docstring
+reads "a failing step must not stop the rest", taking every later step with it.
+Found because a test fixture built a CSV without its benchmark column and the real
+error never surfaced. A non-integer code is now a message and a failure.
+
+**12/12 mutants killed.** One of them — "always uses the generated fixture" —
+survived the first sweep: no test had supplied a real price basket, so a job that
+quietly drew invented prices over real ones would have passed.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -452,12 +484,20 @@ at an order rather than at a view.
 
 ```bash
 python3 -m tools.daily install --holdings holdings --ledger paper.jsonl \
-        --source tradier --symbol SPY --dte 30
+        --source tradier --symbol SPY --dte 30 --dashboard rotation.html
 # writes daily-job.bat/.sh and PRINTS the scheduler line; add --apply to register it
 
 python3 -m tools.daily run       # what the scheduler will run
 python3 -m tools.daily status    # how far along the clocks are
 ```
+
+`--dashboard` renders the page at the end of the capture, from whatever the steps
+actually produced. That is not decoration. The clocks this job exists to advance
+were visible only as text from a command nobody had to run twice, and **a clock
+nobody looks at is one nobody winds** — which is this project's largest risk,
+stated in the module's own docstring. It renders on a partial capture too: if the
+price fetch fails it draws the generated fixture and says so in the step log, and a
+page reading `0 settled` is the honest state and more use than no page.
 
 `install` writes a wrapper script and hands the scheduler ONE quoted path. It used
 to interpolate `sys.executable` unquoted into a `schtasks /tr` value that was
@@ -467,6 +507,15 @@ clock the operator believed was running. It also dropped `--symbol`, so a job
 configured for SPY scheduled itself without it and recorded SPX instead, forever.
 Flags now come from one table and a test asserts the whole table reaches the
 command, not just the flag that broke.
+
+That test, however, **asserted on a hardcoded list of eight flags while its own
+docstring promised that "a seventh flag added tomorrow and forgotten fails here"**
+— so it could not have caught the thing it claimed to guard. Adding four flags for
+the dashboard is exactly the case it was supposed to cover. The expectation is now
+derived: every key `_cfg` produces must have an `_EMIT` rule, every rule that fires
+must put its flag on the line, and a second test spies on the parser to catch the
+other half of the same leak — a flag accepted on the command line that never
+reaches the job config, and is therefore silently ignored.
 
 Note the defaults: `--ledger` and `--prices` are EMPTY, so a bare `run` archives
 holdings only and says nothing about skipping the rest. Pass them explicitly.
@@ -645,7 +694,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 525 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done      # 534 tests, 46 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second
