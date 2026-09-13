@@ -110,7 +110,7 @@ def main() -> None:
     # size — one SPY put can lose more than a 2% budget on a $100k account.
     # The ticket is handed the fused DECISION, not just the card. Without that,
     # a context that cut size to x0.60 shipped exactly the same order as x1.00.
-    from engine.spread_backtest import EXIT_RULE_TEXT
+    from engine.spread_backtest import EXIT_RULE_TEXT, EXIT_SPLIT_NOTE
     from models.decision import build_decision
     from models.ticket import build_ticket
     from models.trade_card import build_card
@@ -121,7 +121,8 @@ def main() -> None:
         _card, _best, equity=100_000.0, max_risk_frac=0.02,
         decision=_decision,
         settled_trades=0,          # the forward ledger really is empty
-        exit_rule=EXIT_RULE_TEXT)   # the rule the harness measures, not a guess
+        exit_rule=EXIT_RULE_TEXT,   # the rule the harness measures, not a guess
+        exit_split_note=EXIT_SPLIT_NOTE)
     print(_ticket.render())
     print()
 

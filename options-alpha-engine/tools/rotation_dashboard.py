@@ -135,7 +135,8 @@ def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
         ticket = build_ticket(card, best, equity=equity,
                               max_risk_frac=max_risk_frac, decision=decision,
                               settled_trades=_settled_count(ledger),
-                              exit_rule=spread_backtest.EXIT_RULE_TEXT)
+                              exit_rule=spread_backtest.EXIT_RULE_TEXT,
+                              exit_split_note=spread_backtest.EXIT_SPLIT_NOTE)
     except (ValueError, KeyError, OSError, ZeroDivisionError, ArithmeticError,
             IndexError) as e:
         # A chain too sparse or too short-dated to price is a DATA outcome. The
@@ -180,6 +181,7 @@ def options_panel(chain_json: str, price_json: str, *, symbol: str = "",
         "probProfit": round(float(ticket.prob_profit), 4),
         "evPerContract": ticket.ev_per_contract,
         "exitRule": ticket.exit_rule,
+        "exitSplitNote": ticket.exit_split_note,
         "evidence": ticket.evidence,
         "legs": [{"side": l.side, "kind": l.kind, "strike": l.strike,
                   "price": l.price} for l in ticket.legs],
@@ -698,7 +700,8 @@ function drawOptions(){
           ${o.evPerContract>=0?"+":""}${money(o.evPerContract)}</div></div>
       </div>
       ${o.exitRule ? `<p class="ev" style="color:var(--ink-2)"><b>Exit:</b>
-        ${esc(o.exitRule)}</p>` : ""}`;
+        ${esc(o.exitRule)}${o.exitSplitNote ? `<br><span style="color:var(--ink-3)">${
+          esc(o.exitSplitNote)}</span>` : ""}</p>` : ""}`;
   }else{
     order = `<div class="refuse">
         <div class="eyebrow" style="color:var(--lag);margin-bottom:8px">No order &mdash;

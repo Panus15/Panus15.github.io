@@ -113,6 +113,80 @@ def test_every_internal_exemption_carries_a_reason():
     assert not blank, f"exemptions without a reason: {blank}"
 
 
+def test_the_documented_test_count_is_the_real_one():
+    """The docs advertise a scale. It was maintained by hand and edited six times
+    in one session, which is the reliable signal that it should not be.
+
+    A count that drifts is worse than no count: a reader checking "534 tests, all
+    green" against a suite of 400 has no way to tell whether tests were deleted or
+    the sentence was simply never updated, so the whole document loses its claim to
+    being measured rather than asserted.
+
+    The test FUNCTIONS are counted by parsing each file, not by running it — this
+    must stay fast enough to run in the suite it is counting.
+    """
+    import ast
+    files = sorted(f for f in os.listdir(os.path.join(ROOT, "tests"))
+                   if f.startswith("test_") and f.endswith(".py"))
+    total = optional = 0
+    for f in files:
+        src = io.open(os.path.join(ROOT, "tests", f), encoding="utf-8").read()
+        n_tests = sum(1 for n in ast.parse(src).body
+                      if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and n.name.startswith("test_"))
+
+        # A file that declares OPTIONAL_DEPENDENCY skips entirely where that
+        # dependency is absent, which is the environment this repo advertises. Its
+        # tests are real but they are not part of "all green", and counting them
+        # there would claim 10 results nobody has seen.
+        # Detected as a module-level ASSIGNMENT, not as a substring: this file
+        # mentions the name in its own source, so a substring check excluded its
+        # own seven tests from the count it was computing.
+        tree = ast.parse(src)
+        declares = any(
+            isinstance(n, (ast.Assign, ast.AnnAssign))
+            and any(getattr(t, "id", "") == "OPTIONAL_DEPENDENCY"
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]))
+            for n in tree.body)
+        if declares:
+            optional += n_tests
+        else:
+            total += n_tests
+
+    # Only the CANONICAL phrasings for the whole suite. A loose "N tests" also
+    # matches a deliberate historical note ("391 tests passed around it", recording
+    # how many existed when sizing.py had none) and a per-file count ("7 correctness
+    # tests"), neither of which should be rewritten every time the suite grows.
+    PATTERNS = [(r"(\d[\d,]*)\s+tests?,\s*all green", "tests"),
+                (r"(\d[\d,]*)\s+tests?,\s*\d+\s+files", "tests"),
+                (r"(\d+)\s+test files", "files"),
+                (r"tests?,\s*(\d+)\s+files", "files")]
+    claims = []
+    for doc in ("PIPELINE.md", "QUICKSTART.md", "README.md", "ARCHITECTURE.md",
+                "PREREGISTRATION.md"):
+        path = os.path.join(ROOT, doc)
+        if not os.path.exists(path):
+            continue
+        for n, line in enumerate(io.open(path, encoding="utf-8"), 1):
+            for pat, kind in PATTERNS:
+                for m in re.finditer(pat, line):
+                    claims.append((doc, n, int(m.group(1).replace(",", "")), kind))
+
+    assert claims, "no documented scale found at all — did the wording change?"
+    want = {"tests": total, "files": len(files)}
+    wrong = [f"{d}:{n} says {v} {kind}, actual {want[kind]}"
+             for d, n, v, kind in claims if v != want[kind]]
+    assert not wrong, ("the documented scale has drifted: " + "; ".join(wrong))
+
+    # and the skipped ones are stated rather than quietly excluded, or the headline
+    # count becomes a number that happens to be true for a reason nobody can see
+    if optional:
+        pipeline = io.open(os.path.join(ROOT, "PIPELINE.md"), encoding="utf-8").read()
+        assert re.search(rf"{optional}\s+more\b", pipeline), (
+            f"{optional} tests are skipped without numpy and PIPELINE.md does not "
+            f"say so — write '{optional} more require numpy'")
+
+
 def test_no_entry_point_hardcodes_the_exit_rule():
     """The rule on the screen and the rule in the harness must be one string. They
     were not: models/ticket.py advised "close at 50% of max profit, or at 7 DTE"

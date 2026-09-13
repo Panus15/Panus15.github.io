@@ -4,8 +4,11 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 46 test files · **534 tests, all green** · pure stdlib, no
-numpy/scipy/pandas · every load-bearing change mutation-verified.
+**Scale:** 46 test files · **539 tests, all green** · pure stdlib, no
+numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
+numpy (`test_gru.py`, `test_neural.py`) and are skipped here — those two files print
+SKIP rather than a row of PASS lines for work that did not happen, and
+`tests/test_wiring.py` now fails if this sentence stops matching the tree.
 
 **Read this first.** One study has been run on real market data and it ANSWERED NO
 (sector rotation, PREREGISTRATION.md §7.1). The forward options ledger has settled
@@ -410,6 +413,47 @@ error never surfaced. A non-integer code is now a message and a failure.
 **12/12 mutants killed.** One of them — "always uses the generated fixture" —
 survived the first sweep: no test had supplied a real price basket, so a job that
 quietly drew invented prices over real ones would have passed.
+
+### 2.7f Two numbers on the ticket that described different things
+
+**The probability and the exit rule did not refer to the same event.** The ticket
+printed `P(profit) 85.0%` directly above `close at 50% of max profit, or at 7 DTE`.
+The 85% is the chance the position finishes profitable **at expiry** — not the
+chance of the exit being recommended, which this repo does not compute anywhere,
+because it is a first-passage problem and the engine produces a terminal density.
+Two numbers side by side invite multiplication. The label now says `AT EXPIRY`, and
+under the rule sits the frequency that *was* measured:
+
+> of 600 trades measured under this rule, **60%** ended at the profit target and
+> **40%** at the time stop (10 generated paths, not market data)
+
+A published constant like that rots silently into a claim about behaviour the code
+no longer has, so a test re-measures it against the harness on three of the same
+paths and fails if the split has moved.
+
+### 2.7g The advertised scale was maintained by hand
+
+`PIPELINE.md` opens with a test count. It was hand-edited **six times in one
+session**, which is the reliable signal that it should not be. A drifting count is
+worse than none: a reader checking "all green" against a smaller tree cannot tell
+whether tests were deleted or the sentence was never updated, and the document loses
+its claim to being measured rather than asserted. `tests/test_wiring.py` now derives
+the count by parsing the tree and fails on any documented figure that disagrees.
+
+Three things surfaced the moment it ran:
+
+- **10 test functions across `test_gru.py` and `test_neural.py` run zero times**
+  here. Not a defect — both files skip cleanly without numpy and deliberately print
+  SKIP rather than a row of PASS lines for work that did not happen — but nothing
+  recorded it, so "all green" quietly meant 10 fewer results than the tree held.
+  Those files now declare `OPTIONAL_DEPENDENCY` and the header states the 10.
+- The first regex flagged **two legitimate numbers**: a historical note (`391 tests
+  passed around it`, recording how many existed when `sizing.py` had none) and a
+  per-file count (`7 correctness tests`). Only the canonical whole-suite phrasings
+  are checked now.
+- The marker was detected as a **substring**, and `test_wiring.py` mentions the name
+  in its own source — so it excluded its own seven tests from the count it was
+  computing. It is read as a module-level assignment via the AST.
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
@@ -694,7 +738,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 534 tests, 46 files
+for t in tests/test_*.py; do python3 "$t"; done      # 539 tests, 46 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second

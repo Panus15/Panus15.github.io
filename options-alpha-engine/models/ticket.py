@@ -98,6 +98,7 @@ class Ticket:
     uncapped_contracts: int = 0      # what the risk cap alone allowed
     decision_applied: bool = False   # False = built from the card alone
     cut_by: str = ""                 # which inputs caused the reduction
+    exit_split_note: str = ""        # how the exit rule actually ended trades
 
     @property
     def placeable(self) -> bool:
@@ -162,12 +163,18 @@ class Ticket:
                 f"   ({self.max_loss_total:>,.2f} total)",
                 f" risk budget    {self.max_risk_frac:>10.1%} of "
                 f"{self.equity:,.0f} = {self.max_risk_frac * self.equity:,.0f}",
-                f" P(profit)      {self.prob_profit:>10.1%}   model EV "
-                f"{self.ev_per_contract:>+,.2f}/contract",
+                f" P(profit)      {self.prob_profit:>10.1%}   AT EXPIRY"
+                f"   model EV {self.ev_per_contract:>+,.2f}/contract",
                 ""]
         out += self._context_lines() + [""]
         if self.exit_rule:
-            out += [f" exit: {self.exit_rule}", ""]
+            out += [f" exit: {self.exit_rule}"]
+            # The probability above is a TERMINAL statistic and the rule here ends
+            # most trades earlier, so the two must not be read together. What was
+            # actually observed is printed instead of a number nobody computed.
+            if self.exit_split_note:
+                out.append(f"       {self.exit_split_note}")
+            out.append("")
         out += [f" evidence: {self.evidence}", bar]
         return "\n".join(out)
 
@@ -182,7 +189,8 @@ def _expiry_date(asof: str, days: int) -> str:
 
 def build_ticket(card, spread, *, equity: float, max_risk_frac: float = 0.02,
                  settled_trades: int = 0, asof: str | None = None,
-                 exit_rule: str = "", decision=None) -> Ticket:
+                 exit_rule: str = "", decision=None,
+                 exit_split_note: str = "") -> Ticket:
     """Join a vol verdict and a defined-risk structure into one placeable order.
 
     Refuses rather than guesses. ``card`` is a models.trade_card.TradeCard and
@@ -286,6 +294,7 @@ def build_ticket(card, spread, *, equity: float, max_risk_frac: float = 0.02,
         equity=equity, max_risk_frac=max_risk_frac,
         prob_profit=float(getattr(spread, "prob_profit", 0.0) or 0.0),
         ev_per_contract=ev, exit_rule=exit_rule,
+        exit_split_note=exit_split_note,
         settled_trades=settled_trades, refusals=refusals,
         size_multiplier=size_mult, uncapped_contracts=n_cap,
         decision_applied=decision is not None,

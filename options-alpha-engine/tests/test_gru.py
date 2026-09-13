@@ -24,6 +24,13 @@ try:
 except ImportError:
     HAVE_NUMPY = False
 
+#: DECLARED, not inferred. Every test in this file is skipped where numpy is
+#: absent — which is the environment this repo advertises — so its tests are not
+#: part of the "all green" count the docs quote. Until this constant existed that
+#: fact was invisible: 10 test functions across two files ran zero times and
+#: nothing said so. tests/test_wiring.py reads it.
+OPTIONAL_DEPENDENCY = "numpy"
+
 if HAVE_NUMPY:
     from models import objective
     from models.baseline import BaselineDensityForecaster

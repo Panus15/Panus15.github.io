@@ -148,6 +148,23 @@ MIN_DTE_REMAINING = 7
 EXIT_RULE_TEXT = (f"close at {TAKE_PROFIT_FRAC:.0%} of max profit, or at "
                   f"{MIN_DTE_REMAINING} DTE, whichever comes first")
 
+#: How the rule actually ENDED trades, measured — 600 managed trades over 10
+#: generated paths, iron condor at 21 DTE. It is here because a ticket printing
+#: "P(profit) 85%" alongside "close at 50%" invites the reader to attach the first
+#: number to the second, and they describe different events: 85% is the chance the
+#: position finishes profitable AT EXPIRY, which is not the exit being recommended.
+#: The probability of the recommended exit is NOT computed anywhere in this repo —
+#: it is a first-passage problem, not a terminal-density one — so the honest thing
+#: to show is the frequency that was observed. FIXTURES, not market data.
+EXIT_SPLIT = {"profit": 0.60, "time": 0.40}
+EXIT_SPLIT_N = 600
+EXIT_SPLIT_PATHS = 10
+EXIT_SPLIT_NOTE = (
+    f"of {EXIT_SPLIT_N} trades measured under this rule, "
+    f"{EXIT_SPLIT['profit']:.0%} ended at the profit target and "
+    f"{EXIT_SPLIT['time']:.0%} at the time stop "
+    f"({EXIT_SPLIT_PATHS} generated paths, not market data)")
+
 
 def apply_exit_rule(marked: dict, spread, t: int, dte: int, *,
                     take_profit_frac: float | None = TAKE_PROFIT_FRAC,

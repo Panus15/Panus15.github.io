@@ -24,10 +24,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.hedged_backtest import price_path_with_crash
 from engine.signal_backtest import synthetic_chain_series
-from engine.spread_backtest import (EXIT_RULE_TEXT, MIN_DTE_REMAINING,
-                                    TAKE_PROFIT_FRAC, apply_exit_rule,
-                                    mark_spread_daily, realize_spread,
-                                    run_spread_backtest, spread_payoff)
+from engine.spread_backtest import (EXIT_RULE_TEXT, EXIT_SPLIT, EXIT_SPLIT_N,
+                                    EXIT_SPLIT_NOTE, EXIT_SPLIT_PATHS,
+                                    MIN_DTE_REMAINING, TAKE_PROFIT_FRAC,
+                                    apply_exit_rule, mark_spread_daily,
+                                    realize_spread, run_spread_backtest,
+                                    spread_payoff)
 from engine.stress import evenly_spaced_gaps, inject_gaps
 from models import spreads
 from models.baseline import BaselineDensityForecaster
@@ -389,6 +391,42 @@ def test_the_loss_stays_bounded_under_the_exit_rule_too():
                             min_dte_remaining=MIN_DTE_REMAINING)
     assert r.worst_trade >= -r.max_loss_budgeted - 1e-6, (
         f"worst {r.worst_trade:,.2f} breaches the budgeted {r.max_loss_budgeted:,.2f}")
+
+
+def test_the_published_exit_split_still_describes_the_harness():
+    """EXIT_SPLIT is a measured constant printed on every order ticket, so it can
+    rot silently into a claim about behaviour the code no longer has. Re-measured
+    on three of the same paths; the tolerance is wide because three paths are not
+    ten, and a tight one would fail for the wrong reason."""
+    from engine.data import SyntheticAdapter
+    got = {}
+    n = 0
+    for seed in (1, 4, 7):
+        prices = SyntheticAdapter(seed=seed).price_history("SPY", days=1400)
+        r = run_spread_backtest(prices, _chains(), FC, dte=21, warmup=120,
+                                compare_naked=False, always_sell=True,
+                                take_profit_frac=TAKE_PROFIT_FRAC,
+                                min_dte_remaining=MIN_DTE_REMAINING)
+        for k, v in r.exit_reasons.items():
+            got[k] = got.get(k, 0) + v
+        n += r.n_sold
+    assert n > 100, f"only {n} trades — the fixture stopped producing a sample"
+    for reason, claimed in EXIT_SPLIT.items():
+        actual = got.get(reason, 0) / n
+        assert abs(actual - claimed) < 0.15, (
+            f"EXIT_SPLIT claims {reason} {claimed:.0%}, re-measured {actual:.0%} "
+            f"over {n} trades — the published constant no longer describes the code")
+    assert abs(sum(EXIT_SPLIT.values()) - 1.0) < 1e-9, "the split must sum to 1"
+
+
+def test_the_exit_split_note_states_its_sample_and_its_provenance():
+    """A frequency without a sample size is an opinion, and one from generated
+    paths presented as measured is worse than no number."""
+    assert str(EXIT_SPLIT_N) in EXIT_SPLIT_NOTE
+    assert str(EXIT_SPLIT_PATHS) in EXIT_SPLIT_NOTE
+    assert "not market data" in EXIT_SPLIT_NOTE
+    for v in EXIT_SPLIT.values():
+        assert f"{v:.0%}" in EXIT_SPLIT_NOTE
 
 
 def _run_all():

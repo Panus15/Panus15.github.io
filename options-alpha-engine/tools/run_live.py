@@ -286,7 +286,8 @@ def analyze(chain: OptionChain, prices: list, *, dte: int = 30,
             ticket = build_ticket(
                 card, best, equity=equity, max_risk_frac=max_risk_frac,
                 decision=decision, settled_trades=settled_trades,
-                exit_rule=spread_backtest.EXIT_RULE_TEXT)
+                exit_rule=spread_backtest.EXIT_RULE_TEXT,
+                exit_split_note=spread_backtest.EXIT_SPLIT_NOTE)
             report["ticket"] = {
                 "placeable": ticket.placeable,
                 "structure": ticket.structure,

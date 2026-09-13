@@ -349,6 +349,38 @@ def test_the_exit_rule_is_shown_when_given():
     assert "close at 50%" in t.render()
 
 
+def test_the_probability_says_which_event_it_is_the_probability_of():
+    """P(profit) is a TERMINAL statistic — the chance the position finishes
+    profitable at expiry. Printed bare next to "close at 50% of max profit" it
+    invites the reader to attach it to an exit it does not describe."""
+    body = build_ticket(_Card(), _spread(), equity=EQ).render()
+    i = body.index("P(profit)")
+    assert "AT EXPIRY" in body[i:i + 80], body[i:i + 80]
+
+
+def test_the_measured_exit_split_is_printed_beside_the_rule_it_describes():
+    """The probability of the RECOMMENDED exit is not computed anywhere in this
+    repo — it is a first-passage problem, not a terminal-density one — so what is
+    shown is the frequency that was actually observed, with its sample."""
+    note = ("of 600 trades measured under this rule, 60% ended at the profit "
+            "target and 40% at the time stop (10 generated paths, not market data)")
+    t = build_ticket(_Card(), _spread(), equity=EQ,
+                     exit_rule="close at 50% of max profit, or at 7 DTE",
+                     exit_split_note=note)
+    body = t.render()
+    assert note in body
+    # and it sits on the line DIRECTLY BELOW the rule, not merely nearby: a
+    # character-distance check passed with forty blank lines wedged between them.
+    lines = body.splitlines()
+    i = next(n for n, l in enumerate(lines) if "close at 50%" in l)
+    assert note in lines[i + 1], (
+        f"the measured split is not on the line under the rule it describes:\n"
+        + "\n".join(repr(l) for l in lines[i:i + 3]))
+    # absent, nothing is invented
+    assert "measured under this rule" not in build_ticket(
+        _Card(), _spread(), equity=EQ, exit_rule="hold to expiry").render()
+
+
 def test_a_smaller_account_gets_fewer_contracts_never_more():
     sizes = [build_ticket(_Card(), _spread(), equity=e).contracts
              for e in (25_000.0, 50_000.0, 100_000.0, 250_000.0)]
