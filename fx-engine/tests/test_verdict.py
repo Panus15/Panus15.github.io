@@ -199,6 +199,11 @@ def test_too_few_trades_is_refused_however_good_it_looks():
     # quarter-Kelly on a 90% win rate would size this at the cap; a refused rule
     # gets nothing, whatever the arithmetic would otherwise have allowed.
     assert v.suggested_risk_fraction == 0.0, v.suggested_risk_fraction
+    # a floor alone is not actionable: the refusal must also say what THIS
+    # claim would take, which is a different number from the generic 30.
+    detail = v.refusals[0].detail
+    assert "90%" in detail and "38%" in detail, detail
+    assert "trades," in detail and "distinguishable" in detail, detail
 
 
 def test_a_pattern_the_literature_rejected_needs_a_bigger_sample():
@@ -265,6 +270,12 @@ def test_a_positive_result_inside_the_noise_is_refused():
     assert NOT_SIGNIFICANT in v.codes, v.codes
     assert v.codes == [NOT_SIGNIFICANT], f"not isolated: {v.codes}"
     assert v.net.net > 0, "the fixture was meant to be nominally profitable"
+    # +0.2 pips against a 50.2 pip sd at t=2.241 is (2.241*50.2/0.2)^2 trades:
+    # 316,765, against the 60 in hand. That number is the answer to "so should I
+    # collect more data?", and no is a different answer from not yet.
+    detail = v.refusals[0].detail
+    assert "316,765" in detail, detail
+    assert "and you have 60" in detail, detail
 
 
 def test_a_losing_rule_is_not_also_called_insignificant():

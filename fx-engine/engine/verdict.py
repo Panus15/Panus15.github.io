@@ -74,6 +74,7 @@ from engine.backtest import AMBIGUITY_WARN_FRAC, BacktestResult
 from engine.costs import CostModel, pip_size
 from engine.expectancy import (Expectancy, kelly_fraction, required_win_rate,
                                sizing_cannot_fix)
+from engine.stats import trades_needed, trades_to_separate
 from models.patterns import (EVIDENCE, FAILS_RANDOM_NULL, NEVER_TESTED,
                              PARAMETER_COUNT, TESTED_AND_FAILED)
 
@@ -287,7 +288,8 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
 
     net = res.expectancy()
     gross = _gross_view(res)
-    t_stat = edge_t_stat([t.net_pips for t in res.trades])
+    net_pips = [t.net_pips for t in res.trades]
+    t_stat = edge_t_stat(net_pips)
     t_req = required_t(n_hypotheses, alpha)
     flipped = sum(1 for t in res.trades if t.pips > 0 and t.net_pips <= 0)
 
@@ -330,9 +332,16 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
                if ev in CONTESTED else
                f"below this the standard error of the win rate is wider than any "
                f"edge being claimed")
+        # the floor is generic; this is what THIS claim would actually take
+        sep = trades_to_separate(gross.win_rate, v.win_rate_needed)
+        need = ("more than this module will search for — the claimed win rate is "
+                "not above the one it has to beat" if sep == math.inf else
+                f"about {max(sep, float(floor)):,.0f} before "
+                f"{gross.win_rate:.0%} is distinguishable from the "
+                f"{v.win_rate_needed:.0%} it must beat")
         v.refusals.append(Refusal(
             TOO_FEW_TRADES,
-            f"{res.n} trades, {floor} required — {why}"))
+            f"{res.n} trades, {floor} required — {why}. On these numbers: {need}"))
 
     if v.win_rate_needed >= 1.0:
         v.refusals.append(Refusal(
@@ -352,10 +361,14 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
             f"({v.win_rate_gap:+.1%}). Scaling does not help: 100 units of this "
             f"returns {per_100:+.1f} pips, because expectation is linear in size"))
     elif t_stat < t_req:
+        sd = statistics.stdev(net_pips) if len(net_pips) > 1 else 0.0
+        want = trades_needed(net.net, sd, t_req)
         v.refusals.append(Refusal(
             NOT_SIGNIFICANT,
             f"positive at {net.net:+.2f} pips/trade but t={t_stat:.2f} against "
             f"{t_req:.2f} required once corrected for {n_hypotheses} hypotheses. "
+            f"A {net.net:+.2f} pip edge against a {sd:.1f} pip standard deviation "
+            f"needs about {want:,.0f} trades to establish, and you have {res.n}. "
             f"This test already favours the strategy — it treats overlapping "
             f"trades as independent — so failing it is decisive"))
 
