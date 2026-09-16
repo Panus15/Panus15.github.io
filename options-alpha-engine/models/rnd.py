@@ -73,10 +73,141 @@ def _forward(chain: OptionChain, strikes, calls, puts, T: float) -> float:
     return math.exp(chain.r * T) * (calls[k0] - puts[k0]) + k0
 
 
-def _coverage_ok(chain: OptionChain, strikes) -> bool:
+#: How far the listed strikes must reach, in standard deviations of the terminal
+#: price (sigma * sqrt(T)). MEASURED, not chosen: on European chains — where early
+#: exercise plays no part at all — the model-free integral's own truncation error
+#: depends almost entirely on coverage in THESE units and barely on tenor or vol:
+#:
+#:     coverage    bias in the recovered vol
+#:       1.0 sd    -1.16% to -2.68%
+#:       1.5 sd    -0.33% to -0.80%
+#:       2.0 sd    -0.07% to -0.27%
+#:       2.5 sd    -0.001% to -0.10%
+#:       3.0 sd    ~0
+#:
+#: 2.5 is the first level whose worst case (0.10 vol points) is small against the
+#: 1-4 vol points of variance premium this engine is built to harvest. 2.0 would
+#: admit an error up to a quarter of a one-point edge.
+COVERAGE_SIGMAS = 2.5
+
+
+def _atm_iv(chain: OptionChain, strikes, calls, puts, T: float) -> float | None:
+    """Implied vol at the strike nearest spot. Used to SIZE the coverage test.
+
+    Deliberately not the model-free estimate: that is the quantity whose bias is
+    being tested, and it is biased LOW exactly when coverage is poor, so using it
+    would shrink the required width precisely on the chains that need it widened.
+    An at-the-money vol is unaffected by missing wings.
+    """
+    from engine.iv import implied_vol
+    k0 = min(strikes, key=lambda k: abs(k - chain.spot))
+    for px, kind in ((calls.get(k0), "call"), (puts.get(k0), "put")):
+        if not px or px <= 0:
+            continue
+        try:
+            v = implied_vol(px, chain.spot, k0, T, chain.r, chain.q, kind)
+        except (ValueError, ZeroDivisionError, ArithmeticError):
+            continue
+        if v and v > 0:
+            return v
+    return None
+
+
+def _coverage_ok(chain: OptionChain, strikes, calls=None, puts=None,
+                 T: float | None = None) -> bool:
+    """Do the listed strikes reach far enough for the integral to converge?
+
+    The old rule was a FIXED +/-10% of spot, with no tenor in it at all. The width
+    an integral over strikes actually needs scales with sigma*sqrt(T), so that one
+    number meant 2.33 standard deviations on a 30-day 15%-vol chain and **0.41** on
+    a 180-day 35%-vol one — where the recovered vol is about 2.7 points too LOW
+    while this function reports True. Too low is the dangerous direction: it makes
+    the market look cheap, which suppresses selling and can invite buying.
+
+    Falls back to the old fixed rule only when an ATM vol cannot be recovered, and
+    that case is strictly narrower than before rather than wider.
+    """
     if len(strikes) < 5:
         return False
-    return strikes[0] <= 0.90 * chain.spot and strikes[-1] >= 1.10 * chain.spot
+    fixed = strikes[0] <= 0.90 * chain.spot and strikes[-1] >= 1.10 * chain.spot
+    if calls is None or puts is None or not T or T <= 0:
+        return fixed
+    iv = _atm_iv(chain, strikes, calls, puts, T)
+    if iv is None:
+        return fixed
+    half = COVERAGE_SIGMAS * iv * math.sqrt(T)
+    return (strikes[0] <= chain.spot * (1.0 - half)
+            and strikes[-1] >= chain.spot * (1.0 + half))
+
+
+def coverage_report(chain: OptionChain, T: float, dte: int | None = None) -> dict:
+    """How far the strikes reach against how far they need to, in one dict.
+
+    A bare False tells an operator nothing they can act on. This says the chain
+    reached -15.4% when it needed +/-18.3%, which names the fix: a wider ladder, or
+    a tenor whose wings still carry a quotable price.
+    """
+    dte = dte if dte is not None else round(T * 365)
+    try:
+        strikes, calls, puts = _slice(chain, dte)
+    except (ValueError, KeyError):
+        strikes, calls, puts = [], {}, {}
+    out = {"dte": dte, "n_strikes": len(strikes), "ok": False, "atm_iv": None,
+           "required_frac": None, "low_frac": None, "high_frac": None,
+           "reason": "no strike had both a call and a put"}
+    if not strikes or not chain.spot:
+        return out
+    out["low_frac"] = strikes[0] / chain.spot - 1.0
+    out["high_frac"] = strikes[-1] / chain.spot - 1.0
+    out["ok"] = _coverage_ok(chain, strikes, calls, puts, T)
+    iv = _atm_iv(chain, strikes, calls, puts, T) if T and T > 0 else None
+    out["atm_iv"] = iv
+    if iv is None:
+        out["required_frac"] = 0.10
+        out["reason"] = ("no ATM implied vol could be recovered, so the fixed "
+                         "+/-10% fallback was used")
+        return out
+    req = COVERAGE_SIGMAS * iv * math.sqrt(T)
+    out["required_frac"] = req
+    if out["ok"]:
+        out["reason"] = "ok"
+    else:
+        short = []
+        if strikes[0] > chain.spot * (1.0 - req):
+            short.append(f"puts stop at {out['low_frac']:+.1%}")
+        if strikes[-1] < chain.spot * (1.0 + req):
+            short.append(f"calls stop at {out['high_frac']:+.1%}")
+        if len(strikes) < 5:
+            short.append(f"only {len(strikes)} paired strikes")
+        out["reason"] = (", ".join(short) + f"; {COVERAGE_SIGMAS} sd at an ATM vol "
+                         f"of {iv:.1%} over {dte}d needs +/-{req:.1%}")
+    return out
+
+
+def snap_to_listed_expiry(chain: OptionChain, dte: int):
+    """Move a requested tenor onto an expiry the vendor actually lists.
+
+    ``_slice`` matches ``expiry_days`` EXACTLY, so a requested 30d against a
+    chain listing 7/14/35 yields an empty slice and every Q extractor raises. On
+    a vendor that returns only the nearest few expiries — Tradier fetches three,
+    and SPY/QQQ expire near-daily — the requested tenor is essentially never
+    listed, so "no usable Q" was the permanent state rather than the exception.
+
+    Returns ``(snapped_dte, note)``. ``note`` is None when the requested tenor
+    was listed and a sentence describing the move when it was not. The note is
+    NOT optional decoration: a silent snap from 30d to 3d would fill a ledger
+    with entries at a tenor nobody chose, and every VRP in it would be measured
+    against a forecast horizon it does not match. Callers must surface it and
+    record the realised tenor alongside the requested one.
+    """
+    available = sorted({q.expiry_days for q in chain.quotes})
+    if not available or dte in available:
+        return dte, None
+    snapped = min(available, key=lambda d: abs(d - dte))
+    shown = ", ".join(str(d) for d in available[:10])
+    return snapped, (f"no {dte}d expiry listed; snapped to the nearest: "
+                     f"{snapped}d (available: {shown}"
+                     f"{'...' if len(available) > 10 else ''})")
 
 
 def model_free_implied_vol(chain: OptionChain, T: float, dte: int | None = None) -> float:
@@ -132,7 +263,8 @@ def bkm_moments(chain: OptionChain, T: float, dte: int | None = None) -> RiskNeu
     mu = er - 1.0 - er / 2.0 * V - er / 6.0 * W - er / 24.0 * X
     var_q = er * V - mu * mu
     if var_q <= 0:
-        return RiskNeutralMoments(0.0, 0.0, 0.0, T, len(strikes), _coverage_ok(chain, strikes))
+        return RiskNeutralMoments(0.0, 0.0, 0.0, T, len(strikes),
+                                  _coverage_ok(chain, strikes, calls, puts, T))
     skew = (er * W - 3.0 * mu * er * V + 2.0 * mu ** 3) / var_q ** 1.5
     kurt = (er * X - 4.0 * mu * er * W + 6.0 * mu * mu * er * V - 3.0 * mu ** 4) / var_q ** 2
     return RiskNeutralMoments(
@@ -141,7 +273,7 @@ def bkm_moments(chain: OptionChain, T: float, dte: int | None = None) -> RiskNeu
         kurtosis=kurt - 3.0,
         horizon_T=T,
         n_strikes=len(strikes),
-        coverage_ok=_coverage_ok(chain, strikes),
+        coverage_ok=_coverage_ok(chain, strikes, calls, puts, T),
     )
 
 

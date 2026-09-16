@@ -332,6 +332,12 @@ class _FileAdapterBase:
                 kind=str(row["kind"]).strip().lower(),
                 bid=float(row["bid"]),
                 ask=float(row["ask"]),
+                # OPTIONAL and defaulting to 0, which this codebase reads as
+                # UNKNOWN rather than as zero. Omitting it entirely is how a
+                # dumped chain silently lost the field that `models/oi_share.py`
+                # needs, leaving the crowding question permanently unanswerable
+                # from a replay.
+                open_interest=int(row.get("open_interest") or 0),
             )
             for row in quote_rows
         ]
@@ -419,7 +425,8 @@ class JsonFileAdapter(_FileAdapterBase):
     price_json : path to a price-history JSON (bare list of closes, a list of
         ``{"date","close"}`` objects, or ``{"closes":[...]}``).
     chain_json : path to an option-chain JSON object with ``symbol,spot,r,q,asof``
-        and a ``quotes`` list of ``{expiry_days,strike,kind,bid,ask}`` objects.
+        and a ``quotes`` list of ``{expiry_days,strike,kind,bid,ask}`` objects, each
+        optionally carrying ``open_interest`` (0 or absent = UNKNOWN, not zero).
     """
 
     def __init__(self, price_json: str | None = None,

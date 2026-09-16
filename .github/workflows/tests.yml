@@ -8,10 +8,12 @@ on:
   push:
     paths:
       - "options-alpha-engine/**"
+      - "fx-engine/**"
       - ".github/workflows/tests.yml"
   pull_request:
     paths:
       - "options-alpha-engine/**"
+      - "fx-engine/**"
       - ".github/workflows/tests.yml"
 
 jobs:
@@ -40,6 +42,35 @@ jobs:
           done
           if [ "$fail" -ne 0 ]; then
             echo "::error::one or more test files failed"
+            exit 1
+          fi
+
+      # This runner HAS outbound access, and that is exactly why this check
+      # belongs here. Three tests once passed only because the dev sandbox had
+      # none: one asserted a vendor was unreachable, one had its fixture CSV
+      # overwritten by a real download, one had live vendor entries appended to
+      # its ledger mid-test. The suite was making real API calls and nothing said
+      # so. This re-runs every file with EXTERNAL connections denied (loopback
+      # stays open, so local-server fixtures still work) and fails if any file
+      # needs a network it should not need.
+      - name: Prove the suite needs no network
+        working-directory: options-alpha-engine
+        run: python3 -m tools.check_offline
+
+      # The FX engine is a separate tree with its own suite. Without this it had
+      # no CI at all — a green check would have meant "the options engine passes"
+      # while saying nothing about the newer code.
+      - name: Run the FX engine test suite
+        working-directory: fx-engine
+        run: |
+          fail=0
+          for t in tests/test_*.py; do
+            echo "::group::$t"
+            python3 "$t" || fail=1
+            echo "::endgroup::"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::one or more fx-engine test files failed"
             exit 1
           fi
 
