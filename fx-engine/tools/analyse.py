@@ -23,8 +23,12 @@ the Wednesday triple charge.
 WHAT A PASS FROM THIS TOOL IS. A hypothesis that survived one in-sample test.
 It is not a prediction, it is not a bound on your loss, and it is not out-of-
 sample evidence — `demo.py` measures how often this same pipeline passes data
-with nothing in it at all. Split your file and re-run on the half this never
-saw before you believe anything here.
+with nothing in it at all.
+
+``--holdout`` is the answer to that, and the only result here worth much: it
+finds patterns on the earlier part of your file and tests the survivors on the
+later part, which nothing has looked at. You get ONE, because the held-back
+half stops being held back the moment you read the result and adjust something.
 """
 
 from __future__ import annotations
@@ -38,14 +42,22 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.backtest import run
 from engine.costs import CostModel
 from engine.data import load_csv
+from engine.holdout import SPLIT_DEFAULT
+from engine.holdout import evaluate as holdout_evaluate
 from engine.verdict import judge
 from models.patterns import DETECTORS
 
 
 def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             costs_measured: bool = False, time_format: str = None,
-            patterns=None, out=print) -> int:
-    """Load, check, scan, backtest, judge. Returns a process exit code."""
+            patterns=None, holdout: float = None, out=print) -> int:
+    """Load, check, scan, backtest, judge. Returns a process exit code.
+
+    With ``holdout`` set, the file is cut in time instead: patterns are found
+    on the earlier part and the survivors are tested on the later part, which
+    nothing has looked at. That is the only test here whose result means much,
+    and it can be used once — see `engine/holdout.py`.
+    """
     series = load_csv(path, pair, side=side, time_format=time_format)
     out(series.report())
     out("")
@@ -70,6 +82,13 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
         f"{costs.swap_markup_annual:.2%}/yr markup"
         f"{'' if costs_measured else '  (NOT confirmed — see --costs-measured)'}")
     out("")
+
+    if holdout is not None:
+        out(holdout_evaluate(series.bars, costs, frac=holdout,
+                             bars_per_night=bpn,
+                             costs_confirmed=costs_measured,
+                             patterns=patterns).report())
+        return 0
 
     chosen = DETECTORS if not patterns else {p: DETECTORS[p] for p in patterns}
     # every detector run over one file is one search, and the correction has to
@@ -130,6 +149,11 @@ def main(argv=None) -> int:
                         "genuinely ambiguous")
     p.add_argument("--pattern", action="append", choices=sorted(DETECTORS),
                    help="restrict to one pattern; repeatable")
+    p.add_argument("--holdout", nargs="?", type=float, const=SPLIT_DEFAULT,
+                   metavar="FRAC",
+                   help=f"find patterns on the first FRAC of the file and test "
+                        f"the survivors on the rest, which nothing has looked "
+                        f"at (default {SPLIT_DEFAULT}). You get ONE of these")
     a = p.parse_args(argv)
 
     costs = CostModel(pair=a.pair, round_turn_pips=a.round_turn,
@@ -137,7 +161,8 @@ def main(argv=None) -> int:
     try:
         return analyse(a.path, a.pair, a.side, costs,
                        costs_measured=a.costs_measured,
-                       time_format=a.time_format, patterns=a.pattern)
+                       time_format=a.time_format, patterns=a.pattern,
+                       holdout=a.holdout)
     except (OSError, ValueError) as e:
         print(f"could not analyse {a.path}: {e}", file=sys.stderr)
         return 1

@@ -24,6 +24,7 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.costs import CostModel
+from engine.holdout import SPLIT_DEFAULT
 from tools.analyse import analyse, main
 
 _TMP = tempfile.mkdtemp(prefix="fxcli-")
@@ -237,6 +238,48 @@ def test_the_correction_denominator_is_stated_and_scales_with_the_search():
     _, one = _run(_csv(300), costs_measured=True, patterns=["flag"])
     assert "4 hypotheses" in one, one
     assert "FLOOR" in all_ and "tried and dropped" in all_
+
+
+# ---------------------------------------------------------------------------
+# the hold-out path
+# ---------------------------------------------------------------------------
+
+def test_the_holdout_replaces_the_table_with_a_split_test():
+    _, text = _run(_csv(3000, drift=0.0006), costs_measured=True, holdout=0.7)
+    assert "HOLD-OUT" in text, text
+    assert "in-sample" in text and "out-of-sample" in text
+    assert "pips/trade  verdict" not in text, "the in-sample table ran as well"
+
+
+def test_the_holdout_fraction_reaches_the_split():
+    _, seventy = _run(_csv(3000, drift=0.0006), costs_measured=True, holdout=0.7)
+    _, fifty = _run(_csv(3000, drift=0.0006), costs_measured=True, holdout=0.5)
+    assert "found on 2,100 bars, tested on 900" in seventy, seventy
+    assert "found on 1,500 bars, tested on 1,500" in fifty, fifty
+
+
+def test_the_bare_flag_uses_the_declared_default():
+    _, text = _run(_csv(3000, drift=0.0006), costs_measured=True,
+                   holdout=SPLIT_DEFAULT)
+    assert f"{1 - SPLIT_DEFAULT:.0%} held back" in text, text
+
+
+def test_the_holdout_still_refuses_to_run_on_broken_data():
+    """The split is not a way around the data check."""
+    def freeze(rows):
+        for i in range(100, 400):
+            rows[i][1:] = [1.1000] * 4
+    code, text = _run(_csv(spoil=freeze), costs_measured=True, holdout=0.7)
+    assert code == 2, text
+    assert "HOLD-OUT" not in text
+
+
+def test_an_unspent_holdout_is_not_warned_about():
+    """Nothing passed in-sample means the held-back half was never touched, and
+    telling someone they have spent something they still have is a lie."""
+    _, text = _run(_csv(3000, drift=0.0), costs_measured=True, holdout=0.7)
+    assert "still untouched" in text, text
+    assert "YOU GET ONE" not in text
 
 
 def _run_all():
