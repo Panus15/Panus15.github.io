@@ -31,6 +31,12 @@ from engine.stats import sample_size_report, trades_to_separate
 from engine.verdict import judge, judge_planned
 from models.patterns import DETECTORS, Bar, Detection, scan
 
+#: The synthetic bars are hourly-sized (sigma ~ 8 pips a bar), so 24 of them
+#: make one financing rollover. Leaving this at the default of 1 would charge
+#: 24 nights of swap for every day held -- which made the first run of this
+#: demo look more conservative than it had any right to.
+BARS_PER_NIGHT = 24
+
 #: Not a broker's published spread: the ALL-IN round turn, and a swap markup
 #: that has to be measured rather than assumed. Both are deliberately at the
 #: cheap end, so nothing below can be dismissed as a pessimistic cost model.
@@ -68,7 +74,7 @@ def _verdicts(bars: list, costs: CostModel) -> dict:
     n_hyp = len(DETECTORS) * 4
     out = {}
     for name, fn in DETECTORS.items():
-        res = run(bars, fn(bars), costs)
+        res = run(bars, fn(bars), costs, bars_per_night=BARS_PER_NIGHT)
         out[name] = judge(res, costs, name=name, n_hypotheses=n_hyp,
                           costs_confirmed=True)
     return out
@@ -125,7 +131,7 @@ def main(bars_n: int = 60_000, seed: int = 11, trials: int = 25) -> None:
             det = fn(noise)          # detect once, price twice
             total += 1
             for label, cm in (("paid", COSTS), ("free", free)):
-                res = run(noise, det, cm)
+                res = run(noise, det, cm, bars_per_night=BARS_PER_NIGHT)
                 # judged twice: against the whole search, and as though this
                 # pattern were the only hypothesis anyone had ever tried
                 for tag, nh in (("corrected", n_hyp), ("naive", 1)):
@@ -137,24 +143,28 @@ def main(bars_n: int = 60_000, seed: int = 11, trials: int = 25) -> None:
           f"{tally[('paid','naive')]:>14}")
     print(f"   {'at zero cost':<26} {tally[('free','corrected')]:>10} "
           f"{tally[('free','naive')]:>14}")
-    fn_, fc_ = tally[("free", "naive")], tally[("free", "corrected")]
-    print(f"   The bottom row is what a backtest that ignores costs sees: "
-          f"{fn_ / total:.0%} of tests on PURE")
-    print(f"   NOISE came back tradeable. The correction removes {fn_ - fc_} of "
-          f"them. Costs remove the rest,")
-    print("   which is why cost is module one of this engine and not a "
-          "footnote at the end.")
-    if fc_:
-        print(f"   AND {fc_} STILL SURVIVE THE CORRECTION, on data guaranteed "
-              f"to have nothing in it.")
-        print("   That is not a bug in the correction, it is the limit written "
-              "into edge_t_stat():")
-        print("   the t-test treats trades as independent and these overlap "
-              "heavily — the same bars")
-        print("   generate many of them. Take a passing t-stat in this engine "
-              "as a floor on doubt,")
-        print("   never as proof. Out-of-sample data is the only thing that "
-              "settles it.")
+    pc, pn = tally[("paid", "corrected")], tally[("paid", "naive")]
+    fc, fn = tally[("free", "corrected")], tally[("free", "naive")]
+    print(f"   A costless backtest, judging one hypothesis at a time, calls "
+          f"{fn / total:.0%} of tests on")
+    print(f"   PURE NOISE tradeable. Realistic costs cut that to {pn}. The "
+          f"multiple-testing")
+    print(f"   correction cuts it to {pc}. Costs are the bigger filter, which "
+          f"is why they are")
+    print("   module one of this engine and not a footnote at the end.")
+    if pc:
+        print(f"   AND {pc} SURVIVE BOTH, on data guaranteed to have nothing in "
+              f"it. That is not a bug")
+        print("   in the correction; it is the limit written into "
+              "edge_t_stat(): the t-test treats")
+        print("   trades as independent and these overlap heavily, since the "
+              "same bars generate")
+        print("   many of them. Take a passing t-stat here as a floor on doubt, "
+              "never as proof.")
+        print("   Out-of-sample data is the only thing that settles it.")
+    elif fc:
+        print(f"   Nothing survived both, though {fc} survived the correction "
+              f"once costs were removed.")
     print()
 
     # 6. priced before anything is backtested ---------------------------------

@@ -152,6 +152,20 @@ class Series:
             return False
         return self.count(FROZEN_QUOTES) / self.n <= FROZEN_UNUSABLE_FRAC
 
+    def bars_per_night(self) -> float:
+        """How many of these bars make one financing rollover.
+
+        `backtest.py` counts a hold in BARS and charges swap in NIGHTS; without
+        this conversion, hourly data pays 24 times the financing it should. The
+        measured interval is used rather than a declared timeframe, because the
+        file is the thing that knows.
+        """
+        if self.interval is None or self.interval.total_seconds() <= 0:
+            raise ValueError(
+                "no regular interval was measured, so bars cannot be converted "
+                "to nights — pass bars_per_night to run() yourself")
+        return 86_400.0 / self.interval.total_seconds()
+
     def report(self) -> str:
         head = (f"{self.source or 'series'}: {self.n:,} bars of {self.pair} "
                 f"at the {self.side.upper()}")

@@ -307,6 +307,28 @@ def test_nothing_is_repaired_or_dropped():
     assert s.bars[42].h == 0.5 and s.bars[43].o == 0.0
 
 
+def test_the_series_converts_its_own_bars_into_financing_nights():
+    """backtest.py counts a hold in BARS and charges swap in NIGHTS. Without
+    this conversion hourly data pays 24 times the financing it should, so the
+    number comes from the interval the file actually has."""
+    assert _load(_rows(50)).bars_per_night() == 24.0
+    daily = _rows(20, step=timedelta(days=1))
+    assert _load(daily).bars_per_night() == 1.0
+    m15 = _rows(20, step=timedelta(minutes=15))
+    assert _load(m15).bars_per_night() == 96.0
+
+
+def test_an_irregular_series_refuses_to_guess_its_own_bar_size():
+    s = Series(pair="EURUSD", side="bid", bars=[Bar(1.1, 1.2, 1.0, 1.15)],
+               times=[], interval=None)
+    try:
+        s.bars_per_night()
+    except ValueError as e:
+        assert "no regular interval" in str(e), e
+    else:
+        raise AssertionError("an irregular series invented a bar size")
+
+
 def test_inspect_works_without_any_timestamps():
     bars = [Bar(1.1, 1.2, 1.0, 1.15)] * 5
     problems, interval = inspect(bars, [])

@@ -22,6 +22,11 @@ account. This module is built around the five ways that number gets manufactured
    pays thirty. This is the cost that "low turnover" does not reduce, and omitting
    it is what makes long-horizon rules look better than short ones.
 
+   NIGHTS ARE NOT BARS. `bars_per_night` converts, and getting it wrong is a
+   24x error on hourly data in whichever direction you got it wrong. A day
+   trader who is flat by the rollover pays NO swap at all, which is why nights
+   are counted as COMPLETE sessions held rather than as a fraction of one.
+
 4. GAPS THROUGH THE STOP. A stop is an instruction, not a guarantee. When a bar
    OPENS beyond the stop, the fill is the open, not the stop — that is the whole
    mechanism behind 2015-01-15 and 2019-01-03. `slipped_stops` counts them and
@@ -73,9 +78,10 @@ class Trade:
     def net_pips(self) -> float:
         return self.pips - self.cost_pips
 
-    @property
-    def nights(self) -> int:
-        return max(self.exit_index - self.entry_index, 0)
+    def nights(self, bars_per_night: float = 1.0) -> int:
+        """Complete financing sessions held. Needs the bar size, because a bar
+        count means nothing without it."""
+        return int(max(self.exit_index - self.entry_index, 0) / bars_per_night)
 
 
 @dataclass
@@ -154,15 +160,30 @@ class BacktestResult:
 
 
 def run(bars: list, detections: list, costs: CostModel, *,
-        max_hold: int = MAX_HOLD_BARS) -> BacktestResult:
+        max_hold: int = MAX_HOLD_BARS,
+        bars_per_night: float = 1.0) -> BacktestResult:
     """Walk each detection forward and resolve it honestly.
 
     Entry is at the NEXT bar's open after the pattern completed — never at the
     detection bar's close, which would assume you acted on a bar while it was still
     forming.
+
+    ``bars_per_night`` is how many bars make one financing rollover: 1 for daily
+    bars, 24 for hourly, 96 for 15-minute. The default of 1 is correct for daily
+    data and charges 24x too much swap on hourly, so pass it — `data.Series`
+    carries the interval it measured from your file, and `nights_per_bar` turns
+    that into this number.
+
+    Nights are counted as COMPLETE sessions held, because a position that opens
+    and closes between rollovers pays no financing at all. That approximation
+    can miss a rollover crossed by a short hold straddling 5pm New York; the
+    bars alone cannot say, since they carry no clock. It errs low there and
+    nowhere else, and `financing_note` says so.
     """
     res = BacktestResult()
     psize = pip_size(costs.pair)
+    if bars_per_night <= 0:
+        raise ValueError(f"bars_per_night must be positive, got {bars_per_night!r}")
 
     for d in detections:
         i0 = d.index + 1                      # strictly after the completing bar
@@ -220,7 +241,8 @@ def run(bars: list, detections: list, costs: CostModel, *,
                 res.timeouts += 1
 
         gross = (exit_px - entry_px) * d.direction / psize
-        cost = costs.total_cost_pips(max(exit_i - i0, 0), entry_px)
+        nights = int(max(exit_i - i0, 0) / bars_per_night)
+        cost = costs.total_cost_pips(nights, entry_px)
         res.trades.append(Trade(
             name=d.name, entry_index=i0, exit_index=exit_i, direction=d.direction,
             entry=entry_px, exit=exit_px, pips=gross, cost_pips=cost,

@@ -115,7 +115,43 @@ def test_financing_is_charged_for_the_nights_actually_held():
     assert r_quick.n == r_slow.n == 1
     assert r_slow.trades[0].cost_pips > r_quick.trades[0].cost_pips * 5, (
         r_quick.trades[0].cost_pips, r_slow.trades[0].cost_pips)
-    assert r_slow.trades[0].nights > r_quick.trades[0].nights
+    assert r_slow.trades[0].nights() > r_quick.trades[0].nights()
+
+
+def test_a_bar_is_not_a_night():
+    """The conversion that is a 24x error on hourly data if it is left out.
+
+    The same 40-bar hold is 40 nights of financing on daily bars and one night
+    on hourly, because a bar count means nothing until you say how big a bar is.
+    """
+    costs = CostModel(pair="EURUSD", round_turn_pips=0.0, swap_markup_annual=0.03)
+    bars = _flat(1.1000, 2) + _flat(1.1000, 40) + [Bar(1.1000, 1.1150, 1.0990, 1.1100)]
+    daily = run(bars, [_long(index=0)], costs).trades[0]
+    hourly = run(bars, [_long(index=0)], costs, bars_per_night=24).trades[0]
+    assert daily.nights() == 41 and hourly.nights(24) == 1, (
+        daily.nights(), hourly.nights(24))
+    assert hourly.cost_pips < daily.cost_pips / 20, (
+        hourly.cost_pips, daily.cost_pips)
+
+
+def test_a_hold_that_never_crosses_a_rollover_pays_no_financing():
+    """A day trader flat by 5pm New York pays no swap at all, so counting
+    fractions of a night would charge for financing that never happened."""
+    costs = CostModel(pair="EURUSD", round_turn_pips=0.9, swap_markup_annual=0.03)
+    bars = _flat(1.1000, 2) + _flat(1.1000, 3) + [Bar(1.1000, 1.1150, 1.0990, 1.1100)]
+    t = run(bars, [_long(index=0)], costs, bars_per_night=24).trades[0]
+    assert t.nights(24) == 0, t.nights(24)
+    assert abs(t.cost_pips - 0.9) < 1e-12, "financing was charged on an intraday hold"
+
+
+def test_a_bar_cannot_be_zero_or_negative_nights():
+    for bad in (0, -1, -0.5):
+        try:
+            run(_flat(1.1, 5), [], CostModel(), bars_per_night=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"bars_per_night={bad} was allowed")
 
 
 def test_the_same_trade_is_worse_with_costs_than_without():
@@ -134,7 +170,7 @@ def test_the_same_trade_is_worse_with_costs_than_without():
     assert paid.net_pips < free.net_pips
 
     gap = free.net_pips - paid.net_pips
-    financing = model.financing_pips(paid.nights, paid.entry)
+    financing = model.financing_pips(paid.nights(), paid.entry)
     assert financing > 0, "the default markup should cost something for a night held"
     assert abs(gap - (2.0 + financing)) < 1e-6, (gap, financing)
     # and with the markup switched off the gap is exactly the round turn
