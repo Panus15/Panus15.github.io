@@ -43,8 +43,29 @@ BARS_PER_NIGHT = 24
 COSTS = CostModel(pair="EURUSD", round_turn_pips=1.1, swap_markup_annual=0.008)
 
 
+#: Drift for the positive control. Calibrated, not picked: it roughly DOUBLES
+#: the price over the sample, which is about three times faster than the
+#: strongest trend EURUSD has ever had (0.85 in 2000 to 1.60 in 2008, over
+#: eight years). The first value tried here was 0.0006, which compounds to
+#: nine thousand times the starting price and reports +70,777 pips a trade --
+#: a control so absurd it proves nothing except that the arithmetic runs.
+CONTROL_DRIFT = 0.00004
+
+
+def trending(n: int, seed: int, drift: float = CONTROL_DRIFT, **kw) -> list:
+    """A series with real structure in it — the positive control.
+
+    Watching a refusal engine refuse noise proves only that it refuses. A
+    filter that says no to everything is indistinguishable from one that is
+    stuck, so it has to be shown passing something it should pass — and the
+    something has to be plausible, or the test is theatre.
+    """
+    return random_walk(n, seed, drift=drift, **kw)
+
+
 def random_walk(n: int, seed: int, start: float = 1.1000,
-                sigma: float = 0.0008, substeps: int = 4) -> list:
+                sigma: float = 0.0008, substeps: int = 4,
+                drift: float = 0.0) -> list:
     """OHLC bars with independent increments — the null hypothesis, drawn.
 
     Each bar's high and low come from an intrabar path rather than being made
@@ -57,7 +78,7 @@ def random_walk(n: int, seed: int, start: float = 1.1000,
         o = px
         path = [o]
         for _ in range(substeps):
-            px *= math.exp(rng.gauss(0.0, s))
+            px *= math.exp(rng.gauss(drift / substeps, s))
             path.append(px)
         bars.append(Bar(o, max(path), min(path), px))
     return bars
@@ -165,6 +186,19 @@ def main(bars_n: int = 60_000, seed: int = 11, trials: int = 25) -> None:
     elif fc:
         print(f"   Nothing survived both, though {fc} survived the correction "
               f"once costs were removed.")
+    up = trending(bars_n // 4, 99)
+    move = up[-1].c / up[0].o
+    print(f"   POSITIVE CONTROL — the same pipeline on a series that DOES "
+          f"trend ({up[0].o:.4f} to")
+    print(f"   {up[-1].c:.4f}, x{move:.2f} over the sample — about three times "
+          f"faster than the strongest")
+    print("   trend EURUSD has ever had, so this is generous, not realistic):")
+    hits = [f"{n} ({v.n_trades} trades, {v.net.net:+.1f} pips)"
+            for n, v in _verdicts(up, COSTS).items() if v.tradeable]
+    print(f"   {', '.join(hits) if hits else 'nothing passed — the filter may be stuck'}")
+    print("   It has to be shown passing something, or being broken and "
+          "refusing everything")
+    print("   look exactly the same from outside.")
     print()
 
     # 6. priced before anything is backtested ---------------------------------
