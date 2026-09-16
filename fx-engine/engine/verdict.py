@@ -141,6 +141,14 @@ def edge_t_stat(net_pips: list) -> float:
     independent, which overlapping positions in one pair are not, and it uses
     the sample's own standard deviation, which a short sample understates. A
     result that fails this test has failed a test that was rigged in its favour.
+
+    HOW OPTIMISTIC, MEASURED. `demo.py` runs this pipeline over random walks,
+    where nothing can be true. At zero cost, 28% of pattern-tests come back
+    tradeable judged as a single hypothesis, and 13% still do after the
+    Bonferroni correction — against a nominal 5% and 0.2%. The overlap is why.
+    So a PASS here is a floor on doubt, never proof; only out-of-sample data
+    settles it. A FAIL, by contrast, is decisive, because the test was already
+    tilted the other way.
     """
     n = len(net_pips)
     if n < 2:
@@ -212,14 +220,15 @@ class Verdict:
 
     def summary(self) -> str:
         head = "TRADEABLE" if self.tradeable else "STAND DOWN"
+        # the GROSS view is printed, not the net one. Both give the same net
+        # expectancy -- that identity is proved in `_gross_view` -- but the net
+        # view carries cost_pips=0, so printing it shows "cost 0.00 pips" on a
+        # result that was costed, which reads as if the cost had been forgotten.
         lines = [f"{self.name or 'verdict'}: {head}  ({self.n_trades} trades)",
-                 self.net.summary()]
+                 self.gross.summary()]
         lines.append(
-            f"  required win rate {self.win_rate_needed:>7.1%} vs measured "
-            f"{self.gross.win_rate:.1%} gross  ({self.win_rate_gap:+.1%} short)")
-        lines.append(
-            f"  of which cost alone{self.gross.cost_penalty_points:>7.1%}"
-            f"   ({self.flipped_by_cost} winning trade(s) lost money after cost)")
+            f"  short by {self.win_rate_gap:+.1%} of win rate; "
+            f"{self.flipped_by_cost} winning trade(s) lost money after cost")
         lines.append(
             f"  t-stat {self.t_stat:>8.2f} vs {self.t_required:.2f} required "
             f"across {self.n_hypotheses} hypotheses")

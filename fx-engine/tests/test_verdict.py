@@ -413,10 +413,24 @@ def test_the_summary_names_every_refusal_and_both_win_rates():
     assert "STAND DOWN" in text
     for code in v.codes:
         assert code in text, f"{code} missing from the summary"
-    assert "required win rate" in text
+    assert "needs a win rate of" in text, text
+    assert "short by" in text, text
     assert "t-stat" in text and "evidence:" in text
     ok = judge(_baseline(), MINE, costs_confirmed=True).summary()
     assert "TRADEABLE" in ok and "not a floor" in ok
+
+
+def test_the_summary_shows_the_cost_it_charged():
+    """The net view carries cost_pips=0 because the trades already paid it, so
+    printing THAT view reports "cost 0.00 pips" on a costed result — which reads
+    as if the cost had been forgotten, on the one module whose entire argument
+    is that it must not be."""
+    text = judge(_baseline(), MINE, costs_confirmed=True).summary()
+    assert "1.50 pips round turn" in text, text
+    assert "0.00 pips round turn" not in text, text
+    # and the required win rate must be the one with the cost in it: the trades
+    # cost 1.5 pips on a 20/10 gross range, so 5.0 points of the 38.3% is cost.
+    assert "38.3%" in text and "+5.0%" in text, text
 
 
 # ---------------------------------------------------------------------------

@@ -77,3 +77,9 @@ jobs:
       - name: Smoke-test the demo (stdlib-only, no deps)
         working-directory: options-alpha-engine
         run: python3 demo.py
+
+      # Small sizes so CI stays fast; the point is that the whole FX loop runs
+      # end to end, not that the false-positive counts are precise at n=3.
+      - name: Smoke-test the FX demo (stdlib-only, no deps)
+        working-directory: fx-engine
+        run: python3 demo.py --bars 8000 --trials 3
