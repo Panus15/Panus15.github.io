@@ -241,6 +241,68 @@ def test_the_correction_denominator_is_stated_and_scales_with_the_search():
 
 
 # ---------------------------------------------------------------------------
+# what to do about a refusal
+# ---------------------------------------------------------------------------
+
+def test_an_arithmetic_refusal_comes_with_what_you_could_change():
+    _, text = _run(_csv(3000, drift=0.0), costs_measured=True)
+    assert "CLOSEST TO WORKING" in text, text
+    assert "[CAN]" in text or "[cannot]" in text, text
+    assert "VERDICT:" in text
+
+
+def test_a_sample_size_refusal_is_not_answered_with_broker_advice():
+    """Running the levers on a rule refused for TOO_FEW_TRADES prints "it
+    already clears its costs" directly under a table saying it was refused.
+    That reads as a contradiction because it is one: the answer to too little
+    data is more data, and no account change affects it."""
+    # restricted to the structural patterns, which fire rarely: on a short file
+    # they run out of trades before they run out of edge. engulfing fires often
+    # enough to lose to costs on any series, so it always supplies an
+    # arithmetic refusal and would mask this branch entirely.
+    _, text = _run(_csv(800, drift=0.0), costs_measured=True,
+                   patterns=["head_and_shoulders", "triangle"])
+    rows = [l for l in text.splitlines()
+            if l.split() and l.split()[0] in ("head_and_shoulders", "triangle")]
+    codes = [r.split()[-1] for r in rows]
+    assert len(codes) == 2 and all(c == "TOO_FEW_TRADES" for c in codes), codes
+    assert "CLOSEST TO WORKING" not in text, text
+    assert "binding constraint is data" in text, text
+
+
+def test_no_advice_is_offered_when_something_passed():
+    """drift=0.0001 is the fixture that can tell the difference: two patterns
+    pass AND engulfing is refused on arithmetic with 724 trades. At a stronger
+    drift nothing has an arithmetic refusal left, so "show the advice whether
+    or not something passed" would have nothing to show and look correct."""
+    _, text = _run(_csv(3000, drift=0.0001), costs_measured=True)
+    rows = [l.split() for l in text.splitlines()
+            if l.split() and l.split()[0] in
+            ("double_bottom", "flag", "engulfing")]
+    assert any(r[-1] == "TRADEABLE" for r in rows), rows
+    assert any(r[-1] == "NEGATIVE_NET_EXPECTANCY" for r in rows), rows
+    assert "CLOSEST TO WORKING" not in text, text
+    assert "binding constraint is data" not in text, text
+
+
+def test_the_trade_rate_is_annualised_from_the_span_not_the_raw_count():
+    """"at N trades a year" has to mean a year. The sample here is 3,000 hourly
+    bars = 125 days, so the annual rate is the sample count x 365/125 = 2.92x,
+    and printing the raw count would understate the yearly bleed threefold."""
+    _, text = _run(_csv(3000, drift=0.0), costs_measured=True)
+    name = [l for l in text.splitlines() if l.startswith("CLOSEST TO WORKING")]
+    assert name, text
+    pattern = name[0].split("— ")[1].split(",")[0]
+    row = [l.split() for l in text.splitlines()
+           if l.split() and l.split()[0] == pattern][0]
+    n = int(row[1].replace(",", ""))
+    rate = [l for l in text.splitlines() if "trades a year" in l][0]
+    printed = int(rate.split("at ")[1].split(" trades")[0].replace(",", ""))
+    assert printed != n, f"the raw sample count was printed as a yearly rate ({n})"
+    assert abs(printed - n * 365.0 / (3000 / 24.0)) <= 1, (printed, n)
+
+
+# ---------------------------------------------------------------------------
 # the hold-out path
 # ---------------------------------------------------------------------------
 

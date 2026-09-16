@@ -43,8 +43,10 @@ from engine.backtest import run
 from engine.costs import CostModel
 from engine.data import load_csv
 from engine.holdout import SPLIT_DEFAULT
+from engine.levers import advise
 from engine.holdout import evaluate as holdout_evaluate
-from engine.verdict import judge
+from engine.verdict import (NEGATIVE_NET_EXPECTANCY, NO_WIN_RATE_SAVES_IT,
+                            TOO_FEW_TRADES, judge)
 from models.patterns import DETECTORS
 
 
@@ -100,7 +102,7 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
     out("")
     out(f"{'pattern':<20} {'n':>6} {'win%':>6} {'need%':>6} {'pips/trade':>11}"
         f"  verdict")
-    passed = []
+    passed, judged = [], {}
     for name, fn in chosen.items():
         res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
@@ -108,12 +110,47 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
         head = "TRADEABLE" if v.tradeable else (v.codes[0] if v.codes else "-")
         out(f"{name:<20} {v.n_trades:>6,} {v.gross.win_rate:>6.1%} "
             f"{v.win_rate_needed:>6.1%} {v.net.net:>11.2f}  {head}")
+        judged[name] = v
         if v.tradeable:
             passed.append(v)
     out("")
 
     for v in passed:
         out(v.summary())
+        out("")
+
+    # A refusal without a next step leaves you holding a named no and nothing
+    # to do with it. But the levers only answer ONE kind of no -- the one where
+    # the arithmetic does not work -- and running them on a rule refused for
+    # TOO_FEW_TRADES prints "it already clears its costs" directly under a table
+    # saying it was refused. That reads as a contradiction because it is one:
+    # a sample-size refusal is answered by more data, which stats.py sizes, not
+    # by a cheaper broker. So only arithmetic refusals get the lever treatment.
+    refused = [v for v in judged.values() if not v.tradeable and v.n_trades]
+    # TOO_FEW_TRADES disqualifies a rule from this section whatever ELSE it was
+    # refused for. Refusals accumulate, so a rule with one trade can carry both
+    # "too few trades" and "negative expectancy" -- and running the levers on it
+    # announces "your rule has no edge before costs, find a different one" on
+    # the strength of a single trade. Every number here is derived from the
+    # expectancy, and a sample too small to measure an expectancy is too small
+    # to advise on it.
+    arithmetic = [v for v in refused
+                  if TOO_FEW_TRADES not in v.codes
+                  and (NEGATIVE_NET_EXPECTANCY in v.codes
+                       or NO_WIN_RATE_SAVES_IT in v.codes)]
+    if not passed and arithmetic:
+        best = max(arithmetic, key=lambda v: v.gross.net)
+        # trades per year from the sample's own span, not a round guess
+        days = max(len(series.bars) / bpn, 1.0)
+        out(f"CLOSEST TO WORKING — {best.name}, and what you could change:")
+        out(advise(best.gross, trades_per_year=best.n_trades * 365.0 / days))
+        out("")
+    elif not passed and refused:
+        out("No rule here failed on ARITHMETIC — every refusal above is about "
+            "sample size or\nsignificance. The binding constraint is data, "
+            "not your broker or your targets, and\nthe refusals say how many "
+            "trades each claim would need. A cheaper account changes\nnothing "
+            "about a number nobody can yet measure.")
         out("")
     if passed:
         out(f"{len(passed)} pattern(s) survived one IN-SAMPLE test on this file. "
