@@ -1,0 +1,26 @@
+# Build artifacts. Not merely noise here: a stale .pyc once inverted a whole
+# mutation sweep in this repository, reporting mutants as killed that were not.
+# Every sweep runs under PYTHONDONTWRITEBYTECODE=1 for that reason; this is the
+# second line of defence for the runs that forget.
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.DS_Store
+
+# Price data stays out of version control. FX bar data is licensed by whoever
+# sold it to you, it is large, and it is re-downloadable — none of which is
+# true of the options engine's holdings archive, which is why that tree has an
+# exception and this one does not.
+data/
+*.csv
+*.parquet
+
+# Broker credentials and account numbers. A cost model is measured FROM an
+# account; nothing about that account belongs in a commit.
+.env
