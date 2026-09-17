@@ -16,8 +16,11 @@ could not open published articles. Every claim in `EVIDENCE.md` and every verdic
 `VERIFICATION.md` carries its own verification label. Abstract-level claims are
 second-hand until checked against the article. **Four of the six planned
 verifications did not run** (order flow, 12-month trend, round-number clustering,
-PPP value) because the session hit its usage limit; those claims are marked
-UNVERIFIED below and must not be treated as established.
+PPP value) because the session hit its usage limit. They were run in a second
+pass on 2026-09-17 — see the end of `VERIFICATION.md`. Two are now REFUTED for
+retail, one stands as a microstructure fact whose only usable reading is
+defensive, and one is weakened. All four rest on abstract-level sources, since
+the proxy blocked full texts again, so they are a weaker tier than the rest.
 
 ---
 
@@ -172,26 +175,53 @@ daily on full notional, which low turnover does nothing to reduce.
 
 ---
 
-## 3. What is unverified
+## 3. What was unverified, and what a second pass did to it
 
-These were scheduled for adversarial attack and the session ran out. They are
-**not** established:
+These four were scheduled for adversarial attack and the first session ran out.
+They were attacked on 2026-09-17; full write-up at the end of `VERIFICATION.md`.
+All four rest on abstract-level sources — the proxy blocked every full text
+again — so they are a weaker tier than the Fed working papers above.
 
-- **Disaggregated customer order flow** (cited Sharpe 1.26–1.45). The researching
-  agent itself flagged it UNRESOLVED — it could not determine whether the figures are
-  gross or net of spreads. It also requires proprietary dealer data retail cannot buy.
-- **12-month time-series trend** (SG Trend Index net Sharpe ~0.4–0.6 since 2000). The
-  open question is whether the **FX sleeve alone** carries that, or whether it is a
-  diversification result across 50–100 markets that collapses to 10–15 currency pairs.
-  Bhardwaj/Gorton/Rouwenhorst found the average CTA's net excess return statistically
-  indistinguishable from zero. Short-horizon trend has specifically decayed since
-  2008, concentrated in small-tick contracts — which is what FX majors are.
-- **Round-number order clustering** (Osler 2003, *JF*) — the strongest *technical*
-  finding in FX, but from proprietary 1999–2000 dealer order data, never turned into a
-  tested cost-inclusive strategy in 25 years. Note it may argue **against** placing
-  stops at round numbers rather than for a strategy.
-- **PPP value** — lowest turnover of any FX factor, but weakest in raw form, and
-  possibly just short-carry in disguise.
+- **Disaggregated customer order flow** (cited Sharpe 1.26-1.45) — **REFUTED for
+  retail.** The unresolved gross-or-net question turned out not to be the binding
+  one. Sager & Taylor (2008, *JMCB*), "Commercially Available Order Flow Data and
+  Exchange Rate Movements: Caveat Emptor", tested the version a non-dealer can
+  buy and cast "considerable doubt on the practical value to market
+  practitioners". The high Sharpes come from proprietary dealer books. The effect
+  may be real and is simultaneously unavailable.
+
+- **12-month time-series trend** — **REFUTED for retail**, and this was the
+  strongest surviving candidate. Hutchinson et al. (2022, *Research in
+  International Business and Finance*) report currency technical-rule Sharpe
+  falling from **0.66 in-sample to 0.06 out-of-sample**, with returns that **do
+  not survive modest transaction costs** out-of-sample — and identify time-series
+  momentum as the single factor explaining all of it, so trend is not a fallback
+  when patterns fail, it is the same thing. Post-publication decay in currency
+  strategies runs **+0.39 to -0.32** out-of-sample. A 2026 study finds
+  short-horizon trend "effectively vanished" for FX and equity indices since
+  2010 while yield and commodities were undamaged.
+
+- **Round-number order clustering** (Osler 2003, *JF*) — **not refuted as a
+  fact, still unverified as a strategy, and the usable reading is DEFENSIVE.**
+  The clustering is solid: take-profits cluster *at* round numbers, stops
+  cluster *just beyond* them, and price accelerates through the stop levels.
+  Still no cost-inclusive strategy test in 25 years. But the asymmetry says that
+  putting your own stop just beyond a round number places it exactly where the
+  cascade runs — a reason to move a stop, not a signal to trade, and the
+  opposite of how this is usually sold.
+
+- **PPP value** — **weakened, and the "short-carry in disguise" suspicion
+  corroborated.** Currency value "mostly captures risk premia that vary across
+  countries but are relatively static over time", and the evidence does "not
+  support the notion that trading on simple currency value measures is profitable
+  because spot rates revert to fundamental values" — which removes the mechanism,
+  not just the return. Valuation-*adjusted* carry does beat plain carry (0.53-0.62
+  vs 0.47) but is carry with a value tilt, and inherits the carry arithmetic
+  already refuted for retail.
+
+**Net effect on the design: none, and that is the result.** The engine was built
+to refuse rather than to trade a signal, and this pass removed the two candidates
+that might have justified building one.
 
 ---
 

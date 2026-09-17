@@ -147,3 +147,115 @@ WHAT DOES NOT SURVIVE UNDER ANY CONDITION: the framing that the dollar factor is
 - https://www.sciencedirect.com/science/article/abs/pii/S1042443121001670 - 'Currency carry trade: the decline in performance after the 2008 Global Financial Crisis'. Lower post-GFC returns; reverse carry profitable 2012-2016. Abstract only.
 - https://www.nber.org/system/files/working_papers/w14082/w14082.pdf - Lustig, Roussanov & Verdelhan (2011), 'Common Risk Factors in Currency Markets', RFS 24(11). DOL definition; HML_FX price of risk 546bp/yr; carry spread 4.8%/yr after transaction costs. Snippet only.
 - https://www.forex.com/en-uk/about-us/financial-transparency/trading-costs-charges/ and https://spreadwisefx.com/guides/how-forex-brokers-make-money - retail swap mechanics: brokers fund at tom-next, add a markup plus admin fee, book to client daily; swap income is a material broker revenue line on positions held overnight; Wednesday triple-swap. Confirms the markup is a daily charge on notional that low turnover cannot avoid.
+
+---
+
+# Second pass — the four verifications that never ran
+
+Run 2026-09-17, on the four claims `BRIEF.md` §3 marked UNVERIFIED. Same method
+as above: the instruction was to REFUTE, and the default verdict is refuted.
+
+**Evidence tier, stated before the findings.** The egress proxy blocked
+`WebFetch` on every domain attempted — sciencedirect, arxiv, newyorkfed,
+ideas.repec, aqr, and two university repositories that were serving the full
+text. These verdicts therefore rest on **search-result summaries of abstracts**,
+which is a WEAKER tier than the Federal-Reserve full texts some first-pass
+claims reached. They are recorded because they change what the design rests on;
+they are not recorded as settled. Anyone who can open the articles should.
+
+## order flow — **REFUTED for retail** (confidence: medium-high)
+
+The claim was a Sharpe of 1.26–1.45 from disaggregated customer order flow. The
+first pass could not tell whether those figures were gross or net of spreads,
+and flagged it UNRESOLVED.
+
+That question turns out not to be the binding one. Sager & Taylor (2008,
+*Journal of Money, Credit and Banking*), **"Commercially Available Order Flow
+Data and Exchange Rate Movements: Caveat Emptor"**, tested the version a
+non-dealer can actually buy and found little evidence that inter-dealer order
+flow forecasts exchange rates, casting "considerable doubt on the practical
+value to market practitioners of commercially available customer order flow
+data." The high Sharpe figures come from proprietary dealer books.
+
+So the effect may well be real and is simultaneously unavailable: the strong
+results need an input retail cannot obtain, and the input retail *can* obtain
+was tested by name and failed. Gross-versus-net remains unresolved and no longer
+decides anything.
+
+## 12-month time-series trend — **REFUTED for retail** (confidence: medium-high)
+
+This was the strongest surviving candidate in the first pass, and it is the one
+the second pass damaged most.
+
+Hutchinson, Kyziropoulos, O'Brien et al. (2022, *Research in International
+Business and Finance*), **"Technical trading rule profitability in currencies:
+It's all about momentum"**, report the mean Sharpe of their portfolio of
+currency technical rules falling from **0.66 in-sample to 0.06 out-of-sample**,
+and state that the returns **do not survive modest transaction costs
+out-of-sample**. They identify time-series momentum as the single common factor:
+any abnormal return from technical rules is fully explained by it — so trend is
+not a separate hope to fall back on when patterns fail, it is the same thing.
+
+Related work by the same authors on post-publication decay reports currency
+strategy out-of-sample Sharpe moving from **+0.39 to −0.32**, attributed to
+arbitrageurs correcting mispricing as investors learn from the academic
+literature. A separate 2026 study reports short-horizon trend's five-year
+rolling Sharpe collapsing from 1–2.5 to statistically indistinguishable from
+zero post-2010, with trend having "effectively vanished" for equity indices and
+FX while yield and commodities were undamaged — i.e. the decay is concentrated
+in exactly the asset class in question.
+
+The open question the first pass posed — whether the FX sleeve alone carries the
+SG Trend Index's net Sharpe, or whether it is a diversification result across
+50–100 markets — is now answered in the direction that kills it.
+
+## round-number clustering — **NOT REFUTED as a fact, UNVERIFIED as a strategy,
+and the usable reading is DEFENSIVE** (confidence: medium)
+
+The microstructure finding stands and was not attacked successfully. Osler
+(2003, *JF*; 2005, *JIMF*) documents, from the complete Royal Bank of Scotland
+order book, 1 Aug 1999 – 11 Apr 2000, 9,655 orders and over $55bn face value in
+three pairs: take-profit orders cluster **at** round numbers, stop-loss orders
+cluster **just beyond** them, and rates move rapidly after reaching levels where
+stops cluster, with the effect statistically significant for at least two hours.
+
+What is still missing after 25 years is any cost-inclusive test of a strategy
+built on it. Nothing found turns it into one, and the one adjacent result — up
+to 75% of 7,650 rules profitable after costs on four currencies, 1994–2014, but
+not *consistently* so out-of-sample — is a data-snooping shape, not a finding.
+
+**The actionable content is a warning, not a signal.** If stop-loss orders
+cluster just beyond round numbers and price accelerates through those levels,
+then placing your own stop just beyond a round number puts it exactly where the
+cascade runs. That is a reason to move a stop, not a strategy to trade — and it
+is the opposite of how the clustering is usually sold to retail.
+
+## PPP value — **WEAKENED, and the "carry in disguise" suspicion corroborated**
+(confidence: medium)
+
+The first pass suspected currency value is "possibly just short-carry in
+disguise". The second pass found that framing supported rather than
+contradicted: currency value "mostly captures risk premia that vary across
+countries but are relatively static over time", and results "do not support the
+notion that trading on simple currency value measures is profitable because spot
+rates revert to fundamental values" — which removes the mechanism, not just the
+return.
+
+Valuation-*adjusted* carry does better than plain carry (24-year Sharpe 0.53–0.62
+against 0.47), but that is carry with a value tilt and inherits the carry
+arithmetic this brief already refuted for retail: a 0.8%/yr markup on 200% gross
+notional against a post-2008 G10 carry index return near 0.85%/yr.
+
+On costs, the same literature reports an after-cost Sharpe of 0.75 at **USD 1
+billion** in assets falling to **0.5 at USD 80 million** on price impact alone.
+Both figures are institutional. Neither is a retail cost structure, and the
+direction of the gradient is the point.
+
+## What this changes in the design
+
+Nothing needs rebuilding, which is itself the result: the engine was built to
+refuse, and the second pass removed the two candidates that might have been
+worth building a signal around. One number is worth carrying into the code —
+**0.66 in-sample to 0.06 out-of-sample, in currencies specifically** — because
+`holdout.py` asserts that in-sample results evaporate and now has a published
+figure for how much.

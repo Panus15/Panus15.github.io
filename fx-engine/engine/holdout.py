@@ -28,6 +28,18 @@ original width would be too strict and would hide real results; ignoring the
 correction entirely would let the survivor with the luckiest half look
 confirmed. `n_survivors` is what this uses, and it is stated in the report.
 
+WHAT THE LITERATURE SAYS THIS STEP USUALLY DOES, IN CURRENCIES SPECIFICALLY.
+Hutchinson et al. (2022, Research in International Business and Finance) took a
+portfolio of currency technical trading rules and split it the way this module
+does. The mean Sharpe fell from 0.66 in-sample to 0.06 out-of-sample, and the
+returns did not survive modest transaction costs out of sample. They also found
+that whatever the rules earned was fully explained by time-series momentum, so
+"the pattern failed, I will use a trend filter instead" is not a second idea.
+
+That is the expected shape of the result below: roughly a tenth of what the
+in-sample number promised, and then nothing once costs are charged. If your
+hold-out CONFIRMS, the base rate says look for the leak before celebrating.
+
 WHAT IT TOOK TO GET A CONFIRMATION AT ALL, MEASURED. This module's own
 positive control — a synthetic series with a genuine, persistent trend — only
 confirms out-of-sample when the trend multiplies the price SEVENFOLD over the
