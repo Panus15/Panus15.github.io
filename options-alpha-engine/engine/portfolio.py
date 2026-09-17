@@ -77,12 +77,26 @@ class Position:
     q: float = 0.0            # dividend yield
     vol: float = 0.20         # implied vol at entry (annualised)
     multiplier: int = DEFAULT_MULTIPLIER
+    #: Days per year for this position's tenor. 365 is right for a CALENDAR expiry
+    #: ("30 days to expiry"); 252 is right when the caller counts TRADING bars.
+    #: Both conventions exist in this repo and mixing them silently was a real bug —
+    #: see the note on `T` below.
+    days_per_year: float = 365.0
 
     # --- time --------------------------------------------------------------- #
     @property
     def T(self) -> float:
-        """Time to expiry in YEARS (pricing convention)."""
-        return self.expiry_days / 365.0
+        """Time to expiry in YEARS.
+
+        This used to be hardcoded to ``expiry_days / 365``, while the simulation
+        loops in hedged_backtest / signal_backtest price the SAME position at
+        ``dte / 252`` because their ``dte`` counts trading bars. At a 21-bar tenor
+        that is a 1.45x difference in T, so the risk governor sized on an option
+        with 16.8% less vega than the one actually held — it under-measured the
+        risk of every position it approved. Callers that count bars must pass
+        ``days_per_year=252`` so the sizing sees the tenor being traded.
+        """
+        return self.expiry_days / self.days_per_year
 
     @property
     def is_short(self) -> bool:
@@ -352,9 +366,20 @@ def vol_spike_scenarios(
         spike : spot x (1 + spot_shock), vol + vol_bump, prob = tail_prob
 
     A bigger ``spot_shock`` / ``vol_bump`` => a fatter left tail => a larger
-    per-contract CVaR => ``size_by_cvar`` returns FEWER contracts. Pass your own
-    (richer, multi-severity) scenario list to ``size_by_cvar`` when you have one;
-    this is a sensible, transparent default.
+    per-contract CVaR => ``size_by_cvar`` returns FEWER contracts.
+
+    WHAT THIS SET CANNOT DO, stated because the name "CVaR at 95% confidence"
+    implies otherwise. With two points there is exactly ONE loss state carrying
+    ``tail_prob`` of the mass, so every confidence level whose tail (1 - alpha)
+    falls at or below ``tail_prob`` averages over that same single state and
+    returns the SAME number. At the shipped default of tail_prob=0.10, alpha=0.90,
+    0.95, 0.99 and 0.999 are all identical - alpha is inert. The figure is not a
+    quantile of a distribution; it is the loss in one hand-written scenario, and
+    ``spot_shock``/``vol_bump`` are the knobs that actually move it.
+
+    ``cvar_per_contract`` refuses a level it cannot resolve rather than returning
+    a number that looks like a 99% figure and is not. Pass a richer multi-severity
+    list when you have one and alpha starts to mean what it says.
     """
     return [
         Scenario(spot_mult=1.0, vol_shift=0.0, prob=1.0 - tail_prob),
@@ -402,6 +427,20 @@ def cvar_per_contract(
         key=lambda r: r[0],
     )
     tail = 1.0 - alpha
+    # The level must be RESOLVABLE by this scenario set. If the worst state alone
+    # carries more mass than the tail we were asked about, every alpha in that
+    # range returns the same number, and calling it "CVaR at 99%" is a claim the
+    # data cannot support. Say so instead.
+    worst_mass = rows[0][1]
+    # 1.0 - 0.9 is 0.09999999999999998, so the exactly-resolvable boundary needs
+    # a tolerance or the shipped default refuses itself
+    if 0 < tail < worst_mass - 1e-9 and len(rows) > 1:
+        raise ValueError(
+            f"alpha={alpha} asks for the worst {tail:.1%} of outcomes, but the "
+            f"worst scenario alone carries {worst_mass:.1%} of the probability "
+            f"mass. Every alpha above {1 - worst_mass:.2f} returns the same "
+            f"number here, so this set cannot resolve that level - supply a "
+            f"multi-severity scenario list, or ask for alpha <= {1 - worst_mass:.2f}.")
     if tail <= 0:
         # Degenerate: alpha == 1 -> pure worst-case loss.
         worst_pnl = rows[0][0]
@@ -428,7 +467,7 @@ def size_by_cvar(
     *,
     shock_scenarios: list[Scenario],
     cvar_limit: float,
-    alpha: float = 0.95,
+    alpha: float = 0.90,
 ) -> int:
     """Contracts to trade so the position's CVaR stays within a dollar budget.
 

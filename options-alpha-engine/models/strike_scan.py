@@ -36,11 +36,17 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from engine import pricing
 from engine.data import OptionChain
 from engine.iv import implied_vol
 
 from . import surface
 from .edge import regime_stressed
+
+
+# Below this vega (per share, per 1.00 vol) a contract carries no meaningful
+# vol exposure, so an edge/vega ratio is dominated by rounding noise.
+_MIN_VEGA = 1e-3
 
 
 def _ncdf(x: float) -> float:
@@ -64,15 +70,28 @@ class StrikeSignal:
     edge_write: float             # bid - fair - commission   (>0: paid over fair)
     verdict: str                  # BUY / WRITE / FAIR
     note: str = ""
+    contract_mult: float = 100.0  # shares/contract: 100 US equity/ETF, 1 crypto coin
+    break_even_slip_frac: float = float("inf")  # slippage (× spread) the edge absorbs before 0
+    vega: float = 0.0             # per share, per 1.00 vol
+    edge_vol_points: float = 0.0  # the winning edge expressed in VOL POINTS (edge/vega)
+    edge_frac: float = 0.0        # the winning edge as a fraction of the premium
+
+    @property
+    def edge(self) -> float:
+        """The winning side's edge per share (BUY -> edge_buy, else edge_write)."""
+        return self.edge_buy if self.verdict == "BUY" else self.edge_write
 
     def line(self) -> str:
         pm = f"{self.p_itm_market:6.1%}" if self.p_itm_market is not None else "   n/a"
         iv = f"{self.market_iv:6.1%}" if self.market_iv is not None else "   n/a"
-        edge = self.edge_buy if self.verdict == "BUY" else self.edge_write
+        be = ("  be=inf" if self.break_even_slip_frac == float("inf")
+              else f"  be={self.break_even_slip_frac:>4.1f}x")
         return (f"{self.expiry_days:>4}d {self.kind:>4} {self.strike:>9.2f} "
                 f"iv={iv} P_itm model={self.p_itm_model:6.1%} mkt={pm} "
-                f"fair={self.fair_value:>7.3f} mid={self.mid:>7.3f} "
-                f"edge${edge * 100:>+8.2f} {self.verdict:>6}")
+                f"fair={self.fair_value:>9.2f} mid={self.mid:>9.2f} "
+                f"edge${self.edge * self.contract_mult:>+10.2f} "
+                f"({self.edge_vol_points:>+5.1%}vol {self.edge_frac:>+5.0%}prem) "
+                f"{self.verdict:>6}{be}")
 
 
 def scan_strikes(
@@ -86,6 +105,9 @@ def scan_strikes(
     use_surface: bool = True,
     top: int | None = None,
     stressed: bool | None = None,
+    contract_mult: float = 100.0,
+    slippage_frac: float = 0.25,
+    rank_by: str = "vol_points",
 ) -> list[StrikeSignal]:
     """Scan every quoted contract; return signals sorted best-edge-first.
 
@@ -137,9 +159,17 @@ def scan_strikes(
                       / (iv_used * math.sqrt(T)))
                 p_itm_market = _ncdf(d2) if qt.kind == "call" else _ncdf(-d2)
 
+            # You do not get the touch on a wide/illiquid strike — you sweep into
+            # the book. Charge the FULL spread (buy@ask, write@bid) PLUS a slippage
+            # penalty proportional to the spread itself, so deep ITM/OTM strikes
+            # with gaping quotes are penalised most, exactly where they should be.
             fair = p.price(qt.strike, r, T, qt.kind)
-            edge_buy = fair - qt.ask - comm_ps
-            edge_write = qt.bid - fair - comm_ps
+            spread = max(qt.ask - qt.bid, 0.0)
+            slip = slippage_frac * spread
+            gross_buy = fair - qt.ask - comm_ps          # touch fill, no extra slippage
+            gross_write = qt.bid - fair - comm_ps
+            edge_buy = gross_buy - slip
+            edge_write = gross_write - slip
 
             note = ""
             if edge_buy > min_edge:
@@ -153,6 +183,31 @@ def scan_strikes(
             else:
                 verdict = "FAIR"
 
+            # Margin of safety: how much slippage (as a multiple of the current
+            # spread) the winning side's edge can absorb before it hits zero. High
+            # = robust; < ~0.5 = the edge dies inside one spread of execution cost.
+            win_gross = (gross_buy if verdict == "BUY"
+                         else gross_write if verdict == "WRITE"
+                         else max(gross_buy, gross_write))
+            be = win_gross / spread if spread > 1e-9 else float("inf")
+
+            # Normalise the edge. A raw DOLLAR edge scales with the premium, so
+            # long-dated / expensive contracts always top a dollar-ranked board even
+            # when they are the WORST per unit of risk (seen on the first real BTC
+            # chain: 334d showed 5x the dollar edge of 19d but the lowest edge as a
+            # fraction of premium). Dividing by vega converts the edge back into
+            # VOL POINTS of mispricing — directly comparable across strike and
+            # maturity, which is what a ranking must be.
+            win_edge = edge_buy if verdict == "BUY" else edge_write
+            vega_ps = 0.0
+            if iv_used is not None and iv_used > 0:
+                try:
+                    vega_ps = pricing.greeks(S, qt.strike, T, r, q_div, iv_used, qt.kind).vega
+                except (ValueError, ArithmeticError):
+                    vega_ps = 0.0
+            edge_vol_points = win_edge / vega_ps if vega_ps > _MIN_VEGA else 0.0
+            edge_frac = win_edge / mid if mid > 1e-9 else 0.0
+
             out.append(StrikeSignal(
                 expiry_days=dte, strike=qt.strike, kind=qt.kind,
                 bid=qt.bid, ask=qt.ask, mid=mid,
@@ -160,8 +215,25 @@ def scan_strikes(
                 p_itm_model=p_itm_model, p_itm_market=p_itm_market,
                 prob_gap=(p_itm_model - p_itm_market) if p_itm_market is not None else None,
                 fair_value=fair, edge_buy=edge_buy, edge_write=edge_write,
-                verdict=verdict, note=note,
+                verdict=verdict, note=note, contract_mult=contract_mult,
+                break_even_slip_frac=be, vega=vega_ps,
+                edge_vol_points=edge_vol_points, edge_frac=edge_frac,
             ))
 
-    out.sort(key=lambda s: max(s.edge_buy, s.edge_write), reverse=True)
+    # Rank on a RISK-NORMALISED edge. Preferred unit: vol points (edge / vega),
+    # which is comparable across strike and maturity. When vega is unusable — a
+    # quote so dislocated that no BSM vol reproduces it, or a contract with no vol
+    # exposure left — fall back to edge / premium, which is also normalised. What
+    # must NOT happen is a 0.0 default: that parks unsolvable junk in the middle of
+    # the board, above genuinely negative edges (and burying a real dislocation
+    # under -inf is just as wrong).
+    def _vol_points_key(s):
+        return s.edge_vol_points if s.vega > _MIN_VEGA else s.edge_frac
+
+    keys = {"vol_points": _vol_points_key,
+            "premium": lambda s: s.edge_frac,
+            "dollar": lambda s: max(s.edge_buy, s.edge_write) * s.contract_mult}
+    if rank_by not in keys:
+        raise ValueError(f"rank_by must be one of {sorted(keys)}, got {rank_by!r}")
+    out.sort(key=keys[rank_by], reverse=True)
     return out[:top] if top else out

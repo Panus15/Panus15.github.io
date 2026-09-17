@@ -62,6 +62,24 @@ def test_none_chain_is_skipped():
     assert r.n_sold == 0 and r.skip_reasons.get("no_chain", 0) == r.n_periods
 
 
+def test_macro_stress_at_vetoes_selling_in_a_window():
+    # A macro series that flips to inverted-curve stress over a window must
+    # suppress the sales the price gate alone would have allowed there.
+    from models.macro import MacroSnapshot, macro_stress_at
+    calm = MacroSnapshot("x", short_rate=0.03, long_rate=0.045)
+    inverted = MacroSnapshot("x", short_rate=0.05, long_rate=0.04)   # fires
+
+    base = run_signal_backtest(PRICES, synthetic_chain_series(dte=21), F, dte=21)
+    # macro stressed for the back half of the series
+    half = len(PRICES) // 2
+    stress_at = macro_stress_at(lambda t: inverted if t >= half else calm)
+    gated = run_signal_backtest(PRICES, synthetic_chain_series(dte=21), F, dte=21,
+                                stress_at=stress_at)
+    assert base.n_sold > 0
+    assert gated.n_sold < base.n_sold
+    assert gated.skip_reasons.get("news", 0) > 0
+
+
 def test_news_stress_vetoes_selling():
     # A forward-looking stress signal that always fires must stop every sale the
     # price regime gate alone would have allowed (counted under 'news').

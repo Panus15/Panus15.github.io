@@ -80,7 +80,7 @@ def run_signal_backtest(
     dte: int = 21, warmup: int = 63, r: float = 0.03, q: float = 0.0,
     hedge_bps: float = 5e-4, spread_frac: float = 0.015,
     starting_equity: float = 100_000.0, min_vrp: float = 0.0,
-    always_sell: bool = False, stress_at=None,
+    always_sell: bool = False, stress_at=None, event_at=None,
 ) -> SignalBacktestResult:
     """Walk-forward, non-overlapping. Sells vol only when the day's chain signal
     is RICH and the regime is clear (unless ``always_sell`` — the baseline).
@@ -89,7 +89,17 @@ def run_signal_backtest(
     of the backward-looking price regime gate — e.g. the news gate
     (models.news_signal): feed it dated sentiment and it suppresses selling
     BEFORE the realised-vol spike the price gate only sees after the fact.
-    Skips it causes are counted under ``skip_reasons['news']``."""
+    Skips it causes are counted under ``skip_reasons['news']``.
+
+    ``event_at(t, trailing) -> bool`` is the SCHEDULED-event veto — build it with
+    ``models.events.event_stress_at(calendar, symbol, dates, dte)``. It matters
+    most on single names and it is not interchangeable with the other gates: a
+    known earnings date makes implied vol high *for a reason*, so the VRP the
+    scanner reads as RICH is event premium the market has priced correctly. It
+    applies even under ``always_sell``, because a covered-call fund that keeps
+    writing through earnings is taking that risk too — the baseline is meant to
+    model the mechanic, not to be handed a free pass the signal book does not get.
+    Skips are counted under ``skip_reasons['event']``."""
     from models import edge, rnd
 
     n = len(prices)
@@ -123,6 +133,15 @@ def run_signal_backtest(
             t += dte
             continue
 
+        # Scheduled-event veto. Deliberately OUTSIDE the `not always_sell` block:
+        # a known earnings jump is priced into the vol both books sell, so
+        # exempting the baseline would hand it an edge the signal book is denied
+        # and make every comparison between them dishonest.
+        if event_at is not None and event_at(t, trailing):
+            _skip("event")
+            t += dte
+            continue
+
         if not always_sell:
             p = forecaster.forecast(trailing, T, r=r, q=q, spot=prices[t])
             vrp = q_vol ** 2 - p.log_return_vol(prices[t], T) ** 2
@@ -153,11 +172,18 @@ def run_signal_backtest(
 # Synthetic chain series — a chain_at() for offline demo/tests
 # --------------------------------------------------------------------------- #
 def synthetic_chain_series(*, dte: int, r: float = 0.03, q: float = 0.0,
-                           base_premium: float = 0.12, smile: float = 0.9):
+                           base_premium: float = 0.12, smile: float = 0.9,
+                           ladder=None, min_px: float = 0.02):
     """Return a chain_at(t, trailing) that builds a market chain each date whose
     ATM IV = trailing realised vol * (1 + time-varying premium) + a smile. The
     premium wobbles (some dates rich, some cheap) so the signal has something to
-    discriminate; realised-vol spikes make the chain IV spike in stress too."""
+    discriminate; realised-vol spikes make the chain IV spike in stress too.
+
+    ``ladder`` / ``min_px`` exist for multi-leg structures. The defaults quote a
+    coarse ±15% grid and drop anything under $0.02, which in a calm regime deletes
+    exactly the far strikes an iron condor needs for its wings — the structure then
+    fails to build and the sample silently thins. Pass a finer ladder and a lower
+    floor when the caller needs four strikes to exist at once."""
     from engine.data import OptionChain, OptionQuote
     from engine import volforecast
 
@@ -170,12 +196,12 @@ def synthetic_chain_series(*, dte: int, r: float = 0.03, q: float = 0.0,
         atm_vol = max(rv * (1.0 + premium), 0.03)
         T = dte / 365.0
         quotes = []
-        for mny in (-0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.15):
+        for mny in (ladder or (-0.15, -0.10, -0.05, 0.0, 0.05, 0.10, 0.15)):
             K = round(spot * (1 + mny), 2)
             vol = atm_vol + smile * mny * mny
             for kind in ("call", "put"):
                 px = pricing.price(spot, K, T, r, q, vol, kind)
-                if px < 0.02:
+                if px < min_px:
                     continue
                 half = max(0.02, 0.02 * px)
                 quotes.append(OptionQuote(dte, K, kind, round(max(px - half, 0.01), 2),
