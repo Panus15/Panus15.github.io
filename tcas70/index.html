@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TCAS70 Tracker — วางแผนสอบและคำนวณคะแนนใน Google Sheets</title>
+<meta name="description" content="ไฟล์ Google Sheets สำหรับ #dek70: ปฏิทินนับถอยหลัง TCAS70, คำนวณคะแนนตามค่าน้ำหนักคณะ 20 คณะ, จัดลำดับวิชาที่ควรอ่านก่อน, เช็กลิสต์พอร์ต และงบค่าสมัคร">
+<meta property="og:title" content="TCAS70 Tracker — ไฟล์เดียว จบทุกเรื่อง TCAS">
+<meta property="og:description" content="นับถอยหลังวันสอบ • คำนวณคะแนน 20 คณะ • บอกว่าควรอ่านวิชาไหนก่อน • ลองเวอร์ชันฟรีได้">
+<meta property="og:image" content="https://panus15.github.io/tcas70/img/tcas70-1.jpg">
+<meta property="og:type" content="product">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--blue:#1D4ED8;--pink:#DB2777;--ink:#172033;--mute:#55607A;--bg:#F5F7FF;--card:#fff;--line:#E3E8F5}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Sarabun,system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
+a{color:inherit}
+.wrap{max-width:980px;margin:0 auto;padding:0 16px}
+header.hero{background:linear-gradient(160deg,#1D4ED8 0%,#3B5BDB 55%,#DB2777 140%);color:#fff;padding:56px 0 64px}
+.hero .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:36px;align-items:center}
+.kicker{font:600 15px Prompt;color:#FBCFE8;letter-spacing:.3px}
+h1{font:700 clamp(38px,6vw,60px)/1.1 Prompt;margin:8px 0 12px}
+.lead{font-size:18px;color:#E0E7FF;max-width:30em}
+.cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
+.btn{display:inline-flex;align-items:center;gap:8px;font:600 17px Prompt;text-decoration:none;border-radius:999px;padding:14px 24px;border:0;cursor:pointer}
+.btn.buy{background:#fff;color:var(--blue)}
+.btn.free{background:rgba(255,255,255,.14);color:#fff;border:2px solid rgba(255,255,255,.5)}
+.btn.disabled{opacity:.75;pointer-events:none}
+.price{margin-top:16px;font:500 16px Prompt;color:#E0E7FF}
+.price b{font:700 26px Prompt;color:#fff}
+.price s{opacity:.7;margin-left:6px}
+.hero img{width:100%;height:auto;border-radius:22px;box-shadow:0 24px 60px rgba(0,0,0,.3)}
+section{padding:56px 0}
+h2{font:700 clamp(26px,4vw,34px)/1.25 Prompt;margin-bottom:8px}
+.sub{color:var(--mute);margin-bottom:24px}
+.feats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.f{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
+.f .e{font-size:30px}
+.f h3{font:600 18px Prompt;margin:6px 0 4px}
+.f p{color:var(--mute);font-size:15px}
+.gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.gallery a{display:block;border-radius:16px;overflow:hidden;border:1px solid var(--line);background:#fff}
+.gallery img{width:100%;height:auto;display:block}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:s}
+.step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
+.step:before{counter-increment:s;content:counter(s);display:inline-flex;width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;font:700 18px Prompt;align-items:center;justify-content:center;margin-bottom:8px}
+.step h3{font:600 18px Prompt}
+.step p{color:var(--mute);font-size:15px}
+.compare{width:100%;border-collapse:collapse;background:#fff;border-radius:16px;overflow:hidden;border:1px solid var(--line)}
+.compare th,.compare td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:15px}
+.compare th{font:600 15px Prompt;background:#EEF2FF}
+.compare td:nth-child(2),.compare td:nth-child(3),.compare th:nth-child(2),.compare th:nth-child(3){text-align:center;width:22%}
+details{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:10px}
+summary{font:600 17px Prompt;cursor:pointer}
+details p{color:var(--mute);margin-top:8px}
+.note{font-size:13px;color:var(--mute)}
+footer{padding:32px 0 48px;color:var(--mute);font-size:13px;border-top:1px solid var(--line)}
+@media (max-width:760px){
+  .hero .wrap{grid-template-columns:1fr}
+  .feats,.steps{grid-template-columns:1fr}
+  .gallery{grid-template-columns:repeat(2,1fr)}
+  header.hero{padding:40px 0 48px}
+}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div>
+      <div class="kicker">สำหรับ #dek70 🎓 • Google Sheets</div>
+      <h1>TCAS70 Tracker</h1>
+      <p class="lead">ไฟล์เดียวจบทุกเรื่อง TCAS — นับถอยหลังวันสอบ คำนวณคะแนนตามค่าน้ำหนักคณะ และบอกว่าควรอ่านวิชาไหนก่อน ใช้บนมือถือได้</p>
+      <div class="cta">
+        <a class="btn buy" id="buyBtn" href="#how">🛒 สั่งซื้อ</a>
+        <a class="btn free" href="TCAS70_Tracker_FREE.xlsx" download>🎁 ดาวน์โหลดเวอร์ชันฟรี</a>
+      </div>
+      <p class="price" id="price"></p>
+    </div>
+    <img src="img/tcas70-1.jpg" alt="ภาพตัวอย่าง TCAS70 Tracker หน้าสรุป" width="1080" height="1350">
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>มีอะไรในไฟล์</h2>
+    <p class="sub">ทุกชีตมีวิธีใช้ ช่องสีเหลืองกรอกเอง ช่องสีขาวระบบคิดให้ ไม่ต้องเก่ง Excel</p>
+    <div class="feats">
+      <div class="f"><div class="e">📅</div><h3>ปฏิทิน TCAS70</h3><p>นับถอยหลังทุกวันสำคัญ เตือน 🔥 เมื่อเหลือไม่ถึง 7 วัน วันที่แสดงเป็น พ.ศ. เพิ่มกิจกรรมเองได้</p></div>
+      <div class="f"><div class="e">🎯</div><h3>คำนวณคะแนน 20 คณะ</h3><p>ใส่ค่าน้ำหนักตามระเบียบการ ระบบคิดคะแนนและเทียบกับคะแนนต่ำสุดปีก่อน เตือนถ้าน้ำหนักรวมไม่ครบ 100%</p></div>
+      <div class="f"><div class="e">📚</div><h3>ควรอ่านอะไรก่อน</h3><p>จัดลำดับวิชาจากคะแนนที่ยังขาดเป้า × น้ำหนักที่คณะที่เล็งให้วิชานั้น</p></div>
+      <div class="f"><div class="e">📊</div><h3>ตารางคะแนน</h3><p>GPAX, TGAT1–3, TPAT2–5 และ A-Level ทุกวิชา พร้อมคะแนนเป้าหมาย</p></div>
+      <div class="f"><div class="e">📁</div><h3>เช็กลิสต์พอร์ต</h3><p>15 ข้อที่ต้องเตรียม พร้อม % ความคืบหน้า</p></div>
+      <div class="f"><div class="e">💸</div><h3>งบค่าสมัคร</h3><p>รวมค่าสมัครและค่าใช้จ่ายให้อัตโนมัติ ใช้คุยกับที่บ้านได้เลย</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <h2>ดูภาพตัวอย่าง</h2>
+    <p class="sub">กดที่ภาพเพื่อดูขนาดเต็ม</p>
+    <div class="gallery">
+      <a href="img/tcas70-2.jpg"><img src="img/tcas70-2-sm.jpg" alt="หน้าสรุปของฉันวันนี้" loading="lazy" width="540" height="675"></a>
+      <a href="img/tcas70-3.jpg"><img src="img/tcas70-3-sm.jpg" alt="ตัวคำนวณคะแนนคณะที่เล็ง" loading="lazy" width="540" height="675"></a>
+      <a href="img/tcas70-4.jpg"><img src="img/tcas70-4-sm.jpg" alt="จัดลำดับวิชาที่ควรอ่านก่อน" loading="lazy" width="540" height="675"></a>
+      <a href="img/tcas70-5.jpg"><img src="img/tcas70-5-sm.jpg" alt="ปฏิทิน TCAS70 นับถอยหลัง" loading="lazy" width="540" height="675"></a>
+      <a href="img/tcas70-6.jpg"><img src="img/tcas70-6-sm.jpg" alt="เช็กลิสต์พอร์ตและค่าใช้จ่าย" loading="lazy" width="540" height="675"></a>
+      <a href="img/tcas70-7.jpg"><img src="img/tcas70-7-sm.jpg" alt="ได้อะไรบ้าง" loading="lazy" width="540" height="675"></a>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <h2>ฟรี vs เวอร์ชันเต็ม</h2>
+    <p class="sub">ลองเวอร์ชันฟรีก่อนได้ ถ้าชอบค่อยอัปเกรด</p>
+    <table class="compare">
+      <tr><th>ฟีเจอร์</th><th>ฟรี</th><th>เต็ม</th></tr>
+      <tr><td>ปฏิทิน TCAS70 + นับถอยหลัง + เตือน 7 วัน</td><td>✅</td><td>✅</td></tr>
+      <tr><td>หน้าสรุปของฉันวันนี้</td><td>บางส่วน</td><td>✅</td></tr>
+      <tr><td>ตารางคะแนน + คะแนนเป้าหมาย</td><td>—</td><td>✅</td></tr>
+      <tr><td>คำนวณคะแนนตามค่าน้ำหนัก 20 คณะ</td><td>—</td><td>✅</td></tr>
+      <tr><td>จัดลำดับวิชาที่ควรอ่านก่อน</td><td>—</td><td>✅</td></tr>
+      <tr><td>เช็กลิสต์พอร์ต + งบค่าสมัคร</td><td>—</td><td>✅</td></tr>
+      <tr><td>อัปเดตฟรีเมื่อมีประกาศรอบ 2–4</td><td>—</td><td>✅</td></tr>
+    </table>
+  </div>
+</section>
+
+<section id="how" style="padding-top:0">
+  <div class="wrap">
+    <h2>สั่งซื้อยังไง</h2>
+    <p class="sub">ใช้เวลาไม่กี่นาที</p>
+    <div class="steps">
+      <div class="step"><h3>ทักแชต</h3><p id="howLine">ทัก LINE ของร้าน แจ้งว่าต้องการ TCAS70 Tracker</p></div>
+      <div class="step"><h3>โอนผ่านพร้อมเพย์</h3><p>ร้านส่ง QR พร้อมเพย์ให้ โอนแล้วส่งสลิปในแชต</p></div>
+      <div class="step"><h3>รับลิงก์ Google Sheets</h3><p>กด "ทำสำเนา" แล้วเป็นไฟล์ของคุณทันที ต้องมีบัญชี Google (Gmail)</p></div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:0">
+  <div class="wrap">
+    <h2>คำถามที่พบบ่อย</h2>
+    <details><summary>ใช้บนมือถือได้ไหม?</summary><p>ได้ เปิดด้วยแอป Google Sheets บนมือถือหรือแท็บเล็ต ส่วนการกรอกค่าน้ำหนักหลายคณะ จะสะดวกกว่าบนคอม</p></details>
+    <details><summary>วันที่ในปฏิทินถูกต้องไหม?</summary><p>รวบรวมจากข่าวการศึกษาหลายแหล่ง (ข้อมูล ณ 2 พ.ย. 2569) และแก้เองได้ทุกช่อง ควรเทียบกับ mytcas.com ซึ่งเป็นแหล่งทางการเสมอ ผู้ซื้อได้ไฟล์อัปเดตฟรีเมื่อมีประกาศเพิ่ม</p></details>
+    <details><summary>ตัวคำนวณบอกได้ไหมว่าจะติด?</summary><p>ไม่ได้ ตัวคำนวณบอกว่าคะแนนของคุณอยู่ตรงไหนเมื่อเทียบกับคะแนนต่ำสุดปีก่อน ซึ่งเปลี่ยนทุกปีตามผู้สมัคร ใช้เป็นตัวช่วยวางแผน ไม่ใช่การรับประกันผล</p></details>
+    <details><summary>รองรับ TPAT1 (กสพท) ไหม?</summary><p>ปฏิทินมีวันสอบ TPAT1 แต่ตัวคำนวณไม่รวม TPAT1 เพราะ กสพท มีวิธีคิดคะแนนเฉพาะ</p></details>
+    <details><summary>ขอคืนเงินได้ไหม?</summary><p>เป็นสินค้าดิจิทัลที่ส่งเป็นลิงก์ จึงคืนเงินไม่ได้หลังส่งลิงก์แล้ว แนะนำให้ลองเวอร์ชันฟรีก่อน ถ้าไฟล์ใช้งานไม่ได้ ทักมาได้เลย ร้านช่วยแก้ให้</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>TCAS70 Tracker เป็นเครื่องมือวางแผนส่วนตัว ไม่ได้เกี่ยวข้องกับ ทปอ. หรือระบบ TCAS อย่างเป็นทางการ • ตรวจสอบประกาศทางการที่ mytcas.com</p>
+    <p class="note" style="margin-top:6px">ภาพตัวอย่างใช้ข้อมูลสมมุติ ชื่อมหาวิทยาลัยในภาพไม่ใช่สถาบันจริง</p>
+  </div>
+</footer>
+
+<script>
+// ---- ตั้งค่าร้าน: แก้ 3 บรรทัดนี้แล้ว push ----
+const SHOP = {
+  line: "",            // ลิงก์ LINE OA เช่น "https://lin.ee/xxxxxxx" (เว้นว่าง = ยังไม่เปิดขาย)
+  price: 99,           // ราคาปกติ (บาท)
+  early: { price: 59, until: "2026-11-10" }  // ราคาโปรเปิดตัว และวันสุดท้าย (ปี ค.ศ.)
+};
+(function () {
+  const buy = document.getElementById("buyBtn"), price = document.getElementById("price"), how = document.getElementById("howLine");
+  const today = new Date().toISOString().slice(0, 10);
+  const earlyOn = SHOP.early && today <= SHOP.early.until;
+  if (earlyOn) {
+    const d = new Date(SHOP.early.until + "T00:00:00");
+    const th = d.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
+    price.innerHTML = `ราคาเปิดตัว <b>${SHOP.early.price} บาท</b><s>${SHOP.price} บาท</s> • ถึง ${th}`;
+  } else {
+    price.innerHTML = `ราคา <b>${SHOP.price} บาท</b> • อัปเดตฟรีทั้งฤดู TCAS70`;
+  }
+  if (SHOP.line) {
+    buy.href = SHOP.line; buy.target = "_blank"; buy.rel = "noopener";
+    how.innerHTML = `ทัก <a href="${SHOP.line}" target="_blank" rel="noopener">LINE ของร้าน</a> แจ้งว่าต้องการ TCAS70 Tracker`;
+  } else {
+    buy.textContent = "🛒 เปิดขายเร็ว ๆ นี้"; buy.classList.add("disabled");
+  }
+})();
+</script>
+</body>
+</html>
