@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>แผนอ่าน dek70 — นับถอยหลัง TCAS70 + จัดแผนอ่านให้อัตโนมัติ</title>
+<meta name="description" content="เลือกวิชาที่สอบ บอกว่ามั่นใจแค่ไหน แล้วรู้ทันทีว่าเหลือกี่วัน วันนี้ควรอ่านวิชาอะไรกี่นาที ฟรี ใช้บนมือถือได้">
+<meta property="og:title" content="แผนอ่าน dek70 — รู้ทันทีว่าวันนี้ต้องอ่านอะไร">
+<meta property="og:description" content="นับถอยหลังแยกตามวิชาที่สอบ + จัดแผนอ่านรายวันให้อัตโนมัติ ฟรี">
+<meta property="og:image" content="https://panus15.github.io/tcas70/img/tcas70-1.jpg">
+<meta name="theme-color" content="#1D4ED8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#F4F6FC;--card:#FFFFFF;--ink:#141B2D;--mute:#5E6880;--soft:#8C95AB;--line:#E2E7F2;
+  --blue:#1D4ED8;--blue2:#EEF2FF;--pink:#DB2777;--pink2:#FDF2F8;--green:#15803D;--green2:#DCFCE7;
+  --amber:#B45309;--amber2:#FEF3C7;--red:#B91C1C;--red2:#FEE2E2;--shadow:0 10px 30px rgba(20,40,120,.08)
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0F1320;--card:#171C2B;--ink:#E9ECF5;--mute:#A2AAC0;--soft:#7D86A0;--line:#283048;
+  --blue:#7EA2FF;--blue2:#1D2645;--pink:#F472B6;--pink2:#3A1D30;--green:#4ADE80;--green2:#123222;
+  --amber:#FBBF24;--amber2:#3A2E12;--red:#F87171;--red2:#3A1A1A;--shadow:none}}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{font-family:Sarabun,system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;font-size:16px;padding-bottom:env(safe-area-inset-bottom)}
+button,input{font:inherit;color:inherit}
+.wrap{max-width:560px;margin:0 auto;padding:0 16px}
+header{padding:22px 0 6px}
+.brand{display:flex;justify-content:space-between;align-items:center}
+.brand b{font:700 20px Prompt;letter-spacing:.2px}
+.brand b span{color:var(--pink)}
+.brand a{font:500 14px Prompt;color:var(--blue);text-decoration:none}
+h1{font:700 28px/1.2 Prompt;margin:14px 0 6px}
+h1 em{font-style:normal;color:var(--blue)}
+.lead{color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}
+.card h2{font:600 18px Prompt;display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.card h2 .n{display:inline-flex;width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;font-size:14px;align-items:center;justify-content:center}
+.hint{color:var(--soft);font-size:14px}
+.group{margin-top:12px}
+.group .gl{font:600 13px Prompt;color:var(--soft);margin-bottom:6px;letter-spacing:.3px}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1.5px solid var(--line);background:var(--card);border-radius:999px;padding:8px 14px;font:500 15px Prompt;cursor:pointer;min-height:40px;transition:.15s}
+.chip[aria-pressed=true]{background:var(--blue);border-color:var(--blue);color:#fff}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.preset{border:1.5px dashed var(--line);background:transparent;border-radius:12px;padding:6px 12px;font:500 14px Prompt;color:var(--mute);cursor:pointer}
+.conf{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+.conf:last-child{border-bottom:0}
+.conf .nm{font:600 15px Prompt;flex:1;min-width:0}
+.seg{display:flex;border:1.5px solid var(--line);border-radius:12px;overflow:hidden;flex:none}
+.seg button{border:0;background:transparent;padding:8px 10px;font:500 13.5px Prompt;cursor:pointer;min-width:60px}
+.seg button[aria-pressed=true].w{background:var(--red2);color:var(--red)}
+.seg button[aria-pressed=true].m{background:var(--amber2);color:var(--amber)}
+.seg button[aria-pressed=true].s{background:var(--green2);color:var(--green)}
+.slider{margin-top:14px}
+.slider label{display:flex;justify-content:space-between;font:600 15px Prompt}
+.slider label b{color:var(--blue)}
+input[type=range]{width:100%;margin-top:8px;accent-color:var(--blue);height:32px}
+.cta{width:100%;border:0;border-radius:16px;padding:16px;background:var(--blue);color:#fff;font:600 18px Prompt;cursor:pointer;margin:6px 0 4px;min-height:56px}
+.cta:disabled{opacity:.45;cursor:not-allowed}
+.ghost{background:transparent;border:1.5px solid var(--line);color:var(--ink);font:500 15px Prompt;border-radius:14px;padding:10px 14px;cursor:pointer}
+/* results */
+.hero{background:linear-gradient(150deg,#1D4ED8 0%,#3B5BDB 55%,#DB2777 140%);color:#fff;border:0}
+.hero .k{font:600 14px Prompt;color:#FBCFE8}
+.hero .big{display:flex;align-items:baseline;gap:10px;margin-top:4px}
+.hero .big b{font:700 76px/1 Prompt}
+.hero .big span{font:600 20px Prompt}
+.hero p{color:#E0E7FF;margin-top:6px}
+.alert{display:flex;gap:10px;align-items:flex-start;border-radius:14px;padding:12px 14px;margin-top:10px;font-size:15px}
+.alert.hot{background:var(--red2);color:var(--red)}
+.alert.info{background:var(--blue2);color:var(--blue)}
+.alert b{font-family:Prompt;font-weight:600}
+.today-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.today-row:last-child{border-bottom:0}
+.tick{width:30px;height:30px;border-radius:10px;border:2px solid var(--line);background:transparent;cursor:pointer;flex:none;display:flex;align-items:center;justify-content:center;font-size:17px}
+.tick[aria-pressed=true]{background:var(--green);border-color:var(--green);color:#fff}
+.today-row .t{flex:1;min-width:0}
+.today-row .t b{font:600 16px Prompt;display:block}
+.today-row .t small{color:var(--soft)}
+.today-row .min{font:700 20px Prompt;color:var(--blue);text-align:right}
+.today-row .min small{display:block;font:500 12px Prompt;color:var(--soft)}
+.done .t b{text-decoration:line-through;color:var(--soft)}
+.today-row .t small.dots{letter-spacing:2px;color:var(--pink);font-size:12px}
+.streak{display:inline-flex;align-items:center;gap:6px;margin-top:10px;background:var(--amber2);color:var(--amber);border-radius:999px;padding:6px 12px;font:600 14px Prompt}
+.progress{height:10px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:12px}
+.progress span{display:block;height:100%;background:var(--green);border-radius:999px;transition:width .3s}
+.bar{display:flex;height:16px;border-radius:999px;overflow:hidden;margin:12px 0 10px;background:var(--line)}
+.legend{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;font-size:14px}
+.legend div{display:flex;align-items:center;gap:8px;min-width:0}
+.legend i{width:10px;height:10px;border-radius:3px;flex:none}
+.legend span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legend b{font-family:Prompt;font-weight:600}
+.ex{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line)}
+.ex:last-child{border-bottom:0}
+.ex .d{flex:none;width:62px;text-align:center;border-radius:12px;padding:6px 0;background:var(--pink2);color:var(--pink)}
+.ex .d b{display:block;font:700 22px/1.1 Prompt}
+.ex .d small{font:500 11px Prompt}
+.ex .t{flex:1;min-width:0}
+.ex .t b{font:600 15.5px Prompt;display:block}
+.ex .t small{color:var(--soft)}
+.ex .h{font:600 14px Prompt;color:var(--mute);text-align:right;white-space:nowrap}
+.ms{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);font-size:15px}
+.ms:last-child{border-bottom:0}
+.ms b{font-family:Prompt;font-weight:600}
+.pill{font:600 12.5px Prompt;border-radius:999px;padding:3px 10px;white-space:nowrap;align-self:center}
+.pill.open{background:var(--red2);color:var(--red)}
+.pill.wait{background:var(--blue2);color:var(--blue)}
+.row2{display:flex;gap:10px;flex-wrap:wrap}
+.row2 > *{flex:1}
+details.how{margin-top:10px;font-size:14px;color:var(--mute)}
+details.how summary{cursor:pointer;font:600 14px Prompt;color:var(--blue)}
+details.how p{margin-top:6px}
+.line-cta{display:block;text-align:center;text-decoration:none;background:#06C755;color:#fff;border-radius:16px;padding:14px;font:600 17px Prompt;margin-top:10px}
+.shop{display:block;text-decoration:none;color:var(--blue);font:600 15px Prompt;text-align:center;margin-top:12px}
+footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand"><b>แผนอ่าน <span>dek70</span></b><a href="../tcas70/">ร้านของเรา →</a></div>
+</header>
+
+<!-- ================= SETUP ================= -->
+<main id="setup">
+  <h1>รู้ทันทีว่า<br><em>วันนี้ต้องอ่านอะไร</em></h1>
+  <p class="lead">ตอบ 3 ข้อ ใช้เวลาไม่ถึง 1 นาที ระบบนับถอยหลังวันสอบให้ และจัดแผนอ่านรายวันให้อัตโนมัติ ฟรี</p>
+
+  <section class="card">
+    <h2><span class="n">1</span>สอบวิชาอะไรบ้าง?</h2>
+    <p class="hint">เลือกตามระเบียบการของคณะที่เล็ง หรือกดชุดตัวอย่างด้านล่างแล้วแก้เอง</p>
+    <div class="presets" id="presets"></div>
+    <div id="subjectGroups"></div>
+  </section>
+
+  <section class="card" id="confCard">
+    <h2><span class="n">2</span>มั่นใจแต่ละวิชาแค่ไหน?</h2>
+    <p class="hint">วิชาที่ยังไม่มั่นใจจะได้เวลาอ่านมากกว่า</p>
+    <div id="confList"><p class="hint" style="margin-top:10px">เลือกวิชาในข้อ 1 ก่อน</p></div>
+  </section>
+
+  <section class="card">
+    <h2><span class="n">3</span>อ่านได้วันละกี่ชั่วโมง?</h2>
+    <div class="slider"><label>วันจันทร์–ศุกร์ <b id="wdVal"></b></label><input type="range" id="wd" min="0" max="8" step="0.5" value="2"></div>
+    <div class="slider"><label>วันเสาร์–อาทิตย์ <b id="weVal"></b></label><input type="range" id="we" min="0" max="12" step="0.5" value="4"></div>
+  </section>
+
+  <button class="cta" id="go" disabled>สร้างแผนของฉัน →</button>
+  <p class="hint" style="text-align:center">ข้อมูลเก็บไว้ในเครื่องคุณเท่านั้น ไม่ต้องสมัครสมาชิก</p>
+</main>
+
+<!-- ================= RESULTS ================= -->
+<main id="results" class="hidden">
+  <section class="card hero">
+    <div class="k" id="heroK"></div>
+    <div class="big"><b id="heroN"></b><span id="heroU"></span></div>
+    <p id="heroP"></p>
+    <div id="alerts"></div>
+  </section>
+
+  <section class="card">
+    <h2>📖 วันนี้อ่านอะไร</h2>
+    <p class="hint" id="todayHint"></p>
+    <div id="todayList"></div>
+    <div class="progress"><span id="todayBar" style="width:0"></span></div>
+    <p class="hint" id="todayDone" style="margin-top:6px"></p>
+    <div id="streak"></div>
+  </section>
+
+  <section class="card">
+    <h2>🗓️ สัปดาห์นี้</h2>
+    <p class="hint" id="weekHint"></p>
+    <div class="bar" id="weekBar"></div>
+    <div class="legend" id="weekLegend"></div>
+    <details class="how"><summary>ระบบจัดเวลายังไง?</summary>
+      <p>แต่ละวันแบ่งเวลาอ่านให้วิชาที่ยังไม่สอบ ตามน้ำหนัก: ยังไม่มั่นใจ = 3, พอใช้ = 2, มั่นใจ = 1 และเพิ่มน้ำหนักให้วิชาที่ใกล้สอบ (8 สัปดาห์สุดท้าย เพิ่มขึ้นเรื่อย ๆ จนถึง 2 เท่า) พอวิชาไหนสอบแล้ว เวลาจะย้ายไปให้วิชาที่เหลือเอง</p>
+      <p>1 ● = อ่าน 25 นาที แล้วพัก 5 นาที</p>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>⏳ นับถอยหลังแต่ละวิชา</h2>
+    <p class="hint">ตัวเลขด้านขวา = เวลาอ่านรวมที่คุณมีก่อนสอบวิชานั้น ตามแผนนี้</p>
+    <div id="examList"></div>
+  </section>
+
+  <section class="card">
+    <h2>✅ สิ่งที่ต้องทำเร็ว ๆ นี้</h2>
+    <div id="msList"></div>
+  </section>
+
+  <section class="card">
+    <h2>📸 การ์ดนับถอยหลังของฉัน</h2>
+    <p class="hint">บันทึกเป็นรูปไว้ลงสตอรี่ หรือตั้งเป็นวอลเปเปอร์ไว้เตือนตัวเอง</p>
+    <div class="row2" style="margin-top:10px"><button class="cta" id="shareBtn" style="margin:0">บันทึกการ์ด</button></div>
+    <p class="hint" id="shareMsg" style="margin-top:6px"></p>
+  </section>
+
+  <section class="card">
+    <h2>🔔 อยากให้เตือนก่อนถึงกำหนด?</h2>
+    <p class="hint">แอด LINE ร้าน เดี๋ยวส่งข้อความเตือนก่อนวันสมัคร วันสอบ และวันประกาศผล ฟรี</p>
+    <a class="line-cta" href="https://lin.ee/xyMOK2T" target="_blank" rel="noopener">แอด LINE รับการแจ้งเตือน</a>
+    <a class="shop" href="../tcas70/">ดูเครื่องมือเวอร์ชันเต็ม (คำนวณคะแนนคณะ) →</a>
+  </section>
+
+  <div class="row2"><button class="ghost" id="edit">✏️ แก้วิชา / เวลาอ่าน</button></div>
+</main>
+
+<footer>
+  วันสอบรวบรวมจากข่าวการศึกษาหลายแหล่ง ณ 2 พ.ย. 2569 อาจมีการเปลี่ยนแปลง — ยืนยันที่ mytcas.com เสมอ •
+  A-Level สอบช่วง 13–15 มี.ค. 2570 (วันของแต่ละวิชาดูตารางสอบทางการ ระบบนับถึงวันแรก) •
+  เครื่องมือนี้ไม่ได้เกี่ยวข้องกับ ทปอ.
+</footer>
+</div>
+
+<script>
+"use strict";
+// ---------------- data (verify at mytcas.com) ----------------
+const SUBJECTS = [
+  { id:"TGAT",  g:"TGAT / TPAT", s:"TGAT",  n:"TGAT ความถนัดทั่วไป", d:"2027-01-30" },
+  { id:"TPAT3", g:"TGAT / TPAT", s:"TPAT3", n:"TPAT3 วิทย์ เทคโน วิศวะ", d:"2027-01-30" },
+  { id:"TPAT2", g:"TGAT / TPAT", s:"TPAT2", n:"TPAT2 ศิลปกรรม", d:"2027-01-31" },
+  { id:"TPAT5", g:"TGAT / TPAT", s:"TPAT5", n:"TPAT5 ครุศาสตร์", d:"2027-01-31" },
+  { id:"TPAT4", g:"TGAT / TPAT", s:"TPAT4", n:"TPAT4 สถาปัตย์", d:"2027-02-01" },
+  { id:"TPAT1", g:"TGAT / TPAT", s:"TPAT1", n:"TPAT1 กสพท", d:"2027-02-13" },
+  ...[["MATH1","คณิต 1","คณิตศาสตร์ประยุกต์ 1"],["MATH2","คณิต 2","คณิตศาสตร์ประยุกต์ 2"],["SCI","วิทย์ประยุกต์","วิทยาศาสตร์ประยุกต์"],
+      ["PHY","ฟิสิกส์","ฟิสิกส์"],["CHEM","เคมี","เคมี"],["BIO","ชีวะ","ชีววิทยา"],["SOC","สังคม","สังคมศึกษา"],["THAI","ไทย","ภาษาไทย"],
+      ["ENG","อังกฤษ","ภาษาอังกฤษ"],["FRE","ฝรั่งเศส","ภาษาฝรั่งเศส"],["GER","เยอรมัน","ภาษาเยอรมัน"],["JAP","ญี่ปุ่น","ภาษาญี่ปุ่น"],
+      ["KOR","เกาหลี","ภาษาเกาหลี"],["CHI","จีน","ภาษาจีน"],["BAL","บาลี","ภาษาบาลี"],["SPN","สเปน","ภาษาสเปน"]]
+     .map(([id,s,n]) => ({ id, g:"A-Level", s, n:"A-Level " + n, d:"2027-03-13" }))
+];
+const BY_ID = Object.fromEntries(SUBJECTS.map(x => [x.id, x]));
+const TGTPAT = ["TGAT","TPAT2","TPAT3","TPAT4","TPAT5"];
+const ALEVEL = SUBJECTS.filter(x => x.g === "A-Level").map(x => x.id);
+const MILESTONES = [
+  { l:"สมัครสอบ TGAT / TPAT2–5", a:"2026-11-04", b:"2026-11-10", f:TGTPAT, note:"พลาดแล้วยังยื่นคำร้องสมัครล่าช้าได้" },
+  { l:"สมัครสอบ TPAT1 กับ กสพท", a:null, b:null, f:["TPAT1"], note:"สมัครแยกกับ กสพท — ดูวันที่ประกาศของ กสพท" },
+  { l:"พิมพ์บัตรที่นั่งสอบ TGAT / TPAT", a:"2026-12-07", b:"2027-02-01", f:TGTPAT },
+  { l:"สมัครสอบ A-Level", a:"2027-01-14", b:"2027-01-22", f:ALEVEL, note:"รวมช่วงสมัครเพิ่มเติม 21–22 ม.ค." },
+  { l:"ประกาศผล TGAT / TPAT", a:"2027-02-28", b:null, f:TGTPAT },
+  { l:"ประกาศผล A-Level", a:"2027-03-26", b:null, f:ALEVEL },
+];
+const PRESETS = [
+  { l:"ตัวอย่างสายวิศวะ", ids:["TGAT","TPAT3","MATH1","PHY","CHEM","ENG"] },
+  { l:"ตัวอย่างสาย กสพท", ids:["TPAT1","MATH1","PHY","CHEM","BIO","ENG","THAI","SOC"] },
+  { l:"ตัวอย่างสายบริหาร", ids:["TGAT","MATH1","ENG","SOC"] },
+];
+const CONF = { w:{t:"ยังไม่มั่นใจ",k:3}, m:{t:"พอใช้",k:2}, s:{t:"มั่นใจ",k:1} };
+const COLORS = ["#1D4ED8","#DB2777","#0EA5E9","#F59E0B","#10B981","#8B5CF6","#EF4444","#14B8A6","#F97316","#6366F1","#84CC16","#EC4899"];
+const MON = ["ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","มิ.ย.","ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."];
+const WDN = ["วันอาทิตย์","วันจันทร์","วันอังคาร","วันพุธ","วันพฤหัสบดี","วันศุกร์","วันเสาร์"];
+
+// ---------------- helpers ----------------
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const parse = s => { const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); };
+const DAY = 86400000;
+const diff = (a, b) => Math.round((b - a) / DAY);
+const thai = (dt, yr = true) => `${dt.getDate()} ${MON[dt.getMonth()]}${yr ? " " + String(dt.getFullYear() + 543).slice(2) : ""}`;
+function today() {
+  const q = new URLSearchParams(location.search).get("today");   // ?today=YYYY-MM-DD for previews/testing
+  if (q && /^\d{4}-\d{2}-\d{2}$/.test(q)) return parse(q);
+  const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+}
+const KEY = "dek70plan.v1";
+function load() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
+function save(s) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) {} }
+const hrsTxt = h => (h % 1 === 0 ? h : h.toFixed(1)) + " ชม.";
+
+// ---------------- state ----------------
+let state = load() || { sel: [], conf: {}, wd: 2, we: 4, done: {} };
+state.sel = state.sel.filter(id => BY_ID[id]);
+
+// ---------------- setup UI ----------------
+function renderSetup() {
+  $("presets").innerHTML = PRESETS.map((p, i) => `<button class="preset" data-p="${i}">${esc(p.l)}</button>`).join("");
+  const groups = ["TGAT / TPAT", "A-Level"];
+  $("subjectGroups").innerHTML = groups.map(g => `<div class="group"><div class="gl">${g}</div><div class="chips">${
+    SUBJECTS.filter(x => x.g === g).map(x => `<button class="chip" data-id="${x.id}" aria-pressed="${state.sel.includes(x.id)}">${esc(x.s)}</button>`).join("")
+  }</div></div>`).join("");
+  renderConf();
+  $("wd").value = state.wd; $("we").value = state.we; sliders();
+}
+function renderConf() {
+  if (!state.sel.length) { $("confList").innerHTML = '<p class="hint" style="margin-top:10px">เลือกวิชาในข้อ 1 ก่อน</p>'; $("go").disabled = true; return; }
+  const ordered = SUBJECTS.filter(x => state.sel.includes(x.id));
+  $("confList").innerHTML = ordered.map(x => {
+    const c = state.conf[x.id] || "m";
+    return `<div class="conf"><div class="nm">${esc(x.s)}</div><div class="seg" role="group" aria-label="${esc(x.s)}">${
+      Object.entries(CONF).map(([k, v]) => `<button class="${k}" data-c="${k}" data-id="${x.id}" aria-pressed="${c === k}">${v.t}</button>`).join("")
+    }</div></div>`;
+  }).join("");
+  $("go").disabled = false;
+}
+function sliders() {
+  state.wd = +$("wd").value; state.we = +$("we").value;
+  $("wdVal").textContent = state.wd ? hrsTxt(state.wd) + " / วัน" : "ไม่อ่าน";
+  $("weVal").textContent = state.we ? hrsTxt(state.we) + " / วัน" : "ไม่อ่าน";
+}
+document.addEventListener("click", e => {
+  const chip = e.target.closest(".chip");
+  if (chip) {
+    const id = chip.dataset.id, on = state.sel.includes(id);
+    state.sel = on ? state.sel.filter(x => x !== id) : [...state.sel, id];
+    chip.setAttribute("aria-pressed", String(!on)); renderConf(); save(state); return;
+  }
+  const seg = e.target.closest(".seg button");
+  if (seg) { state.conf[seg.dataset.id] = seg.dataset.c; renderConf(); save(state); return; }
+  const pre = e.target.closest(".preset");
+  if (pre) { state.sel = [...PRESETS[+pre.dataset.p].ids]; renderSetup(); save(state); return; }
+  const tick = e.target.closest(".tick");
+  if (tick) {
+    const k = keyOf(today()); state.done[k] = state.done[k] || {};
+    state.done[k][tick.dataset.id] = !state.done[k][tick.dataset.id]; save(state); renderToday(); return;
+  }
+});
+$("wd").addEventListener("input", () => { sliders(); save(state); });
+$("we").addEventListener("input", () => { sliders(); save(state); });
+$("go").addEventListener("click", () => { save(state); show(true); });
+$("edit").addEventListener("click", () => { show(false); renderSetup(); window.scrollTo({ top: 0 }); });
+
+// ---------------- planning ----------------
+const keyOf = d => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+const hoursOn = d => (d.getDay() === 0 || d.getDay() === 6) ? state.we : state.wd;
+function weights(d) {               // subjects still to be examined after day d, with their weights
+  const out = [];
+  for (const id of state.sel) {
+    const ex = parse(BY_ID[id].d), left = diff(d, ex);
+    if (left <= 0) continue;
+    const c = CONF[state.conf[id] || "m"].k;
+    const urgency = 1 + Math.max(0, 56 - left) / 56;   // ramps 1 → 2 over the last 8 weeks
+    out.push([id, c * urgency]);
+  }
+  return out;
+}
+const examsOn = d => state.sel.filter(id => diff(d, parse(BY_ID[id].d)) === 0);
+function allocate(d) {              // minutes per subject on day d (exam days are rest days)
+  const w = weights(d), sum = w.reduce((a, [, x]) => a + x, 0), mins = hoursOn(d) * 60;
+  const res = {};
+  if (!sum || !mins || examsOn(d).length) return res;
+  for (const [id, x] of w) res[id] = mins * x / sum;
+  return res;
+}
+const round5 = m => Math.max(0, Math.round(m / 5) * 5);
+
+// ---------------- results ----------------
+function show(results) {
+  $("setup").classList.toggle("hidden", results);
+  $("results").classList.toggle("hidden", !results);
+  if (results) { renderResults(); window.scrollTo({ top: 0 }); }
+}
+function upcomingExams(t) {
+  return state.sel.map(id => BY_ID[id]).map(x => ({ ...x, dt: parse(x.d), left: diff(t, parse(x.d)) }))
+    .sort((a, b) => a.dt - b.dt);
+}
+function renderResults() {
+  const t = today(), ex = upcomingExams(t), next = ex.find(x => x.left >= 0);
+  if (next) {
+    const same = ex.filter(x => x.d === next.d).map(x => x.s).join(" + ");
+    $("heroK").textContent = next.left === 0 ? "วันนี้วันสอบ! สู้ ๆ 💪" : "อีก";
+    $("heroN").textContent = next.left === 0 ? "🔥" : next.left;
+    $("heroU").textContent = next.left === 0 ? "" : "วัน";
+    $("heroP").textContent = `ถึงสอบ ${same} • ${thai(next.dt)}`;
+  } else {
+    $("heroK").textContent = "สอบครบทุกวิชาแล้ว 🎉"; $("heroN").textContent = "✓"; $("heroU").textContent = "";
+    $("heroP").textContent = "ต่อไปคือช่วงยื่นคะแนน — เช็กรอบ 3 และรอบ 4 ที่ mytcas.com";
+  }
+  // registration alerts relevant to the chosen subjects
+  $("alerts").innerHTML = MILESTONES.filter(m => m.a && m.l.startsWith("สมัคร") && m.f.some(id => state.sel.includes(id)))
+    .map(m => ({ m, a: parse(m.a), b: parse(m.b || m.a) }))
+    .filter(({ a, b }) => diff(t, b) >= 0 && diff(t, a) <= 14)
+    .map(({ m, a, b }) => diff(t, a) <= 0
+      ? `<div class="alert hot">🔥<div><b>${esc(m.l)} เปิดอยู่ตอนนี้</b><br>ปิด ${thai(b)} • เหลือ ${diff(t, b) + 1} วัน (นับวันนี้)</div></div>`
+      : `<div class="alert info">📅<div><b>${esc(m.l)}</b> เปิดในอีก ${diff(t, a)} วัน (${thai(a)})</div></div>`).join("");
+  renderToday(); renderWeek(t); renderExams(t, ex); renderMilestones(t);
+}
+function renderToday() {
+  const t = today(), al = allocate(t), ids = Object.keys(al).sort((a, b) => al[b] - al[a]);
+  const done = (state.done[keyOf(t)] || {});
+  const total = ids.reduce((a, id) => a + round5(al[id]), 0);
+  const examNow = examsOn(t);
+  $("todayHint").textContent = ids.length
+    ? `${WDN[t.getDay()]}ที่ ${thai(t, false)} • รวม ${total >= 60 ? (total / 60).toFixed(total % 60 ? 1 : 0) + " ชม." : total + " นาที"}`
+    : examNow.length ? `วันนี้สอบ ${examNow.map(id => BY_ID[id].s).join(" + ")} — ไม่ต้องอ่านเพิ่ม กินข้าว พักสายตา แล้วไปให้ทันเวลานะ 💪`
+    : (hoursOn(t) ? "ไม่มีวิชาที่ต้องอ่านแล้ว" : "วันนี้ตั้งไว้ว่าไม่อ่าน พักผ่อนให้เต็มที่ 😴");
+  $("todayList").innerHTML = ids.map(id => {
+    const m = round5(al[id]), dots = Math.max(1, Math.round(m / 25)), on = !!done[id];
+    return `<div class="today-row ${on ? "done" : ""}"><button class="tick" data-id="${id}" aria-pressed="${on}" aria-label="อ่าน ${esc(BY_ID[id].s)} แล้ว">${on ? "✓" : ""}</button>
+      <div class="t"><b>${esc(BY_ID[id].s)}</b><small class="dots">${"●".repeat(Math.min(dots, 12))}</small></div>
+      <div class="min">${m}<small>นาที</small></div></div>`;
+  }).join("");
+  const n = ids.filter(id => done[id]).length;
+  $("todayBar").style.width = ids.length ? (100 * n / ids.length) + "%" : "0";
+  $("todayDone").textContent = ids.length ? (n === ids.length ? "อ่านครบทุกวิชาแล้ว เก่งมาก! 🎉" : `อ่านแล้ว ${n} จาก ${ids.length} วิชา — กด ☐ เมื่ออ่านเสร็จ`) : "";
+  const s = streak(t);
+  $("streak").innerHTML = s ? `<span class="streak">🔥 อ่านครบติดต่อกัน ${s} วัน</span>` : "";
+}
+function complete(d) {              // every planned subject ticked on day d (null = nothing planned)
+  const ids = Object.keys(allocate(d)); if (!ids.length) return null;
+  const done = state.done[keyOf(d)] || {}; return ids.every(id => done[id]);
+}
+function streak(t) {
+  let n = 0, d = new Date(t);
+  if (complete(d) === false) d.setDate(d.getDate() - 1);   // today not finished yet: count up to yesterday
+  for (let i = 0; i < 400; i++, d.setDate(d.getDate() - 1)) {
+    const c = complete(d);
+    if (c === null) continue;          // rest / exam day doesn't break the streak
+    if (!c) break; n++;
+  }
+  return n;
+}
+function renderWeek(t) {
+  const end = new Date(t); end.setDate(t.getDate() + ((7 - t.getDay()) % 7));   // through Sunday
+  const tot = {};
+  for (let d = new Date(t); d <= end; d.setDate(d.getDate() + 1)) {
+    const al = allocate(d); for (const id in al) tot[id] = (tot[id] || 0) + al[id];
+  }
+  const ids = Object.keys(tot).sort((a, b) => tot[b] - tot[a]), sum = ids.reduce((a, id) => a + tot[id], 0);
+  $("weekHint").textContent = sum ? `${thai(t, false)} – ${thai(end, false)} • รวม ${hrsTxt(Math.round(sum / 30) / 2)}` : "สัปดาห์นี้ยังไม่มีเวลาอ่าน";
+  $("weekBar").innerHTML = ids.map(id => `<span style="width:${100 * tot[id] / sum}%;background:${color(id)}"></span>`).join("");
+  $("weekLegend").innerHTML = ids.map(id => `<div><i style="background:${color(id)}"></i><span>${esc(BY_ID[id].s)}</span><b>${hrsTxt(Math.round(tot[id] / 30) / 2)}</b></div>`).join("");
+}
+function color(id) { return COLORS[state.sel.indexOf(id) % COLORS.length]; }
+function renderExams(t, ex) {
+  $("examList").innerHTML = ex.map(x => {
+    let h = 0;
+    for (let d = new Date(t); d < x.dt; d.setDate(d.getDate() + 1)) h += (allocate(d)[x.id] || 0);
+    const past = x.left < 0;
+    const range = x.g === "A-Level" ? "13–15 มี.ค. 70" : thai(x.dt);
+    return `<div class="ex"><div class="d"><b>${past ? "✓" : x.left}</b><small>${past ? "สอบแล้ว" : "วัน"}</small></div>
+      <div class="t"><b>${esc(x.n)}</b><small>${range}</small></div><div class="h">${past ? "" : "~" + Math.round(h / 60) + " ชม."}</div></div>`;
+  }).join("");
+}
+function renderMilestones(t) {
+  const rows = MILESTONES.filter(m => m.f.some(id => state.sel.includes(id))).map(m => {
+    if (!m.a) return `<div class="ms"><div><b>${esc(m.l)}</b><br><span class="hint">${esc(m.note || "")}</span></div><span class="pill wait">รอประกาศ</span></div>`;
+    const a = parse(m.a), b = parse(m.b || m.a);
+    if (diff(t, b) < 0) return "";
+    const open = diff(t, a) <= 0;
+    const when = m.b ? `${thai(a)} – ${thai(b)}` : thai(a);
+    return `<div class="ms"><div><b>${esc(m.l)}</b><br><span class="hint">${when}${m.note ? " • " + esc(m.note) : ""}</span></div>
+      <span class="pill ${open ? "open" : "wait"}">${open ? "เปิดอยู่" : "อีก " + diff(t, a) + " วัน"}</span></div>`;
+  }).join("");
+  $("msList").innerHTML = rows || '<p class="hint">ไม่มีกำหนดการที่ต้องทำแล้ว</p>';
+}
+
+// ---------------- story card ----------------
+async function makeCard() {
+  try { await document.fonts.load('700 120px Prompt'); await document.fonts.load('600 40px Prompt'); } catch (e) {}
+  const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, "#1D4ED8"); gr.addColorStop(.55, "#3B5BDB"); gr.addColorStop(1, "#DB2777");
+  g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  g.fillStyle = "rgba(255,255,255,.08)"; g.beginPath(); g.arc(W - 80, 260, 340, 0, Math.PI * 2); g.fill();
+  const t = today(), ex = upcomingExams(t).filter(x => x.left >= 0), next = ex[0];
+  g.textAlign = "left"; g.fillStyle = "#FBCFE8"; g.font = "600 46px Prompt"; g.fillText("#dek70 สู้ ๆ 💪", 90, 250);
+  g.fillStyle = "#fff";
+  if (next) {
+    g.font = "600 64px Prompt"; g.fillText("อีก", 90, 420);
+    g.font = "700 360px Prompt"; g.fillText(String(next.left), 70, 760);
+    g.font = "600 64px Prompt"; g.fillText("วัน ถึงสอบ", 90, 880);
+    const same = ex.filter(x => x.d === next.d).map(x => x.s).join(" + ");
+    g.font = "700 74px Prompt"; const yEnd = wrap(g, same, 90, 980, W - 180, 88);
+    g.font = "500 44px Prompt"; g.fillStyle = "#E0E7FF"; g.fillText(thai(next.dt).replace(/ (\d\d)$/, " 25$1"), 90, yEnd + 80);
+    g.fillStyle = "#fff";
+  } else { g.font = "700 120px Prompt"; g.fillText("สอบครบแล้ว 🎉", 90, 700); }
+  let y = 1250; g.font = "600 44px Prompt"; g.fillStyle = "#E0E7FF"; g.fillText("วิชาอื่นที่รออยู่", 90, y); y += 30;
+  const seen = new Set(), rows = [];
+  for (const x of ex.slice(1)) { const k = x.g === "A-Level" ? "A" : x.d; if (seen.has(k) || x.d === (next && next.d)) continue; seen.add(k);
+    rows.push(x.g === "A-Level" ? { l: "A-Level (" + ex.filter(z => z.g === "A-Level").length + " วิชา)", n: x.left } : { l: ex.filter(z => z.d === x.d).map(z => z.s).join(" + "), n: x.left }); }
+  for (const r of rows.slice(0, 4)) {
+    y += 100; g.fillStyle = "rgba(255,255,255,.14)"; round(g, 90, y - 70, W - 180, 90, 28); g.fill();
+    g.fillStyle = "#fff"; g.font = "600 42px Prompt"; g.textAlign = "left"; g.fillText(clip(g, r.l, 640), 125, y - 10);
+    g.textAlign = "right"; g.font = "700 46px Prompt"; g.fillText(r.n + " วัน", W - 125, y - 10); g.textAlign = "left";
+  }
+  g.fillStyle = "rgba(255,255,255,.85)"; g.font = "500 38px Prompt"; g.fillText("สร้างแผนอ่านของคุณฟรี", 90, H - 190);
+  g.fillStyle = "#fff"; g.font = "700 52px Prompt"; g.fillText("panus15.github.io", 90, H - 120);
+  return c;
+}
+function wrap(g, text, x, y, maxW, lh) {
+  const parts = text.split(" + "); let line = "";
+  for (let i = 0; i < parts.length; i++) {
+    const test = line ? line + " + " + parts[i] : parts[i];
+    if (g.measureText(test).width > maxW && line) { g.fillText(line, x, y); y += lh; line = parts[i]; } else line = test;
+  }
+  g.fillText(line, x, y);
+  return y;
+}
+function clip(g, s, w) { if (g.measureText(s).width <= w) return s; while (s.length && g.measureText(s + "…").width > w) s = s.slice(0, -1); return s + "…"; }
+function round(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+$("shareBtn").addEventListener("click", async () => {
+  const btn = $("shareBtn"); btn.disabled = true; btn.textContent = "กำลังสร้างการ์ด…";
+  try {
+    const c = await makeCard();
+    const blob = await new Promise(r => c.toBlob(r, "image/png"));
+    const file = new File([blob], "dek70-countdown.png", { type: "image/png" });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "นับถอยหลัง dek70" });
+      $("shareMsg").textContent = "แชร์แล้ว ขอบคุณที่ช่วยบอกต่อนะ 💙";
+    } else {
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "dek70-countdown.png";
+      document.body.appendChild(a); a.click(); a.remove();
+      $("shareMsg").textContent = "บันทึกรูปแล้ว ดูได้ในโฟลเดอร์ดาวน์โหลด";
+    }
+  } catch (e) { if (e && e.name !== "AbortError") $("shareMsg").textContent = "บันทึกไม่สำเร็จ ลองอีกครั้งนะ"; }
+  btn.disabled = false; btn.textContent = "บันทึกการ์ด";
+});
+
+// ---------------- boot ----------------
+renderSetup();
+if (state.sel.length && load()) show(true);
+</script>
+</body>
+</html>
