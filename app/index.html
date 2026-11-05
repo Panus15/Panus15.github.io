@@ -448,6 +448,7 @@ function renderMilestones(t) {
 }
 
 // ---------------- story card ----------------
+const QR = "1111111011110010001111111|1000001001001000101000001|1011101011110100001011101|1011101000100110001011101|1011101001011100001011101|1000001011101010001000001|1111111010101010101111111|0000000001000001100000000|1010001100111000100100101|1010100100001101001101011|1111011000110111011111101|0110110000101000110001000|1101011110101001001000001|0101100110000011001100011|1101101010011101000001101|0011000111000010001111000|1100111001011001111110010|0000000010100001100010001|1111111011110010101010001|1000001001011000100010010|1011101000001011111110010|1011101001011101110010110|1011101010010001100111011|1000001001100001110110000|1111111011001000101001001".split("|");   // https://panus15.github.io (segno, ECC M)
 async function makeCard() {
   try { await document.fonts.load('700 120px Prompt'); await document.fonts.load('600 40px Prompt'); } catch (e) {}
   const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
@@ -471,13 +472,17 @@ async function makeCard() {
   const seen = new Set(), rows = [];
   for (const x of ex.slice(1)) { const k = x.g === "A-Level" ? "A" : x.d; if (seen.has(k) || x.d === (next && next.d)) continue; seen.add(k);
     rows.push(x.g === "A-Level" ? { l: "A-Level (" + ex.filter(z => z.g === "A-Level").length + " วิชา)", n: x.left } : { l: ex.filter(z => z.d === x.d).map(z => z.s).join(" + "), n: x.left }); }
-  for (const r of rows.slice(0, 4)) {
+  for (const r of rows.slice(0, 3)) {
     y += 100; g.fillStyle = "rgba(255,255,255,.14)"; round(g, 90, y - 70, W - 180, 90, 28); g.fill();
     g.fillStyle = "#fff"; g.font = "600 42px Prompt"; g.textAlign = "left"; g.fillText(clip(g, r.l, 640), 125, y - 10);
     g.textAlign = "right"; g.font = "700 46px Prompt"; g.fillText(r.n + " วัน", W - 125, y - 10); g.textAlign = "left";
   }
-  g.fillStyle = "rgba(255,255,255,.85)"; g.font = "500 38px Prompt"; g.fillText("สร้างแผนอ่านของคุณฟรี", 90, H - 190);
-  g.fillStyle = "#fff"; g.font = "700 52px Prompt"; g.fillText("panus15.github.io", 90, H - 120);
+  const box = 230, qx = 90, qy = H - 300, pad = 15, cell = (box - 2 * pad) / QR.length;   // QR drawn module by module (no image → canvas never tainted)
+  g.fillStyle = "#fff"; round(g, qx, qy, box, box, 28); g.fill();
+  g.fillStyle = "#141B2D";
+  QR.forEach((row, y) => { for (let x = 0; x < row.length; x++) if (row[x] === "1") g.fillRect(qx + pad + x * cell, qy + pad + y * cell, Math.ceil(cell), Math.ceil(cell)); });
+  g.fillStyle = "#fff"; g.font = "700 50px Prompt"; g.fillText("สแกนเลย 📱", qx + box + 40, qy + 100);
+  g.fillStyle = "rgba(255,255,255,.85)"; g.font = "500 36px Prompt"; g.fillText("สร้างแผนอ่านของคุณฟรี", qx + box + 40, qy + 160);
   return c;
 }
 function wrap(g, text, x, y, maxW, lh) {
