@@ -18,12 +18,12 @@
 :root{
   --bg:#F4F6FC;--card:#FFFFFF;--ink:#141B2D;--mute:#5E6880;--soft:#8C95AB;--line:#E2E7F2;
   --blue:#1D4ED8;--blue2:#EEF2FF;--pink:#DB2777;--pink2:#FDF2F8;--green:#15803D;--green2:#DCFCE7;
-  --amber:#B45309;--amber2:#FEF3C7;--red:#B91C1C;--red2:#FEE2E2;--shadow:0 10px 30px rgba(20,40,120,.08)
+  --amber:#B45309;--amber2:#FEF3C7;--red:#B91C1C;--red2:#FEE2E2;--shadow:0 10px 30px rgba(20,40,120,.08);--track:#DCE2EE
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#0F1320;--card:#171C2B;--ink:#E9ECF5;--mute:#A2AAC0;--soft:#7D86A0;--line:#283048;
   --blue:#7EA2FF;--blue2:#1D2645;--pink:#F472B6;--pink2:#3A1D30;--green:#4ADE80;--green2:#123222;
-  --amber:#FBBF24;--amber2:#3A2E12;--red:#F87171;--red2:#3A1A1A;--shadow:none}}
+  --amber:#FBBF24;--amber2:#3A2E12;--red:#F87171;--red2:#3A1A1A;--shadow:none;--track:#2C3550}}
 *{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-text-size-adjust:100%}
 body{font-family:Sarabun,system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;font-size:16px;padding-bottom:env(safe-area-inset-bottom)}
@@ -59,9 +59,18 @@ h1 em{font-style:normal;color:var(--blue)}
 .slider{margin-top:14px}
 .slider label{display:flex;justify-content:space-between;font:600 15px Prompt}
 .slider label b{color:var(--blue)}
-input[type=range]{width:100%;margin-top:8px;accent-color:var(--blue);height:32px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:40px;margin-top:4px;background:transparent;cursor:pointer;--p:25%;touch-action:pan-y}
+input[type=range]:focus{outline:none}
+input[type=range]::-webkit-slider-runnable-track{height:10px;border-radius:999px;background:linear-gradient(to right,var(--blue) 0,var(--blue) var(--p),var(--track) var(--p),var(--track) 100%)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:30px;height:30px;margin-top:-10px;border-radius:50%;background:#fff;border:4px solid var(--blue);box-shadow:0 2px 10px rgba(0,0,0,.25)}
+input[type=range]::-moz-range-track{height:10px;border-radius:999px;background:var(--track)}
+input[type=range]::-moz-range-progress{height:10px;border-radius:999px;background:var(--blue)}
+input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:#fff;border:4px solid var(--blue);box-shadow:0 2px 10px rgba(0,0,0,.25)}
+input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 7px color-mix(in srgb,var(--blue) 30%,transparent)}
+.scale{display:flex;justify-content:space-between;font:500 12.5px Prompt;color:var(--soft);margin-top:-2px;padding:0 4px}
 .cta{width:100%;border:0;border-radius:16px;padding:16px;background:var(--blue);color:#fff;font:600 18px Prompt;cursor:pointer;margin:6px 0 4px;min-height:56px}
-.cta:disabled{opacity:.45;cursor:not-allowed}
+.cta:disabled{background:var(--track);color:var(--soft);cursor:not-allowed}
+#goHint{text-align:center;font:600 14px Prompt;color:var(--pink);margin-top:2px}
 .ghost{background:transparent;border:1.5px solid var(--line);color:var(--ink);font:500 15px Prompt;border-radius:14px;padding:10px 14px;cursor:pointer}
 /* results */
 .hero{background:linear-gradient(150deg,#1D4ED8 0%,#3B5BDB 55%,#DB2777 140%);color:#fff;border:0}
@@ -146,11 +155,12 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
 
   <section class="card">
     <h2><span class="n">3</span>อ่านได้วันละกี่ชั่วโมง?</h2>
-    <div class="slider"><label>วันจันทร์–ศุกร์ <b id="wdVal"></b></label><input type="range" id="wd" min="0" max="8" step="0.5" value="2"></div>
-    <div class="slider"><label>วันเสาร์–อาทิตย์ <b id="weVal"></b></label><input type="range" id="we" min="0" max="12" step="0.5" value="4"></div>
+    <div class="slider"><label>วันจันทร์–ศุกร์ <b id="wdVal"></b></label><input type="range" id="wd" min="0" max="8" step="0.5" value="2" aria-label="ชั่วโมงอ่านวันจันทร์ถึงศุกร์"><div class="scale"><span>0</span><span>2</span><span>4</span><span>6</span><span>8 ชม.</span></div></div>
+    <div class="slider"><label>วันเสาร์–อาทิตย์ <b id="weVal"></b></label><input type="range" id="we" min="0" max="12" step="0.5" value="4" aria-label="ชั่วโมงอ่านวันเสาร์อาทิตย์"><div class="scale"><span>0</span><span>3</span><span>6</span><span>9</span><span>12 ชม.</span></div></div>
   </section>
 
   <button class="cta" id="go" disabled>สร้างแผนของฉัน →</button>
+  <p id="goHint">👆 เลือกวิชาที่สอบอย่างน้อย 1 วิชาก่อนนะ</p>
   <p class="hint" style="text-align:center">ข้อมูลเก็บไว้ในเครื่องคุณเท่านั้น ไม่ต้องสมัครสมาชิก</p>
 </main>
 
@@ -287,7 +297,7 @@ function renderSetup() {
   $("wd").value = state.wd; $("we").value = state.we; sliders();
 }
 function renderConf() {
-  if (!state.sel.length) { $("confList").innerHTML = '<p class="hint" style="margin-top:10px">เลือกวิชาในข้อ 1 ก่อน</p>'; $("go").disabled = true; return; }
+  if (!state.sel.length) { $("confList").innerHTML = '<p class="hint" style="margin-top:10px">เลือกวิชาในข้อ 1 ก่อน</p>'; $("go").disabled = true; $("goHint").classList.remove("hidden"); return; }
   const ordered = SUBJECTS.filter(x => state.sel.includes(x.id));
   $("confList").innerHTML = ordered.map(x => {
     const c = state.conf[x.id] || "m";
@@ -295,9 +305,10 @@ function renderConf() {
       Object.entries(CONF).map(([k, v]) => `<button class="${k}" data-c="${k}" data-id="${x.id}" aria-pressed="${c === k}">${v.t}</button>`).join("")
     }</div></div>`;
   }).join("");
-  $("go").disabled = false;
+  $("go").disabled = false; $("goHint").classList.add("hidden");
 }
 function sliders() {
+  for (const id of ["wd", "we"]) { const el = $(id); el.style.setProperty("--p", (100 * (el.value - el.min) / (el.max - el.min)) + "%"); }
   state.wd = +$("wd").value; state.we = +$("we").value;
   $("wdVal").textContent = state.wd ? hrsTxt(state.wd) + " / วัน" : "ไม่อ่าน";
   $("weVal").textContent = state.we ? hrsTxt(state.we) + " / วัน" : "ไม่อ่าน";
