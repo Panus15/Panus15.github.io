@@ -2,12 +2,14 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
+<script>/* moved: send visitors of the old github.io address to the new one */if(/\.github\.io$/i.test(location.hostname)){location.replace("https://dekplan.pages.dev"+location.pathname+location.search+location.hash);}</script>
+<link rel="canonical" href="https://dekplan.pages.dev/app/">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>แผนอ่าน dek70 — นับถอยหลัง TCAS70 + จัดแผนอ่านให้อัตโนมัติ</title>
 <meta name="description" content="เลือกวิชาที่สอบ บอกว่ามั่นใจแค่ไหน แล้วรู้ทันทีว่าเหลือกี่วัน วันนี้ควรอ่านวิชาอะไรกี่นาที ฟรี ใช้บนมือถือได้">
 <meta property="og:title" content="แผนอ่าน dek70 — รู้ทันทีว่าวันนี้ต้องอ่านอะไร">
 <meta property="og:description" content="นับถอยหลังแยกตามวิชาที่สอบ + จัดแผนอ่านรายวันให้อัตโนมัติ ฟรี">
-<meta property="og:image" content="https://panus15.github.io/tcas70/img/tcas70-1.jpg">
+<meta property="og:image" content="https://dekplan.pages.dev/tcas70/img/tcas70-1.jpg">
 <meta name="theme-color" content="#1D4ED8">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -448,7 +450,7 @@ function renderMilestones(t) {
 }
 
 // ---------------- story card ----------------
-const QR = "1111111011110010001111111|1000001001001000101000001|1011101011110100001011101|1011101000100110001011101|1011101001011100001011101|1000001011101010001000001|1111111010101010101111111|0000000001000001100000000|1010001100111000100100101|1010100100001101001101011|1111011000110111011111101|0110110000101000110001000|1101011110101001001000001|0101100110000011001100011|1101101010011101000001101|0011000111000010001111000|1100111001011001111110010|0000000010100001100010001|1111111011110010101010001|1000001001011000100010010|1011101000001011111110010|1011101001011101110010110|1011101010010001100111011|1000001001100001110110000|1111111011001000101001001".split("|");   // https://panus15.github.io (segno, ECC M)
+const QR = "1111111000011000101111111|1000001000101001001000001|1011101011110011001011101|1011101011101111101011101|1011101011010000101011101|1000001010100111001000001|1111111010101010101111111|0000000011010010100000000|1011111000011110001111100|1000100001010000000100010|1001011111101011011001011|1110100101111010111100001|0010001111001110011010111|1111010110001010100101010|1001111010001101100111011|1011100101001011010110001|1001001101101101111110100|0000000011101101100011000|1111111000101110101010111|1000001010110000100011011|1011101011100111111110100|1011101010110001011011111|1011101010100010110001101|1000001001100001101111001|1111111011101110001111111".split("|");   // https://dekplan.pages.dev (segno, ECC M)
 async function makeCard() {
   try { await document.fonts.load('700 120px Prompt'); await document.fonts.load('600 40px Prompt'); } catch (e) {}
   const W = 1080, H = 1920, c = document.createElement("canvas"); c.width = W; c.height = H;
