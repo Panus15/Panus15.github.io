@@ -303,6 +303,40 @@ def test_the_trade_rate_is_annualised_from_the_span_not_the_raw_count():
 
 
 # ---------------------------------------------------------------------------
+# the HTML report
+# ---------------------------------------------------------------------------
+
+def test_the_report_is_written_only_when_asked():
+    path = os.path.join(_TMP, "r1.html")
+    _run(_csv(1200), costs_measured=True)
+    assert not os.path.exists(path)
+    code, text = _run(_csv(1200), costs_measured=True, report_path=path)
+    assert code == 0, text
+    assert os.path.exists(path), text
+    assert "report written to" in text and path in text
+
+
+def test_the_written_report_is_a_whole_page_with_charts():
+    path = os.path.join(_TMP, "r2.html")
+    _run(_csv(1200), costs_measured=True, report_path=path)
+    page = io.open(path, encoding="utf-8").read()
+    assert page.startswith("<!doctype html>"), page[:40]
+    assert page.rstrip().endswith("</html>"), page[-40:]
+    assert page.count("<polyline") >= 2, "no equity curve was drawn"
+    assert "<script" not in page.lower()
+
+
+def test_the_report_carries_the_same_costs_the_run_used():
+    path = os.path.join(_TMP, "r3.html")
+    _run(_csv(1200), costs=CostModel(pair="EURUSD", round_turn_pips=2.4,
+                                     swap_markup_annual=0.021),
+         costs_measured=True, report_path=path)
+    page = io.open(path, encoding="utf-8").read()
+    assert "2.4 pip round turn" in page, "the report invented its own costs"
+    assert "2.10%/yr" in page
+
+
+# ---------------------------------------------------------------------------
 # the hold-out path
 # ---------------------------------------------------------------------------
 

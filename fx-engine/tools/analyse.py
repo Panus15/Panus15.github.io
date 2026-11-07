@@ -34,6 +34,7 @@ half stops being held back the moment you read the result and adjust something.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 
@@ -44,6 +45,7 @@ from engine.costs import CostModel
 from engine.data import load_csv
 from engine.holdout import SPLIT_DEFAULT
 from engine.levers import advise
+from tools.report import render as render_report
 from engine.holdout import evaluate as holdout_evaluate
 from engine.verdict import (NEGATIVE_NET_EXPECTANCY, NO_WIN_RATE_SAVES_IT,
                             TOO_FEW_TRADES, judge)
@@ -52,7 +54,8 @@ from models.patterns import DETECTORS
 
 def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             costs_measured: bool = False, time_format: str = None,
-            patterns=None, holdout: float = None, out=print) -> int:
+            patterns=None, holdout: float = None,
+            report_path: str = None, out=print) -> int:
     """Load, check, scan, backtest, judge. Returns a process exit code.
 
     With ``holdout`` set, the file is cut in time instead: patterns are found
@@ -102,11 +105,12 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
     out("")
     out(f"{'pattern':<20} {'n':>6} {'win%':>6} {'need%':>6} {'pips/trade':>11}"
         f"  verdict")
-    passed, judged = [], {}
+    passed, judged, results = [], {}, {}
     for name, fn in chosen.items():
         res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
                   costs_confirmed=costs_measured)
+        results[name] = res
         head = "TRADEABLE" if v.tradeable else (v.codes[0] if v.codes else "-")
         out(f"{name:<20} {v.n_trades:>6,} {v.gross.win_rate:>6.1%} "
             f"{v.win_rate_needed:>6.1%} {v.net.net:>11.2f}  {head}")
@@ -152,6 +156,12 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             "trades each claim would need. A cheaper account changes\nnothing "
             "about a number nobody can yet measure.")
         out("")
+    if report_path:
+        with io.open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(render_report(series, results, judged, costs, bpn, n_hyp))
+        out(f"report written to {report_path}")
+        out("")
+
     if passed:
         out(f"{len(passed)} pattern(s) survived one IN-SAMPLE test on this file. "
             f"That is a hypothesis,\nnot a finding. Split the file and re-run on "
@@ -186,6 +196,9 @@ def main(argv=None) -> int:
                         "genuinely ambiguous")
     p.add_argument("--pattern", action="append", choices=sorted(DETECTORS),
                    help="restrict to one pattern; repeatable")
+    p.add_argument("--report", metavar="PATH",
+                   help="also write a self-contained HTML report to PATH, with "
+                        "the equity curve of each pattern NET of costs")
     p.add_argument("--holdout", nargs="?", type=float, const=SPLIT_DEFAULT,
                    metavar="FRAC",
                    help=f"find patterns on the first FRAC of the file and test "
@@ -199,7 +212,7 @@ def main(argv=None) -> int:
         return analyse(a.path, a.pair, a.side, costs,
                        costs_measured=a.costs_measured,
                        time_format=a.time_format, patterns=a.pattern,
-                       holdout=a.holdout)
+                       holdout=a.holdout, report_path=a.report)
     except (OSError, ValueError) as e:
         print(f"could not analyse {a.path}: {e}", file=sys.stderr)
         return 1
