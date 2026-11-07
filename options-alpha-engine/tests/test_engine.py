@@ -44,6 +44,66 @@ def test_put_delta_negative():
     assert -1.0 < g.delta < 0.0
 
 
+def test_greeks_match_finite_differences():
+    """The only test that pins Greek MAGNITUDES, not just signs.
+
+    Sign-and-bounds assertions are close to worthless here: an audit of this file
+    found that doubling gamma, dropping e^{-qT} from delta and vega, returning
+    theta per DAY instead of per year, and dropping the T factor from rho ALL
+    passed the entire test suite. Each is a plausible real slip and each would
+    silently mis-size every hedge and every CVaR number downstream.
+
+    Central differences of price() are an independent oracle: they use only the
+    pricer, never the closed-form Greek being checked. Every case runs with q > 0
+    so the dividend factors are actually exercised.
+    """
+    cases = [(100.0, 100.0, 0.50, 0.03, 0.02, 0.25),   # ATM
+             (100.0, 120.0, 0.25, 0.05, 0.03, 0.35),   # OTM call, high vol
+             (100.0,  85.0, 1.00, 0.02, 0.04, 0.18),   # ITM call, long dated
+             (100.0, 100.0, 0.08, 0.04, 0.01, 0.60)]   # short dated, very high vol
+
+    def px(S, K, T, r, q, v, kind):
+        return pricing.price(S, K, T, r, q, v, kind)
+
+    for S, K, T, r, q, vol in cases:
+        for kind in ("call", "put"):
+            g = pricing.greeks(S, K, T, r, q, vol, kind)
+            hS, hv, hT, hr = S * 1e-4, 1e-5, 1e-5, 1e-6
+
+            fd_delta = (px(S + hS, K, T, r, q, vol, kind)
+                        - px(S - hS, K, T, r, q, vol, kind)) / (2 * hS)
+            fd_gamma = (px(S + hS, K, T, r, q, vol, kind)
+                        - 2 * px(S, K, T, r, q, vol, kind)
+                        + px(S - hS, K, T, r, q, vol, kind)) / (hS * hS)
+            fd_vega = (px(S, K, T, r, q, vol + hv, kind)
+                       - px(S, K, T, r, q, vol - hv, kind)) / (2 * hv)
+            # theta is dV/dt = -dV/dT, PER YEAR
+            fd_theta = -(px(S, K, T + hT, r, q, vol, kind)
+                         - px(S, K, T - hT, r, q, vol, kind)) / (2 * hT)
+            fd_rho = (px(S, K, T, r + hr, q, vol, kind)
+                      - px(S, K, T, r - hr, q, vol, kind)) / (2 * hr)
+
+            ctx = f"{kind} S={S} K={K} T={T} q={q} vol={vol}"
+            for name, got, want, tol in (("delta", g.delta, fd_delta, 1e-5),
+                                         ("gamma", g.gamma, fd_gamma, 1e-4),
+                                         ("vega", g.vega, fd_vega, 1e-4),
+                                         ("theta", g.theta, fd_theta, 1e-3),
+                                         ("rho", g.rho, fd_rho, 1e-4)):
+                scale = max(abs(want), 1.0)
+                assert abs(got - want) / scale < tol, (
+                    f"{name} {ctx}: closed form {got:.8f} vs finite difference "
+                    f"{want:.8f} (rel err {abs(got - want) / scale:.2e})")
+
+
+def test_greeks_reject_a_bad_kind():
+    for fn in (pricing.price, pricing.greeks):
+        try:
+            fn(100, 100, 0.5, 0.03, 0.0, 0.2, "straddle")
+        except ValueError:
+            continue
+        raise AssertionError(f"{fn.__name__} accepted an invalid kind")
+
+
 def test_iv_roundtrip():
     # Price at a known vol, recover it from the price.
     S, K, T, r, q, true_vol = 100, 95, 0.25, 0.04, 0.0, 0.32
@@ -92,6 +152,83 @@ def test_har_survives_real_outlier_context():
     cc = volforecast.close_to_close_vol(GOOG_2008_CTX)
     assert har > 0.10, f"HAR collapsed to {har:.4%} on a ~{cc:.0%}-vol context"
     assert 0.3 * ewma <= har <= 3.0 * ewma
+
+
+def test_term_vol_reverts_toward_the_long_run():
+    # Found on the FIRST real option chain (Deribit BTC): the flat forecast gave
+    # the SAME annualised vol at 5d and 334d, so any upward-sloping implied curve
+    # made the longest expiry look richest — an artifact, not an edge.
+    import random
+    rng = random.Random(5)
+    p = [100.0]
+    for _ in range(300):                      # volatile history (~60%)
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.038)))
+    for _ in range(120):                      # calm recently (~20%)
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.0126)))
+    spot_v = volforecast.har_rv_forecast(p)
+    long_v = volforecast.long_run_vol(p)
+    assert spot_v < long_v                    # calm now, hot long-run
+
+    short_T = volforecast.term_vol(p, 5 / 365)
+    long_T = volforecast.term_vol(p, 334 / 365)
+    assert short_T < long_T                   # the curve SLOPES, no longer flat
+    assert abs(short_T - spot_v) < 0.02       # short end ~ today's vol
+    assert spot_v < long_T <= long_v          # long end reverts toward long-run
+
+    # and it is symmetric: hot now, calm long-run -> a DOWNWARD-sloping curve
+    q = [100.0]
+    for _ in range(300):
+        q.append(q[-1] * math.exp(rng.gauss(0, 0.0126)))
+    for _ in range(120):
+        q.append(q[-1] * math.exp(rng.gauss(0, 0.038)))
+    assert volforecast.term_vol(q, 5 / 365) > volforecast.term_vol(q, 334 / 365)
+
+
+def test_term_vol_matches_the_closed_form_exactly():
+    # Pin the FORMULA, not just the slope direction: a wrong weight (e.g. dropping
+    # the 1/(kT), or e^{-kT} instead of (1-e^{-kT})/(kT)) still slopes the right
+    # way but returns wrong numbers, so a direction-only test cannot catch it.
+    v0, vinf, kappa = 0.20 ** 2, 0.45 ** 2, 2.77
+    for T in (5 / 365, 33 / 365, 152 / 365, 334 / 365, 3.0):
+        got = volforecast.term_vol([1.0, 1.0, 1.0], T, kappa=kappa,
+                                   spot_vol=math.sqrt(v0), long_run=math.sqrt(vinf))
+        kT = kappa * T
+        want = math.sqrt(vinf + (v0 - vinf) * (1.0 - math.exp(-kT)) / kT)
+        assert abs(got - want) < 1e-12, (T, got, want)
+
+    # limits: T -> 0 gives today's vol; T -> infinity gives the long-run vol
+    near0 = volforecast.term_vol([1.0] * 3, 1e-6, kappa=kappa,
+                                 spot_vol=0.20, long_run=0.45)
+    far = volforecast.term_vol([1.0] * 3, 500.0, kappa=kappa,
+                               spot_vol=0.20, long_run=0.45)
+    assert abs(near0 - 0.20) < 1e-4 and abs(far - 0.45) < 1e-3
+    # and the result is always bracketed by the two inputs (never overshoots)
+    for T in (0.01, 0.1, 1.0, 10.0):
+        v = volforecast.term_vol([1.0] * 3, T, kappa=kappa, spot_vol=0.20, long_run=0.45)
+        assert 0.20 - 1e-12 <= v <= 0.45 + 1e-12
+
+
+def test_baseline_uses_the_term_structure_by_default():
+    # The headline behaviour change: the shipped forecaster must produce a SLOPING
+    # annualised vol, and the opt-out must restore the old flat behaviour.
+    import random
+    from models.baseline import BaselineDensityForecaster
+    rng = random.Random(5)
+    p = [100.0]
+    for _ in range(300):
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.038)))
+    for _ in range(120):
+        p.append(p[-1] * math.exp(rng.gauss(0, 0.0126)))
+    sloped, flat = BaselineDensityForecaster(), BaselineDensityForecaster(
+        use_term_structure=False)
+    assert sloped.use_term_structure is True                 # ON by default
+
+    def vol_at(f, dte):
+        T = dte / 365.0
+        return f.forecast(p, T, spot=p[-1]).log_return_vol(p[-1], T)
+
+    assert vol_at(sloped, 334) > vol_at(sloped, 5) + 0.02    # genuinely slopes
+    assert abs(vol_at(flat, 334) - vol_at(flat, 5)) < 1e-9   # opt-out is flat
 
 
 def test_scanner_finds_injected_dislocation():

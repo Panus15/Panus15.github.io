@@ -29,7 +29,11 @@ T = DTE / 365.0
 def _coin_book():
     """A dense BSM chain quoted in COIN units, as Deribit returns it."""
     summary = []
-    for K in (48000, 51000, 54000, 57000, 60000, 63000, 66000, 69000, 72000):
+    # +/-45% of a 60,000 spot. The old ladder stopped at +/-20%, which at a 60%
+    # vol over 30 days is only 1.2 standard deviations — too narrow for the
+    # model-free integral to converge, and the coverage test now says so. Deribit
+    # lists far wider than this in reality.
+    for K in range(33000, 87001, 3000):
         for kind, cp in (("call", "C"), ("put", "P")):
             usd = pricing.price(SPOT, K, T, 0.0, 0.0, IV, kind)
             coin = usd / SPOT                      # Deribit quotes premium in coin

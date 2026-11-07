@@ -63,7 +63,8 @@ def parse_chain(options: list, *, symbol: str, spot: float, asof: str,
         if dte <= 0:
             continue
         quotes.append(OptionQuote(expiry_days=dte, strike=float(o["strike"]),
-                                  kind=kind, bid=float(bid), ask=float(ask)))
+                                  kind=kind, bid=float(bid), ask=float(ask),
+                                  open_interest=int(o.get("open_interest") or 0)))
     return OptionChain(symbol=symbol, spot=spot, r=r, q=q, quotes=quotes, asof=asof)
 
 
@@ -120,13 +121,44 @@ class TradierAdapter:
         q = _as_list(q)[0]
         return float(q.get("last") or q.get("close"))
 
-    def option_chain(self, symbol: str) -> OptionChain:
+    @staticmethod
+    def _pick_expirations(exps, target_dte, k, *, today=None):
+        """The ``k`` listed expiries closest to ``target_dte``, in date order.
+
+        Taking the k NEAREST-DATED expiries — what this did — is the wrong axis
+        entirely on a near-daily-expiry underlying. SPY and QQQ list expiries
+        most weekdays, so the three soonest are 1-4 DTE, where the +/-10% wings
+        are worth nothing, get dropped by the zero-bid filter, and fail
+        rnd._coverage_ok. Meanwhile the 30-45d expiry that DOES have wings was
+        never fetched. The reachable tenors and the usable tenors had no overlap
+        and the paper ledger could not record a single tradeable entry.
+
+        Choosing by distance from the tenor actually wanted costs the same
+        number of requests and lands on an expiry that can be traded.
+        """
+        today = today or datetime.date.today()
+        dated = []
+        for e in exps:
+            try:
+                d = (datetime.date.fromisoformat(e) - today).days
+            except ValueError:
+                continue
+            if d >= 0:
+                dated.append((d, e))
+        if not dated:
+            return []
+        near = sorted(dated, key=lambda t: (abs(t[0] - target_dte), t[0]))[:max(1, k)]
+        return [e for _, e in sorted(near)]
+
+    def option_chain(self, symbol: str, target_dte: int | None = None) -> OptionChain:
         exps = _as_list(self._get("/markets/options/expirations", symbol=symbol,
                                   includeAllRoots="true")["expirations"].get("date"))
         asof = datetime.date.today().isoformat()
         spot = self._spot(symbol)
         quotes: list[OptionQuote] = []
-        for exp in exps[:self.max_expirations]:      # billed per expiration -> budget it
+        chosen = (self._pick_expirations(exps, target_dte, self.max_expirations)
+                  if target_dte is not None else exps[:self.max_expirations])
+        for exp in chosen:                           # billed per expiration -> budget it
             data = self._get("/markets/options/chains", symbol=symbol,
                              expiration=exp, greeks="true")
             opts = (data.get("options") or {}).get("option")

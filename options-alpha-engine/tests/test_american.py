@@ -152,6 +152,32 @@ def test_de_americanize_keeps_zero_bid_wing_and_preserves_spread():
     assert abs((wing.ask - wing.bid) - (px + 0.05 - 0.0)) < 1e-3
 
 
+def test_implied_forward_recovers_dividend_and_borrow():
+    # An ETF chain priced at a TRUE carry (div+borrow) but whose static metadata q
+    # is WRONG (0). implied_carry must recover the true carry from put-call parity,
+    # and de-Am using it must land closer to the true European floor than trusting q.
+    dte, r, q_true, vol = 45, 0.05, 0.03, 0.25
+    T = dte / 365.0
+    a_quotes, e_quotes = [], []
+    for K in range(85, 116, 5):
+        for kind in ("call", "put"):
+            pa = american.american_price(S, float(K), T, r, q_true, vol, kind, steps=120)
+            pe = pricing.price(S, float(K), T, r, q_true, vol, kind)
+            a_quotes.append(OptionQuote(dte, float(K), kind, round(pa, 4), round(pa, 4)))
+            e_quotes.append(OptionQuote(dte, float(K), kind, round(pe, 4), round(pe, 4)))
+    chain = OptionChain("ETF", S, r, 0.0, a_quotes)              # metadata q = 0.0 (WRONG)
+
+    _, q_eff = american.implied_carry(chain, dte, T)
+    assert abs(q_eff - q_true) < 0.015                          # recovered from parity
+
+    floor = rnd.model_free_implied_vol(OptionChain("E", S, r, q_true, e_quotes), T, dte)
+    q_impl = rnd.model_free_implied_vol(
+        american.de_americanize_chain(chain, steps=120, use_implied_forward=True), T, dte)
+    q_wrong = rnd.model_free_implied_vol(
+        american.de_americanize_chain(chain, steps=120, use_implied_forward=False), T, dte)
+    assert abs(q_impl - floor) < abs(q_wrong - floor)          # implied forward is better
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

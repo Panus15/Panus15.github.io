@@ -25,6 +25,10 @@ class OptionQuote:
     kind: str             # "call" or "put"
     bid: float
     ask: float
+    #: Contracts outstanding at this strike/expiry. 0 means NOT KNOWN, not zero —
+    #: most feeds here do not carry it, and a share-of-open-interest calculation
+    #: must refuse rather than divide by an absence.
+    open_interest: int = 0
 
     @property
     def mid(self) -> float:

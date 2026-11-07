@@ -1,11 +1,58 @@
 # Quickstart — test the engine on real options data
 
-## 0. Right now, no network, no installs
+## 0. The one-command path (sector rotation, real prices)
+
+**Windows:** open the `options-alpha-engine` folder and **double-click `START.bat`**.
+
+**macOS / Linux:**
+
+```bash
+python3 -m tools.quickstart
+```
+
+It updates the checkout, downloads prices, renders the chart, opens it, and
+writes the verdict lines to `RESULT.txt`. It runs every step **from its own
+folder**, so it does not matter where your shell is — and if the data step
+produces nothing it stops there and names the reason, instead of letting the
+next step die on a missing file.
+
+No network, or the vendor is blocking? `--demo` renders a generated world and
+downloads nothing:
+
+```bash
+python3 -m tools.quickstart --demo
+```
+
+**Put the OPTIONS decision on the page too.** Without a chain the dashboard can only
+show the context signals — and the one study this repo has run on real data answered
+NO for the sector quadrant, so a page with only that half is a page leading with its
+weakest number. It says so plainly rather than looking complete. Dump a chain once,
+then pass it:
+
+```bash
+python3 -m tools.run_live tradier --symbol SPX --dte 30 --dump spx.json
+python3 -m tools.quickstart --chain-json spx.json --price-json spx_px.json \
+        --symbol SPX --equity 250000 --ledger spx.jsonl
+```
+
+The page then leads with the vol side, P vs Q, the VRP, the fused size multiplier,
+and **the order itself** — every leg, the limit, the dollar worst case — or a named
+refusal.
+
+`--ledger` adds the second panel, and it is the one that can answer *"does the edge
+persist?"* — recorded / settled / open, **P against Q over time** (the gap between
+the lines is the variance premium), the calibration and profit scoreboards, and the
+verdict. It also supplies the ticket's evidence label from the settled count on
+disk: read, never typed. With no ledger it prints **0 recorded, 0 settled** and the
+command that starts the clock, because an invisible clock is one nobody winds.
+
+## 0b. Everything else, no network, no installs
 
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 144 tests
+python3 -m tools.check_offline      # prove no test needs a network
+for t in tests/test_*.py; do python3 "$t"; done   # 562 tests, 47 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
