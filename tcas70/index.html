@@ -54,6 +54,7 @@ h2{font:700 clamp(26px,4vw,34px)/1.25 Prompt;margin-bottom:8px}
 .compare th,.compare td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:15px}
 .compare th{font:600 15px Prompt;background:#EEF2FF}
 .compare td:nth-child(2),.compare td:nth-child(3),.compare th:nth-child(2),.compare th:nth-child(3){text-align:center;width:22%}
+section.closed{display:none}
 details{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:10px}
 summary{font:600 17px Prompt;cursor:pointer}
 details p{color:var(--mute);margin-top:8px}
@@ -164,7 +165,8 @@ footer{padding:32px 0 48px;color:var(--mute);font-size:13px;border-top:1px solid
 <script>
 // ---- ตั้งค่าร้าน: แก้ 3 บรรทัดนี้แล้ว push ----
 const SHOP = {
-  line: "https://lin.ee/xyMOK2T",   // ลิงก์ LINE OA (เว้นว่าง = ยังไม่เปิดขาย)
+  open: false,                       // true = เปิดรับออเดอร์ (ต้องมีลิงก์ /copy พร้อมส่งก่อน) • false = แสดง "เปิดขายเร็ว ๆ นี้"
+  line: "https://lin.ee/xyMOK2T",   // ลิงก์ LINE OA
   price: 99,           // ราคาปกติ (บาท)
   early: { price: 59, until: "2026-11-10" }  // ราคาโปรเปิดตัว และวันสุดท้าย (ปี ค.ศ.)
 };
@@ -172,6 +174,13 @@ const SHOP = {
   const buy = document.getElementById("buyBtn"), price = document.getElementById("price"), how = document.getElementById("howLine");
   const today = new Date().toISOString().slice(0, 10);
   const earlyOn = SHOP.early && today <= SHOP.early.until;
+  if (!SHOP.open) {
+    buy.textContent = "🔔 แจ้งฉันเมื่อเปิดขาย";
+    if (SHOP.line) { buy.href = SHOP.line; buy.target = "_blank"; buy.rel = "noopener"; } else buy.classList.add("disabled");
+    price.innerHTML = `<b>เปิดขายเร็ว ๆ นี้</b> • แอด LINE แล้วจะแจ้งก่อนใคร`;
+    document.getElementById("how").classList.add("closed");
+    return;
+  }
   if (earlyOn) {
     const d = new Date(SHOP.early.until + "T00:00:00");
     const th = d.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
