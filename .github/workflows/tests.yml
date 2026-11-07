@@ -17,6 +17,24 @@ on:
       - ".github/workflows/tests.yml"
 
 jobs:
+  # The FX engine's quality claim is "242 deliberate defects introduced, 242
+  # caught". That claim was unverifiable for most of this project's life -- the
+  # sweeps lived outside the repository and a container rebuild deleted them.
+  # Running it here is what keeps the number true rather than historical: a
+  # survivor means the tests cannot tell the real code from a broken version,
+  # and a stale anchor means a defect was never tried. Separate job so it runs
+  # beside the suite instead of lengthening it.
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Mutation sweep (fx-engine)
+        working-directory: fx-engine
+        run: python3 mutation/run.py
+
   test:
     runs-on: ubuntu-latest
     steps:

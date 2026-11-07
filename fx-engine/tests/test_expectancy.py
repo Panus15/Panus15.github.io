@@ -269,6 +269,15 @@ def test_negative_inputs_are_refused_rather_than_producing_a_negative_cost():
     else:
         raise AssertionError("a negative round-turn cost was accepted")
     try:
+        CostModel(swap_markup_annual=-0.01)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "a negative swap markup was accepted — a broker that PAYS you to "
+            "hold, which is the one input that would make any carry-like "
+            "strategy look alive")
+    try:
         CostModel().financing_pips(-5, 1.10)
     except ValueError:
         pass

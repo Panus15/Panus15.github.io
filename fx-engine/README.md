@@ -160,7 +160,16 @@ test, not a prediction.
 for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-196 tests. Every module is also mutation-tested: 217 deliberate defects
-introduced, 217 caught. The sweeps live outside the repo because they rewrite
-source files; each runs under `PYTHONDONTWRITEBYTECODE=1`, after a stale `.pyc`
-once inverted one and reported mutants killed that were not.
+223 tests. Every module is also mutation-tested:
+
+```bash
+python3 mutation/run.py          # 242 deliberate defects, all 242 caught
+```
+
+That used to be an unverifiable claim — the sweeps lived outside the repository
+and a container rebuild deleted them, leaving a number nobody could reproduce.
+Moving them in cost five surviving mutants immediately, including a look-ahead
+bug in the head-and-shoulders completion scan and a test that asserted
+`SWING_BARS <= i`, which is satisfied at any width including 1. See
+`mutation/README.md` for how it guards your working tree, and why a stale
+anchor fails the run instead of being skipped.

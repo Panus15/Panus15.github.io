@@ -25,6 +25,7 @@ from models.patterns import (DETECTORS, EQUAL_TOL, EVIDENCE, FAILS_RANDOM_NULL,
                              MAX_SPAN, MIN_HEIGHT, MIN_SPAN, NEVER_TESTED,
                              PARAMETER_COUNT,
                              SWING_BARS, TESTED_AND_FAILED, Bar, Detection,
+                             _close_enough,
                              double_bottom, double_top, engulfing, flag,
                              head_and_shoulders, scan, swing_highs, swing_lows,
                              triangle)
@@ -146,6 +147,73 @@ def test_head_and_shoulders_is_short_with_the_stop_above_the_right_shoulder():
     assert d.stop > d.entry, "a short's stop must sit above its entry"
     assert d.target < d.entry
     assert d.risk > 0 and d.reward > 0
+
+
+def test_a_one_bar_spike_is_not_a_swing_high():
+    """SWING_BARS is 3, and this is what the 3 buys. Index 3 below is higher
+    than its immediate neighbours and lower than bars two away, so it is a
+    swing high at k=1 and must not be one at the locked width.
+
+    Written as explicit prices rather than as a function of SWING_BARS: scaling
+    the fixture by the constant under test would pass at any value of it, which
+    is how `assert SWING_BARS <= i` let a width of 1 through a whole sweep.
+    """
+    bars = [_bar(p) for p in (1.10, 1.12, 1.11, 1.115, 1.11, 1.12, 1.10)]
+    assert 3 in swing_highs(bars, k=1), "the notch is a swing high at k=1"
+    assert 3 not in swing_highs(bars), (
+        "a one-bar notch was reported as a swing high at the locked width")
+
+
+def test_equality_is_relative_to_price_not_an_absolute_distance():
+    """EQUAL_TOL is a FRACTION. On EURUSD at 1.10 a 0.15% tolerance and an
+    absolute 0.0015 one are nearly the same number, so only a differently
+    priced pair can tell them apart — and a JPY cross is exactly that.
+    """
+    assert _close_enough(1.1000, 1.1010), "0.09% apart on EURUSD"
+    assert not _close_enough(1.1000, 1.1200), "1.8% apart on EURUSD"
+    # 150.00 vs 150.10 is 0.067% apart: equal by a relative rule, and 66x over
+    # the limit if the tolerance were read as an absolute price distance.
+    assert _close_enough(150.00, 150.10), (
+        "a JPY-scale pair was judged by an absolute distance, so nothing on it "
+        "will ever count as equal")
+    assert not _close_enough(150.00, 153.00), "2% apart on a JPY cross"
+
+
+def test_a_shape_wider_than_the_span_ceiling_is_not_the_pattern():
+    """MAX_SPAN is 120 bars. Two highs 200 bars apart are not a double top a
+    trader would recognise, whatever the arithmetic says about their heights."""
+    near = (_peak(1.10, 1.13, 8, 8) + _ramp(1.10, 1.10, 20)[1:]
+            + _peak(1.10, 1.1301, 8, 8)[1:] + _ramp(1.10, 1.06, 14)[1:])
+    assert double_top(near), "the fixture must be a detectable shape when close"
+    far = (_peak(1.10, 1.13, 8, 8) + _ramp(1.10, 1.10, 200)[1:]
+           + _peak(1.10, 1.1301, 8, 8)[1:] + _ramp(1.10, 1.06, 14)[1:])
+    assert double_top(far) == [], (
+        "two highs 200 bars apart were reported as a double top")
+
+
+def test_the_neckline_break_is_looked_for_after_the_right_shoulder():
+    """A LOOK-AHEAD test, and the completion scan is where it hides.
+
+    The right shoulder is a swing high, which cannot be known until the bars
+    after it have printed. Here bar 39 IS the right shoulder and also closes
+    below the neckline, so a scan starting AT it reports the pattern completing
+    on a bar that was not yet identifiable — and every fixture whose shoulder
+    closes above the neckline cannot tell the difference.
+    """
+    bars = (_ramp(1.10, 1.13, 8) + _ramp(1.13, 1.105, 8)[1:]
+            + _ramp(1.105, 1.16, 10)[1:] + _ramp(1.16, 1.104, 10)[1:]
+            + _ramp(1.104, 1.131, 8)[1:] + _ramp(1.131, 1.08, 14)[1:])
+    rs = max(range(33, 40), key=lambda i: bars[i].h)
+    assert rs == 39, rs
+    # same high, so still the right shoulder; close dumped below the neckline
+    bars[rs] = Bar(1.1280, 1.1310, 1.0995, 1.1000)
+    found = head_and_shoulders(bars)
+    assert found, "the shape stopped being detectable"
+    d = found[0]
+    assert d.index > rs, (
+        f"completion was reported on bar {d.index}, the right shoulder itself, "
+        f"which no one could have known was a shoulder at the time")
+    assert bars[d.index].c < d.entry, "the completing bar must close below the neck"
 
 
 def test_a_head_that_is_not_the_highest_point_is_not_a_head():

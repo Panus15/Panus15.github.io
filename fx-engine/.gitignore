@@ -24,3 +24,4 @@ data/
 # Broker credentials and account numbers. A cost model is measured FROM an
 # account; nothing about that account belongs in a commit.
 .env
+mutation/.restore/
