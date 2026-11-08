@@ -24,7 +24,7 @@ MUTANTS = [
  ("zero parameters allowed",    "    if not isinstance(pc, int) or isinstance(pc, bool) or pc < 1:", "    if not isinstance(pc, int) or isinstance(pc, bool) or pc < 0:"),
  ("booleans count as integers", "    if not isinstance(pc, int) or isinstance(pc, bool) or pc < 1:", "    if not isinstance(pc, int) or pc < 1:"),
  ("floats count as integers",   "    if not isinstance(pc, int) or isinstance(pc, bool) or pc < 1:", "    if not isinstance(pc, (int, float)) or pc < 1:"),
- ("reason for the count hidden","            f\"it is the denominator of the multiple-testing correction, and this \"", "            f\"\"  # "),
+ ("reason for the count hidden","            f\"the denominator of the multiple-testing correction, and this \"", "            f\"a number, and this \""),
  # --- the file itself ---
  ("detect not required",        "    if not hasattr(mod, \"detect\") or not callable(mod.detect):", "    if False:"),
  ("callable not required",      "    if not hasattr(mod, \"detect\") or not callable(mod.detect):", "    if not hasattr(mod, \"detect\"):"),

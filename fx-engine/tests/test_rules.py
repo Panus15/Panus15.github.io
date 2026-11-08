@@ -260,6 +260,39 @@ def test_something_that_is_not_a_detection_is_refused():
         raise AssertionError("a dict was accepted as a detection")
 
 
+def test_load_rule_actually_runs_the_shape_checks():
+    """check_shape being correct is not the same as load_rule calling it. The
+    tests above exercise the function directly, which leaves "load the rule and
+    skip the check" indistinguishable from working."""
+    bad = '''
+PARAMETER_COUNT = 1
+
+def detect(bars):
+    e = bars[50].c
+    # a long whose stop sits ABOVE its entry: a guaranteed loss, not a trade
+    return [Detection("bad", 50, 1, e, e + 0.0030, e + 0.0060)]
+'''
+    try:
+        load_rule(_rule_file(bad), _bars())
+    except ValueError as e:
+        assert "guaranteed loss" in str(e), e
+    else:
+        raise AssertionError("load_rule accepted a malformed detection")
+
+    wrong_type = '''
+PARAMETER_COUNT = 1
+
+def detect(bars):
+    return "not a list"
+'''
+    try:
+        load_rule(_rule_file(wrong_type), _bars())
+    except ValueError as e:
+        assert "must return a list" in str(e), e
+    else:
+        raise AssertionError("load_rule accepted a non-list return")
+
+
 def test_a_detect_that_returns_the_wrong_type_is_refused():
     for bad in (None, 42, "detections", (_d(),)):
         try:
