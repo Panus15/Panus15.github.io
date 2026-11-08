@@ -129,6 +129,10 @@ details.how p{margin-top:6px}
 .line-cta{display:block;text-align:center;text-decoration:none;background:#06C755;color:#fff;border-radius:16px;padding:14px;font:600 17px Prompt;margin-top:10px}
 .shop{display:block;text-decoration:none;color:var(--blue);font:600 15px Prompt;text-align:center;margin-top:12px}
 footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
+.focus{margin-top:14px;border-radius:14px;padding:12px 14px;background:var(--pink2);color:var(--ink);font-size:14.5px}
+.focus b{font-family:Prompt;color:var(--pink)}
+.focus button{margin-top:8px;border:0;background:var(--pink);color:#fff;border-radius:10px;padding:8px 14px;font:600 14px Prompt;cursor:pointer}
+.focus a{color:var(--blue);font:600 14px Prompt;text-decoration:none}
 .hidden{display:none!important}
 </style>
 </head>
@@ -149,6 +153,7 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
     <p class="hint">เลือกตามระเบียบการของคณะที่เล็ง หรือกดชุดตัวอย่างด้านล่างแล้วแก้เอง</p>
     <div class="presets" id="presets"></div>
     <div id="subjectGroups"></div>
+    <div id="focusBox"></div>
   </section>
 
   <section class="card" id="confCard">
@@ -180,6 +185,7 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
   <section class="card">
     <h2>📖 วันนี้อ่านอะไร</h2>
     <p class="hint" id="todayHint"></p>
+    <p class="hint" id="focusNote" style="margin-top:2px"></p>
     <div id="todayList"></div>
     <div class="progress"><span id="todayBar" style="width:0"></span></div>
     <p class="hint" id="todayDone" style="margin-top:6px"></p>
@@ -192,7 +198,7 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
     <div class="bar" id="weekBar"></div>
     <div class="legend" id="weekLegend"></div>
     <details class="how"><summary>ระบบจัดเวลายังไง?</summary>
-      <p>แต่ละวันแบ่งเวลาอ่านให้วิชาที่ยังไม่สอบ ตามน้ำหนัก: ยังไม่มั่นใจ = 3, พอใช้ = 2, มั่นใจ = 1 และเพิ่มน้ำหนักให้วิชาที่ใกล้สอบ (8 สัปดาห์สุดท้าย เพิ่มขึ้นเรื่อย ๆ จนถึง 2 เท่า) พอวิชาไหนสอบแล้ว เวลาจะย้ายไปให้วิชาที่เหลือเอง</p>
+      <p>แต่ละวันแบ่งเวลาอ่านให้วิชาที่ยังไม่สอบ ตามน้ำหนัก: ยังไม่มั่นใจ = 3, พอใช้ = 2, มั่นใจ = 1 คูณเพิ่มตามน้ำหนักที่คณะที่เล็งให้วิชานั้น (ถ้าเลือกคณะไว้ในหน้าเช็กคะแนนคณะ เช่น วิชาที่คณะให้ 40% ได้เวลาเพิ่ม 1.8 เท่า) และเพิ่มน้ำหนักให้วิชาที่ใกล้สอบ (8 สัปดาห์สุดท้าย เพิ่มขึ้นเรื่อย ๆ จนถึง 2 เท่า) พอวิชาไหนสอบแล้ว เวลาจะย้ายไปให้วิชาที่เหลือเอง</p>
       <p>1 ● = อ่าน 25 นาที แล้วพัก 5 นาที</p>
     </details>
   </section>
@@ -291,13 +297,20 @@ let state = load() || { sel: [], conf: {}, wd: 2, we: 4, done: {} };
 state.sel = state.sel.filter(id => BY_ID[id]);
 
 // ---------------- setup UI ----------------
+function renderFocus() {
+  if (!FOCUS) { $("focusBox").innerHTML = `<div class="focus">🎯 อยากให้แผนแม่นขึ้น? <a href="../score/">เลือกคณะที่เล็ง</a> แล้วระบบจะให้เวลากับวิชาที่คณะให้น้ำหนักมากกว่า</div>`; return; }
+  const missing = Object.entries(FOCUS.w).filter(([k, v]) => v > 0 && BY_ID[k] && !state.sel.includes(k)).sort((a, b) => b[1] - a[1]);
+  $("focusBox").innerHTML = missing.length
+    ? `<div class="focus">🎯 คณะที่คุณเล็ง (${FOCUS.n} คณะ) ใช้วิชาที่ยังไม่ได้เลือก: <b>${missing.map(([k, v]) => `${esc(BY_ID[k].s)} (${Math.round(v)}%)`).join(", ")}</b><br><button id="addFocus">เพิ่มให้เลย</button></div>`
+    : `<div class="focus">✅ เลือกวิชาครบตามคณะที่เล็ง (${FOCUS.n} คณะ) แล้ว</div>`;
+}
 function renderSetup() {
   $("presets").innerHTML = PRESETS.map((p, i) => `<button class="preset" data-p="${i}">${esc(p.l)}</button>`).join("");
   const groups = ["TGAT / TPAT", "A-Level"];
   $("subjectGroups").innerHTML = groups.map(g => `<div class="group"><div class="gl">${g}</div><div class="chips">${
     SUBJECTS.filter(x => x.g === g).map(x => `<button class="chip" data-id="${x.id}" aria-pressed="${state.sel.includes(x.id)}">${esc(x.s)}</button>`).join("")
   }</div></div>`).join("");
-  renderConf();
+  renderConf(); renderFocus();
   $("wd").value = state.wd; $("we").value = state.we; sliders();
 }
 function renderConf() {
@@ -326,6 +339,10 @@ document.addEventListener("click", e => {
   }
   const seg = e.target.closest(".seg button");
   if (seg) { state.conf[seg.dataset.id] = seg.dataset.c; renderConf(); save(state); return; }
+  if (e.target.id === "addFocus") {
+    for (const [k, v] of Object.entries(FOCUS.w)) if (v > 0 && BY_ID[k] && !state.sel.includes(k)) state.sel.push(k);
+    renderSetup(); save(state); return;
+  }
   const pre = e.target.closest(".preset");
   if (pre) { state.sel = [...PRESETS[+pre.dataset.p].ids]; renderSetup(); save(state); return; }
   const tick = e.target.closest(".tick");
@@ -342,6 +359,10 @@ $("edit").addEventListener("click", () => { show(false); renderSetup(); window.s
 // ---------------- planning ----------------
 const keyOf = d => `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 const hoursOn = d => (d.getDay() === 0 || d.getDay() === 6) ? state.we : state.wd;
+function focus() {                  // average subject weight (%) across the faculties chosen on the score page
+  try { const s = JSON.parse(localStorage.getItem("dek70score.v1")); return s && s.focus && s.focusN ? { w: s.focus, n: s.focusN } : null; } catch (e) { return null; }
+}
+const FOCUS = focus();
 function weights(d) {               // subjects still to be examined after day d, with their weights
   const out = [];
   for (const id of state.sel) {
@@ -349,7 +370,8 @@ function weights(d) {               // subjects still to be examined after day d
     if (left <= 0) continue;
     const c = CONF[state.conf[id] || "m"].k;
     const urgency = 1 + Math.max(0, 56 - left) / 56;   // ramps 1 → 2 over the last 8 weeks
-    out.push([id, c * urgency]);
+    const fw = FOCUS ? 1 + (FOCUS.w[id] || 0) / 50 : 1;   // e.g. a subject weighted 40% by the target faculties gets 1.8×
+    out.push([id, c * urgency * fw]);
   }
   return out;
 }
@@ -399,6 +421,8 @@ function renderToday() {
   const done = (state.done[keyOf(t)] || {});
   const total = ids.reduce((a, id) => a + round5(al[id]), 0);
   const examNow = examsOn(t);
+  $("focusNote").innerHTML = FOCUS ? `🎯 ปรับตามน้ำหนักวิชาของ ${FOCUS.n} คณะที่เล็งแล้ว • <a href="../score/" style="color:var(--blue)">ดูคณะ</a>`
+    : `<a href="../score/" style="color:var(--blue)">🎯 เลือกคณะที่เล็ง</a> เพื่อให้แผนให้เวลากับวิชาที่คณะให้น้ำหนักมาก`;
   $("todayHint").textContent = ids.length
     ? `${WDN[t.getDay()]}ที่ ${thai(t, false)} • รวม ${total >= 60 ? (total / 60).toFixed(total % 60 ? 1 : 0) + " ชม." : total + " นาที"}`
     : examNow.length ? `วันนี้สอบ ${examNow.map(id => BY_ID[id].s).join(" + ")} — ไม่ต้องอ่านเพิ่ม กินข้าว พักสายตา แล้วไปให้ทันเวลานะ 💪`

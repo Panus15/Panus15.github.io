@@ -64,6 +64,13 @@ h1{font:700 27px/1.2 Prompt;margin:16px 0 6px}h1 em{font-style:normal;color:var(
 .ok{color:var(--green)}.bad{color:var(--red)}.wait{color:var(--amber)}
 .links{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
 .links a{font:600 14px Prompt;color:var(--blue);text-decoration:none}
+.rk{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.rk .no{font:700 13px Prompt;background:var(--blue);color:#fff;border-radius:999px;padding:2px 10px}
+.rk button{border:1px solid var(--line);background:var(--card);border-radius:8px;width:30px;height:28px;cursor:pointer;color:var(--mute)}
+.rk button:disabled{opacity:.35;cursor:default}
+.sum{border-radius:14px;padding:12px 14px;margin-top:10px;font-size:14.5px;background:var(--blue2)}
+.sum b{font-family:Prompt}
+.sum .w{color:var(--red);margin-top:4px}
 .note{background:var(--amber2);color:var(--amber);border-radius:12px;padding:10px 12px;font-size:14px;margin-top:8px}
 .empty{color:var(--soft);font-size:14.5px;margin-top:10px}
 .loading{color:var(--soft);font-size:14px;margin-top:8px}
@@ -99,6 +106,8 @@ footer a{color:var(--soft)}
 
 <section class="card">
   <h2><span class="n">3</span>คณะที่เลือก <span class="hint" id="count"></span></h2>
+  <p class="hint">เรียงตามที่อยากเข้าจริง (ใช้ ↑ ↓) — รอบ 3 ระบบจะให้ติด<b>อันดับที่สูงที่สุดที่ผ่าน</b> ตามหลักที่ใช้ในปีก่อน ๆ ตรวจคู่มือ TCAS70 อีกครั้ง</p>
+  <div id="rankSum"></div>
   <div id="picks"><p class="empty">ยังไม่ได้เลือกคณะ — ค้นหาในข้อ 2 แล้วกดเลือก</p></div>
 </section>
 
@@ -214,7 +223,7 @@ $("q").addEventListener("input", () => {
 $("res").addEventListener("click", e => {
   const b = e.target.closest("button[data-id]"); if (!b) return;
   const id = b.dataset.id;
-  if (!st.picks.includes(id)) { if (st.picks.length >= 10) { alert("เลือกได้สูงสุด 10 คณะ"); return; } st.picks.unshift(id); }
+  if (!st.picks.includes(id)) { if (st.picks.length >= 10) { alert("เลือกได้สูงสุด 10 คณะ"); return; } st.picks.push(id); }
   if (COURSES && COURSES[id]) (st.meta = st.meta || {})[id] = COURSES[id];
   save(); $("q").value = ""; $("res").innerHTML = ""; fetchRounds(id).then(() => { renderInputs(); renderPicks(); });
   renderPicks(); document.getElementById("picks").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -264,7 +273,49 @@ function evalTrack(tr) {
   }
   return { score, unsupported, missing, checks };
 }
+const PLANKEY = { tgat: "TGAT", tgat1: "TGAT", tgat2: "TGAT", tgat3: "TGAT", tpat1: "TPAT1", tpat1_tscore: "TPAT1", tpat2: "TPAT2", tpat21: "TPAT2", tpat22: "TPAT2", tpat23: "TPAT2",
+  tpat3: "TPAT3", tpat4: "TPAT4", tpat5: "TPAT5", a_lv_61: "MATH1", a_lv_62: "MATH2", a_lv_63: "SCI", a_lv_64: "PHY", a_lv_65: "CHEM", a_lv_66: "BIO",
+  a_lv_70: "SOC", a_lv_81: "THAI", a_lv_82: "ENG", a_lv_83: "FRE", a_lv_84: "GER", a_lv_85: "JAP", a_lv_86: "KOR", a_lv_87: "CHI", a_lv_88: "BAL", a_lv_89: "SPN" };
+function verdict(id) {        // "ok" = a round-3 track scored and passes every checkable minimum; "bad" = every track fails one; else "wait"
+  const R = ROUNDS[id]; if (!R || !R.rows || !R.rows.length) return "wait";
+  const evs = R.rows.filter(t => !t.special && Object.keys(t.w).length).map(evalTrack);
+  if (!evs.length) return "wait";
+  if (evs.some(e => e.score !== null && !e.checks.some(c => c[0] === "bad"))) return "ok";
+  if (evs.every(e => e.checks.some(c => c[0] === "bad"))) return "bad";
+  return "wait";
+}
+function updateFocus() {       // average subject weight across chosen faculties → read by the study plan
+  const acc = {}; let n = 0;
+  for (const id of st.picks) {
+    const tr = ((ROUNDS[id] && ROUNDS[id].rows) || []).filter(t => !t.special && Object.keys(t.w).length);
+    if (!tr.length) continue; n++;
+    // Tracks are alternatives (e.g. "pick one language"): never mix them. Use the track that suits this student —
+    // the best-scoring one if scores are in, else only the subjects every track shares, else the track whose
+    // subjects the student already has scores for.
+    const evs = tr.map(evalTrack), scored = tr.filter((t, i) => evs[i].score !== null);
+    let w;
+    if (scored.length) w = scored.reduce((a, t) => evalTrack(t).score > evalTrack(a).score ? t : a).w;
+    else {
+      const common = Object.keys(tr[0].w).filter(k => tr.every(t => t.w[k]));
+      if (common.length) w = Object.fromEntries(common.map(k => [k, tr.reduce((a, t) => a + t.w[k], 0) / tr.length]));
+      else w = tr.reduce((a, t) => { const have = x => Object.keys(x.w).filter(k => val(k) !== undefined && val(k) !== null).length; return have(t) > have(a) ? t : a; }).w;
+    }
+    const tot = Object.values(w).reduce((a, v) => a + v, 0) || 1, per = {};
+    for (const [k, v] of Object.entries(w)) { const pk = PLANKEY[k]; if (pk) per[pk] = (per[pk] || 0) + 100 * v / tot; }
+    for (const [k, v] of Object.entries(per)) acc[k] = (acc[k] || 0) + v;
+  }
+  st.focus = n ? Object.fromEntries(Object.entries(acc).map(([k, v]) => [k, Math.round(v / n * 10) / 10])) : null;
+  st.focusN = n; save();
+}
+function renderSummary() {
+  if (st.picks.length < 2) { $("rankSum").innerHTML = ""; return; }
+  const v = st.picks.map(verdict), ok = v.filter(x => x === "ok").length, bad = v.filter(x => x === "bad").length;
+  const warn = v.map((x, i) => x === "bad" ? `⚠️ อันดับ ${i + 1} ยังไม่ผ่านเกณฑ์ขั้นต่ำ — ถ้ายื่นตอนนี้จะเสียอันดับเปล่า` : "").filter(Boolean);
+  $("rankSum").innerHTML = `<div class="sum"><b>✅ ผ่านเกณฑ์ที่เช็กได้ ${ok}</b> • ❌ ไม่ผ่าน ${bad} • ⏳ รอข้อมูล ${v.length - ok - bad}
+    ${warn.map(w => `<div class="w">${esc(w)}</div>`).join("")}${ok === 0 ? '<div class="w">ยังไม่มีอันดับที่ผ่านเกณฑ์ — ลองเพิ่มคณะสำรองไว้ท้าย ๆ</div>' : ""}</div>`;
+}
 function renderPicks() {
+  updateFocus(); renderSummary();
   $("count").textContent = st.picks.length ? `(${st.picks.length}/10)` : "";
   if (!st.picks.length) { $("picks").innerHTML = '<p class="empty">ยังไม่ได้เลือกคณะ — ค้นหาในข้อ 2 แล้วกดเลือก</p>'; return; }
   $("picks").innerHTML = st.picks.map(id => {
@@ -286,12 +337,19 @@ function renderPicks() {
       const ck = ev.checks.map(([c, t]) => `<div class="chk ${c}">${c === "ok" ? "✅" : c === "bad" ? "❌" : "⏳"} <span>${esc(t)}</span></div>`).join("");
       return `<div class="track"><div class="tn">${esc(tr.name && tr.name !== "Admission" ? tr.name : "รอบ 3 Admission")}${tr.seats ? ` • รับ ${tr.seats} คน` : ""}</div>${sc}<div class="chips">${chips}</div>${ck}</div>`;
     }).join("");
-    return `<div class="prog"><div class="top"><div><b>${esc(m.u)} • ${esc(m.f)}</b><small>${esc(m.fd)} — ${esc(m.p)} • ${esc(m.t)}</small></div>
+    const ix = st.picks.indexOf(id);
+    return `<div class="prog"><div class="rk"><span class="no">อันดับ ${ix + 1}</span><button data-up="${id}" ${ix === 0 ? "disabled" : ""} aria-label="เลื่อนขึ้น">↑</button><button data-down="${id}" ${ix === st.picks.length - 1 ? "disabled" : ""} aria-label="เลื่อนลง">↓</button></div><div class="top"><div><b>${esc(m.u)} • ${esc(m.f)}</b><small>${esc(m.fd)} — ${esc(m.p)} • ${esc(m.t)}</small></div>
       <button class="x" data-del="${id}" aria-label="ลบ">✕</button></div>${body}
       <div class="links"><a href="https://course.mytcas.com/programs/${encodeURIComponent(id)}" target="_blank" rel="noopener">ดูระเบียบการเต็มที่ mytcas ↗</a></div></div>`;
   }).join("");
 }
 $("picks").addEventListener("click", e => {
+  const mv = e.target.closest("[data-up],[data-down]");
+  if (mv) {
+    const id = mv.dataset.up || mv.dataset.down, i = st.picks.indexOf(id), j = mv.dataset.up ? i - 1 : i + 1;
+    if (j >= 0 && j < st.picks.length) { [st.picks[i], st.picks[j]] = [st.picks[j], st.picks[i]]; save(); renderPicks(); }
+    return;
+  }
   const b = e.target.closest("[data-del]"); if (!b) return;
   st.picks = st.picks.filter(x => x !== b.dataset.del); save(); renderInputs(); renderPicks();
 });
