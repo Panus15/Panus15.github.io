@@ -196,21 +196,30 @@ def split(bars: list, frac: float = SPLIT_DEFAULT) -> tuple:
 
 def evaluate(bars: list, costs: CostModel, *, frac: float = SPLIT_DEFAULT,
              bars_per_night: float = 1.0, costs_confirmed: bool = False,
-             patterns=None) -> Holdout:
+             patterns=None, detectors: dict = None) -> Holdout:
     """Find on the earlier half, test the survivors on the later half.
 
     Only patterns that PASS in-sample are tested out-of-sample. Testing all of
     them and reporting the best would put the multiple-testing problem straight
     back into the step that exists to escape it.
     """
-    chosen = DETECTORS if not patterns else {p: DETECTORS[p] for p in patterns}
+    # `detectors` lets a rule the caller loaded go through the identical split,
+    # which is the only version of this test worth having: a hold-out that can
+    # only validate the six patterns this engine shipped validates the wrong
+    # thing. Each value is (detect_fn, parameter_count, evidence_or_None).
+    if detectors:
+        chosen = detectors
+    else:
+        names = patterns or list(DETECTORS)
+        chosen = {p: (DETECTORS[p], 4, None) for p in names}
     train, test = split(bars, frac)
 
+    n_hyp = sum(pc for _, pc, _ in chosen.values())
     results = []
-    for name, fn in chosen.items():
+    for name, (fn, _pc, ev) in chosen.items():
         res = run(train, fn(train), costs, bars_per_night=bars_per_night)
-        v = judge(res, costs, name=name, n_hypotheses=len(chosen) * 4,
-                  costs_confirmed=costs_confirmed)
+        v = judge(res, costs, name=name, n_hypotheses=n_hyp,
+                  costs_confirmed=costs_confirmed, evidence=ev)
         results.append(HoldoutResult(name=name, in_sample=v))
 
     out = Holdout(frac=frac, n_train=len(train), n_test=len(test),
@@ -221,10 +230,10 @@ def evaluate(bars: list, costs: CostModel, *, frac: float = SPLIT_DEFAULT,
 
     # the denominator is now the number of survivors, not the original search
     for r in survivors:
-        fn = chosen[r.name]
+        fn, _pc, ev = chosen[r.name]
         res = run(test, fn(test), costs, bars_per_night=bars_per_night)
         r.out_of_sample = judge(res, costs, name=r.name,
                                 n_hypotheses=len(survivors),
-                                costs_confirmed=costs_confirmed)
+                                costs_confirmed=costs_confirmed, evidence=ev)
         r.confirmed = r.out_of_sample.tradeable
     return out

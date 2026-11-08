@@ -45,17 +45,18 @@ from engine.costs import CostModel
 from engine.data import load_csv
 from engine.holdout import SPLIT_DEFAULT
 from engine.levers import advise
+from engine.rules import load_rule
 from tools.report import render as render_report
 from engine.holdout import evaluate as holdout_evaluate
 from engine.verdict import (NEGATIVE_NET_EXPECTANCY, NO_WIN_RATE_SAVES_IT,
                             TOO_FEW_TRADES, judge)
-from models.patterns import DETECTORS
+from models.patterns import DETECTORS, PARAMETER_COUNT
 
 
 def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             costs_measured: bool = False, time_format: str = None,
             patterns=None, holdout: float = None,
-            report_path: str = None, out=print) -> int:
+            report_path: str = None, rule_paths=None, out=print) -> int:
     """Load, check, scan, backtest, judge. Returns a process exit code.
 
     With ``holdout`` set, the file is cut in time instead: patterns are found
@@ -88,28 +89,43 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
         f"{'' if costs_measured else '  (NOT confirmed — see --costs-measured)'}")
     out("")
 
+    # name -> (detect_fn, declared parameter count, evidence override).
+    # A rule you wrote goes in beside the built-ins and is treated identically:
+    # same costs, same ambiguous-bar rule, same correction, same refusals.
+    chosen = {}
+    for rp in (rule_paths or []):
+        r = load_rule(rp, series.bars)
+        chosen[r.name] = (r.detect, r.parameter_count, r.evidence)
+        out(f"rule:      {r.name} from {rp}, {r.parameter_count} declared "
+            f"parameter(s), no look-ahead found")
+    if patterns or not chosen:
+        for p_ in (patterns or list(DETECTORS)):
+            chosen[p_] = (DETECTORS[p_], PARAMETER_COUNT, None)
+    if rule_paths:
+        out("")
+
     if holdout is not None:
         out(holdout_evaluate(series.bars, costs, frac=holdout,
                              bars_per_night=bpn,
                              costs_confirmed=costs_measured,
-                             patterns=patterns).report())
+                             detectors=chosen).report())
         return 0
 
-    chosen = DETECTORS if not patterns else {p: DETECTORS[p] for p in patterns}
     # every detector run over one file is one search, and the correction has to
-    # know how wide it was; the four declared knobs in patterns.py are the rest
-    n_hyp = len(chosen) * 4
-    out(f"search:    {n_hyp} hypotheses ({len(chosen)} pattern(s) x 4 declared "
-        f"parameters) — a FLOOR,\n           since the honest count also "
-        f"includes every variant you tried and dropped")
+    # know how wide it was: the sum of what each one declares it could have swept
+    n_hyp = sum(pc for _, pc, _ in chosen.values())
+    out(f"search:    {n_hyp} hypotheses across {len(chosen)} rule(s), summing "
+        f"what each declares\n           it could have swept — a FLOOR, since "
+        f"the honest count also includes every\n           variant you tried "
+        f"and dropped")
     out("")
     out(f"{'pattern':<20} {'n':>6} {'win%':>6} {'need%':>6} {'pips/trade':>11}"
         f"  verdict")
     passed, judged, results = [], {}, {}
-    for name, fn in chosen.items():
+    for name, (fn, _pc, ev) in chosen.items():
         res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
-                  costs_confirmed=costs_measured)
+                  costs_confirmed=costs_measured, evidence=ev)
         results[name] = res
         head = "TRADEABLE" if v.tradeable else (v.codes[0] if v.codes else "-")
         out(f"{name:<20} {v.n_trades:>6,} {v.gross.win_rate:>6.1%} "
@@ -196,6 +212,11 @@ def main(argv=None) -> int:
                         "genuinely ambiguous")
     p.add_argument("--pattern", action="append", choices=sorted(DETECTORS),
                    help="restrict to one pattern; repeatable")
+    p.add_argument("--rule", action="append", metavar="PATH",
+                   help="a Python file defining detect(bars) -> list[Detection] "
+                        "and PARAMETER_COUNT; runs YOUR rule through the same "
+                        "pipeline. Repeatable. Checked for look-ahead before "
+                        "anything else runs")
     p.add_argument("--report", metavar="PATH",
                    help="also write a self-contained HTML report to PATH, with "
                         "the equity curve of each pattern NET of costs")
@@ -212,7 +233,8 @@ def main(argv=None) -> int:
         return analyse(a.path, a.pair, a.side, costs,
                        costs_measured=a.costs_measured,
                        time_format=a.time_format, patterns=a.pattern,
-                       holdout=a.holdout, report_path=a.report)
+                       holdout=a.holdout, report_path=a.report,
+                       rule_paths=a.rule)
     except (OSError, ValueError) as e:
         print(f"could not analyse {a.path}: {e}", file=sys.stderr)
         return 1

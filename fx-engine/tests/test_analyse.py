@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.costs import CostModel
 from engine.holdout import SPLIT_DEFAULT
+from models.patterns import PARAMETER_COUNT
 from tools.analyse import analyse, main
 
 _TMP = tempfile.mkdtemp(prefix="fxcli-")
@@ -300,6 +301,96 @@ def test_the_trade_rate_is_annualised_from_the_span_not_the_raw_count():
     printed = int(rate.split("at ")[1].split(" trades")[0].replace(",", ""))
     assert printed != n, f"the raw sample count was printed as a yearly rate ({n})"
     assert abs(printed - n * 365.0 / (3000 / 24.0)) <= 1, (printed, n)
+
+
+# ---------------------------------------------------------------------------
+# a rule you wrote
+# ---------------------------------------------------------------------------
+
+_RULE_PREAMBLE = """import sys
+sys.path.insert(0, %r)
+from models.patterns import Detection
+""" % os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _rule(body, name=None):
+    path = os.path.join(_TMP, name or f"rule{len(os.listdir(_TMP))}.py")
+    io.open(path, "w", encoding="utf-8").write(_RULE_PREAMBLE + body)
+    return path
+
+
+_UP2 = """
+PARAMETER_COUNT = 2
+
+def detect(bars):
+    out = []
+    for i in range(20, len(bars)):
+        if bars[i].c > bars[i - 1].c and bars[i - 1].c > bars[i - 2].c:
+            e = bars[i].c
+            out.append(Detection("up2", i, 1, e, e - 0.0030, e + 0.0060))
+    return out
+"""
+
+_PEEKS = """
+PARAMETER_COUNT = 1
+
+def detect(bars):
+    out = []
+    for i in range(1, len(bars) - 1):
+        if bars[i + 1].c > bars[i].c:
+            e = bars[i].c
+            out.append(Detection("cheat", i, 1, e, e - 0.0030, e + 0.0060))
+    return out
+"""
+
+
+def test_a_rule_you_wrote_runs_instead_of_the_built_ins():
+    code, text = _run(_csv(1200, drift=0.0), costs_measured=True,
+                      rule_paths=[_rule(_UP2, "up2.py")])
+    assert code == 0, text
+    assert "up2" in text, text
+    assert "engulfing" not in text, "the built-ins ran as well, unasked"
+    assert "no look-ahead found" in text
+
+
+def test_the_correction_sums_what_each_rule_declares():
+    """Not patterns x 4. A rule declaring 2 contributes 2, and the denominator
+    has to follow, or the significance test is measuring the wrong search."""
+    _, one = _run(_csv(1200, drift=0.0), costs_measured=True,
+                  rule_paths=[_rule(_UP2)])
+    assert "2 hypotheses across 1 rule(s)" in one, one
+    _, both = _run(_csv(1200, drift=0.0), costs_measured=True,
+                   rule_paths=[_rule(_UP2)], patterns=["flag"])
+    assert f"{2 + PARAMETER_COUNT} hypotheses across 2 rule(s)" in both, both
+
+
+def test_a_peeking_rule_stops_the_run_before_any_number_is_printed():
+    path = _rule(_PEEKS, "cheat.py")
+    assert main([_csv(1200), "--pair", "EURUSD", "--side", "bid",
+                 "--costs-measured", "--rule", path]) == 1
+
+
+def test_a_rule_can_be_taken_through_the_holdout_too():
+    """A hold-out that can only validate the six patterns this engine shipped
+    validates the wrong thing."""
+    code, text = _run(_csv(3000, drift=0.0006), costs_measured=True,
+                      rule_paths=[_rule(_UP2, "up2_ho.py")], holdout=0.7)
+    assert code == 0, text
+    assert "HOLD-OUT" in text, text
+    # the name comes from the FILE, so it has to be pinned or this asserts
+    # nothing about which rule was actually split
+    assert "up2_ho" in text, text
+    assert "engulfing" not in text
+    assert "out-of-sample" in text, "the rule never reached the second half"
+
+
+def test_a_rule_that_passes_is_not_labelled_never_tested_in_fx():
+    code, text = _run(_csv(3000, drift=0.0006), costs_measured=True,
+                      rule_paths=[_rule(_UP2)])
+    assert code == 0, text
+    if "TRADEABLE" in text:
+        assert "no published evidence" in text, text
+        assert "never tested in FX" not in text, text
 
 
 # ---------------------------------------------------------------------------

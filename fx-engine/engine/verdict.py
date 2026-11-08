@@ -274,7 +274,7 @@ def _gross_view(res: BacktestResult) -> Expectancy:
 
 def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
           n_hypotheses: int = None, costs_confirmed: bool = False,
-          alpha: float = ALPHA) -> Verdict:
+          alpha: float = ALPHA, evidence: tuple = None) -> Verdict:
     """Decide whether a measured result is worth trading, and name every no.
 
     ``n_hypotheses`` is the multiple-testing denominator. Left unset it is
@@ -293,7 +293,11 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
         n_hypotheses = max(len(names), 1) * PARAMETER_COUNT
 
     label = name or (sorted(names)[0] if len(names) == 1 else "mixed")
-    ev, ev_detail = EVIDENCE.get(label, (NEVER_TESTED, "no entry for this pattern"))
+    # `evidence` is for a rule this engine has never heard of, where NEVER_TESTED
+    # would be the wrong thing to say: that means the literature did not test a
+    # KNOWN pattern, not that there is no literature to have tested anything.
+    ev, ev_detail = evidence or EVIDENCE.get(
+        label, (NEVER_TESTED, "no entry for this pattern"))
 
     net = res.expectancy()
     gross = _gross_view(res)
