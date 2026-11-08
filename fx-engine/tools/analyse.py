@@ -55,7 +55,7 @@ from models.patterns import DETECTORS, PARAMETER_COUNT
 
 def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             costs_measured: bool = False, time_format: str = None,
-            patterns=None, holdout: float = None,
+            patterns=None, holdout: float = None, spread_quantile: float = 0.5,
             report_path: str = None, rule_paths=None, out=print) -> int:
     """Load, check, scan, backtest, judge. Returns a process exit code.
 
@@ -87,6 +87,16 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
     out(f"costs:     {costs.round_turn_pips} pip round turn, "
         f"{costs.swap_markup_annual:.2%}/yr markup"
         f"{'' if costs_measured else '  (NOT confirmed — see --costs-measured)'}")
+    # A file carrying a spread column can contradict the figure above. It can
+    # never confirm it: commission and slippage are not in the file either.
+    rec = None
+    if series.spreads:
+        rec = series.spread_pips(spread_quantile)
+        out(f"recorded:  {rec:.2f} pip spread at the "
+            f"{spread_quantile:.0%} percentile of your own bars "
+            f"(median {series.spread_pips(0.5):.2f}, "
+            f"99th {series.spread_pips(0.99):.2f}) — spread ALONE, "
+            f"before commission")
     out("")
 
     # name -> (detect_fn, declared parameter count, evidence override).
@@ -106,6 +116,7 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
 
     if holdout is not None:
         out(holdout_evaluate(series.bars, costs, frac=holdout,
+                             recorded_spread_pips=rec,
                              bars_per_night=bpn,
                              costs_confirmed=costs_measured,
                              detectors=chosen).report())
@@ -125,7 +136,8 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
     for name, (fn, _pc, ev) in chosen.items():
         res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
-                  costs_confirmed=costs_measured, evidence=ev)
+                  costs_confirmed=costs_measured, evidence=ev,
+                  recorded_spread_pips=rec)
         results[name] = res
         head = "TRADEABLE" if v.tradeable else (v.codes[0] if v.codes else "-")
         out(f"{name:<20} {v.n_trades:>6,} {v.gross.win_rate:>6.1%} "
@@ -204,6 +216,12 @@ def main(argv=None) -> int:
                    help="broker markup over tom-next, per year, as a fraction")
     p.add_argument("--carry", type=float, default=0.0,
                    help="net yield differential you expect to earn (+) or pay (-)")
+    p.add_argument("--spread-quantile", type=float, default=0.5,
+                   metavar="Q",
+                   help="which percentile of a recorded spread column to hold "
+                        "the cost model against (default 0.5, the median). A "
+                        "strategy that trades the open or the news minute pays "
+                        "the upper tail, not the median — try 0.95.")
     p.add_argument("--costs-measured", action="store_true",
                    help="confirm you MEASURED the two above rather than "
                         "accepting the defaults")
@@ -234,6 +252,7 @@ def main(argv=None) -> int:
                        costs_measured=a.costs_measured,
                        time_format=a.time_format, patterns=a.pattern,
                        holdout=a.holdout, report_path=a.report,
+                       spread_quantile=a.spread_quantile,
                        rule_paths=a.rule)
     except (OSError, ValueError) as e:
         print(f"could not analyse {a.path}: {e}", file=sys.stderr)

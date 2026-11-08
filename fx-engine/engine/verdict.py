@@ -17,9 +17,10 @@ before the trade rather than explained after it.
 SO EVERY REFUSAL HERE HAS A NAME. "This does not look good" is useless; you
 cannot argue with it, fix it, or check whether it was right. A refusal in this
 module is a code you can look up, with the number that triggered it and the
-number it would have needed. There are nine:
+number it would have needed. There are ten:
 
     NOTHING_MEASURED         a planned payoff is not an edge
+    RESTS_ON_ONE_PERIOD      drop its best stretch and the edge is gone
     COST_NOT_MEASURED        you accepted my default costs instead of yours
     COSTS_DISAGREE           the backtest was run on cheaper costs than these
     COSTS_BELOW_RECORDED     your own data recorded a wider spread than this
@@ -28,6 +29,22 @@ number it would have needed. There are nine:
     NEGATIVE_NET_EXPECTANCY  measured, and it loses
     NOT_SIGNIFICANT          positive, but inside the noise once corrected
     GOVERNED_BY_ASSUMPTION   the ambiguous-bar rule decided it, not the data
+
+RESTS_ON_ONE_PERIOD is the one that a significance test cannot reach. The
+t-stat treats trades as independent draws from one distribution, so a sample
+whose edge lives entirely in a single stretch of the file passes it on the
+strength of that stretch: 33 trades with 95% of the profit in the final month
+of three scored t=4.02 against 2.87 required. Nothing else in this module looks
+at WHEN a trade happened.
+
+The test is deliberately threshold-free, because any cutoff on "how
+concentrated is too concentrated" would be invented. The file is cut into equal
+stretches, the one contributing the most profit is removed, and the SIGN of
+what remains is what decides. An edge that needs its best stretch to stay
+positive is a description of that stretch. Note what this does NOT do: it does
+not ask whether the remainder is significant, because dropping a quarter of any
+sample costs it a quarter of its power, and a rule that fires on every sample
+near the trade floor would say nothing about concentration at all.
 
 COSTS_BELOW_RECORDED is the only refusal here that argues from the DATA rather
 than from arithmetic. Most price files cannot contradict a cost assumption --
@@ -102,6 +119,12 @@ NOT_SIGNIFICANT = "NOT_SIGNIFICANT"
 GOVERNED_BY_ASSUMPTION = "GOVERNED_BY_ASSUMPTION"
 COSTS_DISAGREE = "COSTS_DISAGREE"
 COSTS_BELOW_RECORDED = "COSTS_BELOW_RECORDED"
+RESTS_ON_ONE_PERIOD = "RESTS_ON_ONE_PERIOD"
+
+#: Equal stretches of the file the trades are split across for that test. Four
+#: is a choice, not a derivation: enough slices that one regime does not span
+#: them all, few enough that each is long enough to hold a run of trades.
+SEGMENTS = 4
 
 #: One-sided significance level before the multiple-testing correction.
 ALPHA = 0.05
@@ -212,6 +235,10 @@ class Verdict:
     evidence_detail: str = ""
     suggested_risk_fraction: float = 0.0
     notes: list = field(default_factory=list)
+    #: Per-stretch (n, win_rate, net_pips_per_trade, total_net_pips), in time
+    #: order. Printed on every verdict: a concentration this does not refuse is
+    #: still something you should be able to see.
+    segments: list = field(default_factory=list)
 
     @property
     def codes(self) -> list:
@@ -244,6 +271,11 @@ class Verdict:
         lines.append(
             f"  t-stat {self.t_stat:>8.2f} vs {self.t_required:.2f} required "
             f"across {self.n_hypotheses} hypotheses")
+        if self.segments:
+            shown = "  ".join(
+                f"{n}@{net:+.1f}" if n else "--" for n, _w, net, _t in self.segments)
+            lines.append(f"  by period        {shown}   "
+                         f"(trades@net pips each, earliest first)")
         lines.append(f"  evidence: {self.evidence} — {self.evidence_detail}")
         for r in self.refusals:
             lines.append(f"  REFUSED {r}")
@@ -255,6 +287,36 @@ class Verdict:
                 f"trade — and a stop does not bound the loss, so that is a plan, "
                 f"not a floor")
         return "\n".join(lines)
+
+
+def segment_trades(res: BacktestResult, k: int = SEGMENTS) -> list:
+    """Split the trades into `k` equal stretches of the file, in time order.
+
+    Equal stretches of the INDEX SPAN, not equal numbers of trades. The
+    question is whether the edge is confined to a period, and a split by trade
+    count would hide exactly that by construction -- it would give every
+    stretch the same number of trades however they were bunched.
+    """
+    if k < 2:
+        raise ValueError(f"need at least 2 segments to compare, got {k}")
+    if not res.trades:
+        return []
+    lo = min(t.entry_index for t in res.trades)
+    hi = max(t.entry_index for t in res.trades)
+    width = (hi - lo + 1) / k
+    buckets = [[] for _ in range(k)]
+    for t in res.trades:
+        j = min(int((t.entry_index - lo) / width), k - 1)
+        buckets[j].append(t)
+    out = []
+    for b in buckets:
+        if not b:
+            out.append((0, 0.0, 0.0, 0.0))
+            continue
+        total = sum(t.net_pips for t in b)
+        wins = sum(1 for t in b if t.net_pips > 0)
+        out.append((len(b), wins / len(b), total / len(b), total))
+    return out
 
 
 def _gross_view(res: BacktestResult) -> Expectancy:
@@ -356,6 +418,37 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
             f"pips on these bars — and the spread is only part of a round turn, "
             f"before any commission or slippage. A cost this low was not "
             f"available on the bars the edge was measured on"))
+
+    segments = segment_trades(res)
+    v.segments = segments
+    total = sum(t.net_pips for t in res.trades)
+    # Only asked of a result that CLEARED significance. That is the whole point
+    # of the rule -- it catches what the t-stat misses -- and asking it of a
+    # thin edge would make it fire on insignificance instead: when the total is
+    # small against the per-trade spread, dropping any stretch flips the sign,
+    # and the "best" one is not special. NOT_SIGNIFICANT says that, better.
+    if total > 0 and len(segments) >= 2 and t_stat >= t_req:
+        best = max(range(len(segments)), key=lambda j: segments[j][3])
+        rest_n = res.n - segments[best][0]
+        rest = total - segments[best][3]
+        share = segments[best][3] / total
+        if rest <= 0 and rest_n > 0:
+            v.refusals.append(Refusal(
+                RESTS_ON_ONE_PERIOD,
+                f"one of {len(segments)} equal stretches of the file holds "
+                f"{share:.0%} of the net profit, and without it the remaining "
+                f"{rest_n} trade(s) come to {rest:+.1f} pips. The edge is a "
+                f"description of that stretch, not of the pair — and the t-stat "
+                f"cannot see this, because it treats every trade as the same "
+                f"draw whenever it happened"))
+        elif share > 0.5:
+            v.notes.append(
+                f"{share:.0%} of the net profit came from one of "
+                f"{len(segments)} equal stretches of the file "
+                f"({segments[best][0]} of {res.n} trades). The rest still "
+                f"clears {rest / rest_n:+.2f} pips/trade, so this is not "
+                f"refused — but the sample is not the independent draws the "
+                f"t-stat assumes it is")
 
     cheapest = min(t.cost_pips for t in res.trades)
     if cheapest < costs.round_turn_pips - 1e-9:

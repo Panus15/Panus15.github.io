@@ -16,6 +16,19 @@ MUTANTS = [
  ("either field counts as mine", '            and costs.swap_markup_annual == f["swap_markup_annual"].default)', '            or costs.swap_markup_annual == f["swap_markup_annual"].default)'),
  # COSTS_BELOW_RECORDED. The second is the dangerous direction: a measurement
  # that cannot confirm anything, wired up so that it does.
+ # RESTS_ON_ONE_PERIOD. The gate on significance is load-bearing in BOTH
+ # directions: removing it makes the rule fire on thin edges, and inverting it
+ # makes it fire only where the t-stat already refused.
+ ("concentration not checked",   "    if total > 0 and len(segments) >= 2 and t_stat >= t_req:", "    if False:"),
+ ("significance gate removed",   "    if total > 0 and len(segments) >= 2 and t_stat >= t_req:", "    if total > 0 and len(segments) >= 2:"),
+ ("gate inverted",               "    if total > 0 and len(segments) >= 2 and t_stat >= t_req:", "    if total > 0 and len(segments) >= 2 and t_stat < t_req:"),
+ ("worst stretch dropped",       "        best = max(range(len(segments)), key=lambda j: segments[j][3])", "        best = min(range(len(segments)), key=lambda j: segments[j][3])"),
+ ("refusal downgraded to a note","        if rest <= 0 and rest_n > 0:", "        if False:"),
+ ("concentration note dropped",  "        elif share > 0.5:", "        elif False:"),
+ ("segments cut by trade count", "    for t in res.trades:\n        j = min(int((t.entry_index - lo) / width), k - 1)", "    for n_, t in enumerate(res.trades):\n        j = min(int(n_ / (len(res.trades) / k)), k - 1)"),
+ ("last segment overruns",       "        j = min(int((t.entry_index - lo) / width), k - 1)", "        j = int((t.entry_index - lo) / width)"),
+ ("one segment allowed",         "    if k < 2:", "    if False:"),
+ ("breakdown not surfaced",      "        if self.segments:", "        if False:"),
  ("recorded spread ignored",     "    if recorded_spread_pips is not None \\\n            and costs.round_turn_pips < recorded_spread_pips - 1e-9:", "    if False:"),
  ("spread comparison inverted",  "            and costs.round_turn_pips < recorded_spread_pips - 1e-9:", "            and costs.round_turn_pips > recorded_spread_pips - 1e-9:"),
  ("cheaper backtest accepted",   "    if cheapest < costs.round_turn_pips - 1e-9:", "    if False:"),

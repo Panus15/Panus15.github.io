@@ -196,7 +196,8 @@ def split(bars: list, frac: float = SPLIT_DEFAULT) -> tuple:
 
 def evaluate(bars: list, costs: CostModel, *, frac: float = SPLIT_DEFAULT,
              bars_per_night: float = 1.0, costs_confirmed: bool = False,
-             patterns=None, detectors: dict = None) -> Holdout:
+             patterns=None, detectors: dict = None,
+             recorded_spread_pips: float = None) -> Holdout:
     """Find on the earlier half, test the survivors on the later half.
 
     Only patterns that PASS in-sample are tested out-of-sample. Testing all of
@@ -219,6 +220,7 @@ def evaluate(bars: list, costs: CostModel, *, frac: float = SPLIT_DEFAULT,
     for name, (fn, _pc, ev) in chosen.items():
         res = run(train, fn(train), costs, bars_per_night=bars_per_night)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
+                  recorded_spread_pips=recorded_spread_pips,
                   costs_confirmed=costs_confirmed, evidence=ev)
         results.append(HoldoutResult(name=name, in_sample=v))
 
@@ -233,6 +235,7 @@ def evaluate(bars: list, costs: CostModel, *, frac: float = SPLIT_DEFAULT,
         fn, _pc, ev = chosen[r.name]
         res = run(test, fn(test), costs, bars_per_night=bars_per_night)
         r.out_of_sample = judge(res, costs, name=r.name,
+                                recorded_spread_pips=recorded_spread_pips,
                                 n_hypotheses=len(survivors),
                                 costs_confirmed=costs_confirmed, evidence=ev)
         r.confirmed = r.out_of_sample.tradeable

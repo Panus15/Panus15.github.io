@@ -29,7 +29,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.backtest import BacktestResult, Trade
 from engine.costs import CostModel
 from engine.verdict import (COST_NOT_MEASURED, COSTS_BELOW_RECORDED,
-                            COSTS_DISAGREE,
+                            COSTS_DISAGREE, RESTS_ON_ONE_PERIOD,
+                            segment_trades,
                             GOVERNED_BY_ASSUMPTION, NEGATIVE_NET_EXPECTANCY,
                             NOT_SIGNIFICANT, NOTHING_MEASURED,
                             NO_WIN_RATE_SAVES_IT, TOO_FEW_TRADES,
@@ -52,12 +53,33 @@ def _trade(gross_pips, cost=1.5, name="double_top", i=0):
 
 def _result(wins, win_pips, losses, loss_pips, *, cost=1.5, name="double_top",
             ambiguous=0):
-    """`win_pips` and `loss_pips` are GROSS magnitudes, before cost."""
+    """`win_pips` and `loss_pips` are GROSS magnitudes, before cost.
+
+    Wins and losses are INTERLEAVED, not appended in blocks. Entry index is
+    what `segment_trades` cuts on, so a fixture holding every win before every
+    loss has all of its profit in its first stretch and all of its losses in
+    its last -- it would trip RESTS_ON_ONE_PERIOD on the shape of the fixture
+    rather than on anything the rule under test does. No real series looks like
+    that, and a fixture that does cannot isolate a guard.
+
+    Nothing else sees the difference: the counts, the win rate, the expectancy
+    and the t-stat all depend on the multiset of results, not their order.
+    """
     res = BacktestResult()
-    for k in range(wins):
-        res.trades.append(_trade(win_pips, cost, name, k))
-    for k in range(losses):
-        res.trades.append(_trade(-loss_pips, cost, name, wins + k))
+    seq, w, l = [], 0, 0
+    while w < wins or l < losses:
+        if l >= losses or (w < wins
+                           and (w + 0.5) / max(wins, 1)
+                           <= (l + 0.5) / max(losses, 1)):
+            seq.append(True)
+            w += 1
+        else:
+            seq.append(False)
+            l += 1
+    assert sum(seq) == wins and len(seq) - sum(seq) == losses, seq
+    for k, is_win in enumerate(seq):
+        res.trades.append(
+            _trade(win_pips if is_win else -loss_pips, cost, name, k))
     res.ambiguous_bars = ambiguous
     return res
 
@@ -529,6 +551,94 @@ def test_an_unmeasured_spread_leaves_the_rule_dormant():
     assert COSTS_BELOW_RECORDED not in v.codes, v.codes
     assert v.tradeable, (
         f"the baseline stopped being tradeable for another reason: {v.codes}")
+
+
+# ---------------------------------------------------------------------------
+# RESTS_ON_ONE_PERIOD: the concentration a t-stat cannot see.
+#
+# The fixture is taken from the case that motivated the rule -- a real USDJPY
+# M1 file where double_top scored t=4.02 against 2.87 required, with 25 of its
+# 33 trades and 95% of its profit inside the last month of three.
+#
+# The rule must fire there and stay silent on a thin edge, where dropping any
+# stretch flips the sign for a reason that has nothing to do with time.
+# ---------------------------------------------------------------------------
+
+def _concentrated(cost=1.5):
+    """60 trades. The first three quarters wash out slightly negative; the
+    last one carries the whole result.
+
+    `cost` matches MINE or exceeds it, so COSTS_DISAGREE cannot fire and the
+    concentration is the only thing left to catch it.
+    """
+    res = BacktestResult()
+    for k in range(45):                       # mixed, nets slightly negative
+        res.trades.append(_trade(10.0 if k % 2 == 0 else -10.0, cost,
+                                 "double_top", k))
+    for k in range(15):                       # the stretch that is the edge
+        res.trades.append(_trade(40.0, cost, "double_top", 45 + k))
+    return res
+
+
+def test_an_edge_confined_to_one_stretch_is_refused_however_significant():
+    res = _concentrated()
+    v = judge(res, MINE, n_hypotheses=4, costs_confirmed=True)
+    assert v.t_stat >= v.t_required, (
+        f"the fixture must CLEAR significance for the rule to be the thing "
+        f"catching it: t={v.t_stat:.2f} vs {v.t_required:.2f}")
+    assert RESTS_ON_ONE_PERIOD in v.codes, v.codes
+    assert not v.tradeable
+    detail = next(r.detail for r in v.refusals if r.code == RESTS_ON_ONE_PERIOD)
+    assert "%" in detail and "stretch" in detail, detail
+
+
+def test_an_evenly_spread_edge_is_not_refused_for_concentration():
+    # Guard isolation. The baseline's profit is spread across all four
+    # stretches, and it must stay tradeable.
+    v = judge(_baseline(), MINE, n_hypotheses=4, costs_confirmed=True)
+    assert RESTS_ON_ONE_PERIOD not in v.codes, v.codes
+    assert v.tradeable, v.codes
+
+
+def test_a_thin_edge_is_called_insignificant_not_concentrated():
+    # +0.2 pips a trade against a ~50 pip spread: dropping any stretch flips
+    # the sign, but that is insignificance, and NOT_SIGNIFICANT says it with a
+    # sample size attached. Firing both would be a pile-on that blames the
+    # calendar for a variance problem.
+    v = judge(_result(30, 51.5, 30, 48.1), MINE, costs_confirmed=True)
+    assert NOT_SIGNIFICANT in v.codes, v.codes
+    assert RESTS_ON_ONE_PERIOD not in v.codes, (
+        f"a thin edge was blamed on one period: {v.codes}")
+
+
+def test_the_segments_are_equal_stretches_of_the_file_not_equal_trade_counts():
+    # A split by trade count would give every stretch the same number of
+    # trades however they were bunched, which is precisely the thing being
+    # looked for. 40 trades in the first tenth of the span and 4 in the rest.
+    res = BacktestResult()
+    for k in range(40):
+        res.trades.append(_trade(5.0, 1.0, "double_top", k))
+    for k in range(4):
+        res.trades.append(_trade(5.0, 1.0, "double_top", 100 + k * 100))
+    segs = segment_trades(res, 4)
+    assert [n for n, _w, _net, _t in segs] == [41, 1, 1, 1], (
+        f"segments were cut by trade count, not by span: {segs}")
+
+
+def test_the_period_breakdown_is_printed_even_when_nothing_is_refused():
+    text = judge(_baseline(), MINE, n_hypotheses=4,
+                 costs_confirmed=True).summary()
+    assert "by period" in text, text
+    assert "earliest first" in text, "the reader cannot tell which end is which"
+
+
+def test_segmenting_needs_at_least_two_stretches():
+    try:
+        segment_trades(_baseline(), 1)
+    except ValueError as e:
+        assert "at least 2" in str(e), e
+    else:
+        assert False, "one segment cannot be compared against anything"
 
 
 def _run_all():
