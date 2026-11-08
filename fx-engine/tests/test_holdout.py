@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine.costs import CostModel
 from engine.holdout import (MIN_HOLDOUT_BARS, SPLIT_DEFAULT, Holdout,
                             HoldoutResult, evaluate, split)
-from models.patterns import Bar
+from models.patterns import DETECTORS, Bar
 
 COSTS = CostModel(pair="EURUSD", round_turn_pips=1.1, swap_markup_annual=0.008)
 HOURLY = 24
@@ -165,6 +165,35 @@ def test_the_correction_is_over_the_survivors_not_the_whole_search():
 # ---------------------------------------------------------------------------
 # when it cannot answer
 # ---------------------------------------------------------------------------
+
+def test_the_correction_sums_what_each_detector_declares():
+    """Every built-in declares 4 parameters, so summing them and multiplying
+    the count by 4 give the same answer — which left "revert to patterns times
+    four" invisible. A detector map declaring 7 separates them."""
+    bars = _series(30000, 7, drift=0.00006)
+    h = evaluate(bars, COSTS, bars_per_night=HOURLY, costs_confirmed=True,
+                 detectors={"flag": (DETECTORS["flag"], 7, None)})
+    assert h.results, "the fixture produced no result to inspect"
+    assert all(r.in_sample.n_hypotheses == 7 for r in h.results), (
+        [r.in_sample.n_hypotheses for r in h.results])
+
+
+def test_the_out_of_sample_verdict_carries_the_evidence_it_was_given():
+    """The in-sample judge got the override and the out-of-sample one did not,
+    so a rule you wrote was labelled correctly on the half it was found in and
+    mislabelled on the half that actually tests it."""
+    mine = ("your own rule — no published evidence", "loaded in a test")
+    bars = _series(30000, 7, drift=0.00006)
+    h = evaluate(bars, COSTS, bars_per_night=HOURLY, costs_confirmed=True,
+                 detectors={"flag": (DETECTORS["flag"], 4, mine)})
+    assert h.survivors, "nothing passed in-sample, so nothing was re-judged"
+    assert h.survivors[0].in_sample.evidence == mine[0]
+    tested = [r for r in h.results if r.out_of_sample is not None]
+    assert tested, "nothing reached the hold-out"
+    assert tested[0].out_of_sample.evidence == mine[0], (
+        tested[0].out_of_sample.evidence)
+    assert tested[0].out_of_sample.evidence_detail == mine[1]
+
 
 def test_too_small_a_holdout_is_reported_rather_than_confirmed():
     """A confirmation from 200 bars would be worth less than no answer, and it

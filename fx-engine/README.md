@@ -9,6 +9,7 @@ Most ideas do not survive. That is the product.
 
 ```bash
 python3 demo.py                       # the whole loop, on data with nothing in it
+python3 tools/calibrate.py            # how often this engine is wrong, measured
 python3 tools/analyse.py YOUR.csv --pair EURUSD --side bid \
     --round-turn 1.3 --swap-markup 0.012 --costs-measured
 ```
@@ -104,7 +105,10 @@ Three arguments answered in code rather than in prose:
 | `engine/data.py` | loads your CSV and looks for seven kinds of silent corruption |
 | `engine/holdout.py` | the out-of-sample test — the only one that settles anything |
 | `engine/levers.py` | what you can actually change, and whether it is enough |
+| `engine/rules.py` | a rule YOU wrote, checked for look-ahead before it runs |
 | `tools/analyse.py` | all of the above, on your file |
+| `tools/report.py` | an HTML report, built so looking at it cannot mislead you |
+| `tools/calibrate.py` | this engine's own error rate, beside the research |
 
 **The five ways a backtest lies**, since `backtest.py` is organised around them:
 the ambiguous bar (one bar holding both stop and target — OHLC cannot order them,
@@ -160,10 +164,10 @@ test, not a prediction.
 for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-223 tests. Every module is also mutation-tested:
+265 tests. Every module is also mutation-tested:
 
 ```bash
-python3 mutation/run.py          # 242 deliberate defects, all 242 caught
+python3 mutation/run.py          # 299 deliberate defects, all 299 caught
 ```
 
 That used to be an unverifiable claim — the sweeps lived outside the repository

@@ -229,6 +229,23 @@ def test_a_contested_pattern_with_enough_trades_passes_but_is_flagged():
     assert any("contradicts it" in n for n in v.notes), v.notes
 
 
+def test_an_evidence_override_replaces_the_table_lookup():
+    """A rule you wrote has no entry in EVIDENCE, and NEVER_TESTED would be the
+    wrong thing to say about it: that means the literature did not test a KNOWN
+    pattern. Nothing here passed `evidence=` before, so "ignore the override
+    and use the table anyway" was invisible."""
+    mine = ("your own rule — no published evidence", "nothing is known yet")
+    v = judge(_baseline(), MINE, name="head_and_shoulders",
+              costs_confirmed=True, evidence=mine)
+    assert v.evidence == mine[0], v.evidence
+    assert v.evidence_detail == mine[1]
+    assert "tested in FX and failed" not in v.evidence
+    # and with no override the published label still wins
+    table = judge(_baseline(), MINE, name="head_and_shoulders",
+                  costs_confirmed=True)
+    assert "tested in FX and failed" in table.evidence, table.evidence
+
+
 def test_the_evidence_label_travels_with_the_verdict():
     v = judge(_result(36, 20.0, 24, 10.0, name="engulfing"), MINE,
               costs_confirmed=True)
