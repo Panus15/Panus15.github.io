@@ -33,6 +33,9 @@ MUTANTS = [
  ("first row decides alone",     "    if len(live) == 1:\n        return live[0]\n    # several layouts fit the first row: let the rest of the file choose", "    return live[0]\n    # several layouts fit the first row: let the rest of the file choose"),
  ("later rows cannot rule out",  "        if len(survivors) < len(live):\n            live = survivors", "        if False:\n            live = survivors"),
  ("bad rows dropped silently",   "        except (IndexError, ValueError) as e:\n            raise ValueError(f\"row {i + 1} could not be read: {r} ({e})\") from e", "        except (IndexError, ValueError):\n            continue"),
+ ("comments read as rows",       "    kept = [r for r in rows if not r[0].lstrip().lstrip(\"\\ufeff\").startswith(\"#\")]", "    kept = list(rows)"),
+ ("comment count not reported",  "    _rows.skipped = len(rows) - len(kept)", "    _rows.skipped = 0"),
+ ("comment count not surfaced",  "        if self.comments_skipped:", "        if False:"),
  ("bar size invented",           "        if self.interval is None or self.interval.total_seconds() <= 0:", "        if False:"),
  ("nights per bar inverted",     "        return 86_400.0 / self.interval.total_seconds()", "        return self.interval.total_seconds() / 86_400.0"),
 ]

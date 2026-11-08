@@ -33,7 +33,14 @@ THE SEVEN THINGS IT LOOKS FOR, AND WHY EACH ONE MATTERS MORE THAN IT SOUNDS.
 6. NON-POSITIVE PRICES. Zeros from a failed parse. They make `bp_per_pip` raise,
    but only after they have already been scanned for patterns.
 
-7. WHICH SIDE THE PRICES ARE. Bid, ask, or mid — undetectable from the numbers
+7. COMMENT LINES. Exported files often carry a header comment — the vendor's
+   name, a licence, a warning about what the data is. A `#` line is not data,
+   but a loader that reads it as one dies on the first row with a message about
+   an unparseable timestamp, which is a confusing way to say "line 1 is prose".
+   They are skipped and COUNTED, because skipping input without saying how much
+   is the habit this module exists to break.
+
+8. WHICH SIDE THE PRICES ARE. Bid, ask, or mid — undetectable from the numbers
    and decisive for cost. `side` is a required argument with no default for that
    reason. A backtest on mid quietly hands you half the spread twice per trade.
 
@@ -121,6 +128,8 @@ class Series:
     times: list = field(default_factory=list)
     problems: list = field(default_factory=list)
     interval: object = None          # the modal spacing, or None if irregular
+    #: `#` lines skipped from the file. Reported rather than silently dropped.
+    comments_skipped: int = 0
     source: str = ""
 
     @property
@@ -174,6 +183,9 @@ class Series:
         lines = [head]
         if self.interval is not None:
             lines.append(f"  interval       {self.interval}")
+        if self.comments_skipped:
+            lines.append(f"  skipped        {self.comments_skipped} comment "
+                         f"line(s) beginning with #")
         if not self.problems:
             lines.append("  no defects found — which is not the same as none")
             return "\n".join(lines)
@@ -264,6 +276,11 @@ def _rows(text: str, columns=None, time_format=None):
         delim = ","
     reader = csv.reader(io.StringIO(text), delimiter=delim)
     rows = [r for r in reader if r and any(f.strip() for f in r)]
+    # A `#` line is a comment, not a row. Counted rather than quietly dropped:
+    # see the module docstring. The count is returned via `_rows.skipped`.
+    kept = [r for r in rows if not r[0].lstrip().lstrip("\ufeff").startswith("#")]
+    _rows.skipped = len(rows) - len(kept)
+    rows = kept
     if not rows:
         return
 
@@ -432,4 +449,5 @@ def load_csv(path: str, pair: str, *, side: str, columns=None,
     problems, interval = inspect(bars, times)
     return Series(pair=pair, side=side, bars=bars, times=times,
                   problems=problems, interval=interval,
+                  comments_skipped=getattr(_rows, "skipped", 0),
                   source=source or path.rsplit("/", 1)[-1])

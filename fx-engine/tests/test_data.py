@@ -307,6 +307,31 @@ def test_nothing_is_repaired_or_dropped():
     assert s.bars[42].h == 0.5 and s.bars[43].o == 0.0
 
 
+def test_comment_lines_are_skipped_and_counted():
+    """Exported files carry header comments — a vendor name, a licence, a
+    warning about what the data is. Read as a row, the first one dies with a
+    message about an unparseable timestamp, which is a confusing way to say
+    "line 1 is prose". Counted, because skipping input without saying how much
+    is the habit this module exists to break."""
+    path = _write(_rows(50))
+    with io.open(path, encoding="utf-8") as fh:
+        body = fh.read()
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.write("# SYNTHETIC — not market data\n# regenerate with make_example\n"
+                 + body)
+    s = load_csv(path, "EURUSD", side="bid")
+    assert s.n == 50, s.n
+    assert s.comments_skipped == 2, s.comments_skipped
+    assert "skipped        2 comment line(s)" in s.report(), s.report()
+    assert s.problems == [], [str(p) for p in s.problems]
+
+
+def test_a_file_with_no_comments_reports_none():
+    s = load_csv(_write(_rows(20)), "EURUSD", side="bid")
+    assert s.comments_skipped == 0
+    assert "comment line" not in s.report()
+
+
 def test_the_series_converts_its_own_bars_into_financing_nights():
     """backtest.py counts a hold in BARS and charges swap in NIGHTS. Without
     this conversion hourly data pays 24 times the financing it should, so the
