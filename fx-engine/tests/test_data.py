@@ -473,6 +473,45 @@ def test_the_point_size_is_taken_over_the_whole_file_not_one_row():
         f"change the point size")
 
 
+def test_a_whole_number_quote_does_not_make_the_point_ten_times_too_fine():
+    # `repr` writes 154.0 for a whole number, and counting that ".0" as a
+    # decimal place would halve nothing and shrink the point from 1 to 0.1 --
+    # so the same recorded spread would come out ten times smaller. The
+    # trailing zeros `repr` itself drops are not the case this guards; `float`
+    # has already handled those.
+    rows = [[MONDAY + timedelta(minutes=i), 154.0, 155.0, 153.0, 154.0]
+            for i in range(40)]
+    s = load_csv(_write_split(rows, spreads=[3], places=1), "USDJPY",
+                 side="mid")
+    # point size 1.0, so 3 points is 3.0 in price and 300 pips on a JPY pair.
+    got = s.spread_pips(0.5)
+    assert abs(got - 300.0) < 1e-6, (
+        f"{got} pips: the \".0\" that repr adds was counted as precision")
+
+
+def test_a_clock_column_without_colons_is_refused_not_discarded():
+    # The older code sniffed for a ":" in the next column to decide whether to
+    # join it. A file writing the clock as 0100 fails that sniff, so the time
+    # column was dropped and EVERY bar collapsed to midnight -- a series of
+    # duplicate timestamps built from a file that had perfectly good times in
+    # it. Naming the column in the header is enough to know it belongs to the
+    # stamp, so now it is always joined, and an unparseable join is refused
+    # rather than silently thrown away.
+    path = os.path.join(_TMP, "noc.csv")
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.write("Date,Time,Open,High,Low,Close\n")
+        for i in range(30):
+            fh.write(f"2024-01-01,{i:02d}00,1.1000,1.1010,1.0990,1.1005\n")
+    try:
+        s = load_csv(path, "EURUSD", side="bid")
+    except ValueError as e:
+        assert "0100" in str(e) or "timestamp" in str(e).lower(), e
+    else:
+        assert False, (
+            f"the time column was discarded: {s.n} bars from "
+            f"{s.times[0]} to {s.times[-1]}, all at the same minute")
+
+
 def test_the_spread_quantile_reports_the_tail_and_not_only_the_median():
     # The median is what a quiet hour costs. A file whose spread is 3 points
     # nine bars in ten and 40 in the tenth has a median of 0.3 pips and a cost

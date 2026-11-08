@@ -266,11 +266,16 @@ def _norm_head(raw: str) -> str:
 def _decimals(x: float) -> int:
     """How many decimal places a price is genuinely quoted to.
 
-    `repr` is the shortest string that round-trips, so a file writing
-    "154.3360" and one writing "154.336" agree here: the trailing zero is not a
-    fourth decimal of precision. The MAXIMUM over the file decides the point
-    size, because any one row may happen to end in a zero -- and getting this
-    wrong scales every recorded spread by a factor of ten.
+    `repr` is the shortest string that round-trips, which does most of the
+    work: a file writing "154.3360" and one writing "154.336" agree here
+    without any help, because `float` has already dropped the trailing zero.
+    What `rstrip` is for is the other direction -- `repr` ADDS a ".0" to a
+    whole number, and counting that as a decimal place would make the point ten
+    times too fine.
+
+    The MAXIMUM over the file decides the point size. One row may legitimately
+    end in a zero, and taking that row's figure would scale every recorded
+    spread by a factor of ten.
     """
     s = repr(float(x))
     if "e" in s or "E" in s:
