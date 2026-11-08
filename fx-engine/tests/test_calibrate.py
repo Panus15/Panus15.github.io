@@ -22,8 +22,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.calibrate import (BENCHMARKS, NOMINAL_ALPHA, TREND_DRIFT, Condition,
-                             main, report, run_condition, series)
+from engine.holdout import SPLIT_DEFAULT, evaluate
+from tools.calibrate import (BARS_PER_NIGHT, BENCHMARKS, COSTS, NOMINAL_ALPHA,
+                             TREND_DRIFT, Condition, main, report,
+                             run_condition, series)
 
 SMALL = dict(trials=3, bars_n=6000)
 
@@ -52,6 +54,35 @@ def test_nothing_confirms_on_noise_and_something_does_on_a_trend():
         f"{noise.confirmed} false positives confirmed on noise")
     assert trend.confirmed > 0, "nothing confirmed on a real trend: no power"
     assert trend.found_rate > 0.0
+
+
+def test_the_tally_matches_an_independent_count_of_the_same_run():
+    """The hand-built Condition fixtures elsewhere in this file never exercise
+    run_condition's counting, which left "count the refusals as confirms",
+    "never count an in-sample pass" and "invert the decay ratio" all invisible.
+    This re-runs the same seed through evaluate() directly and compares.
+    """
+    seed, n = 9000, 6000
+    c = run_condition("trend", True, trials=1, bars_n=n, drift=TREND_DRIFT,
+                      seed0=seed)
+    h = evaluate(series(n, seed, drift=TREND_DRIFT), COSTS, frac=SPLIT_DEFAULT,
+                 bars_per_night=BARS_PER_NIGHT, costs_confirmed=True)
+    passes = [r for r in h.results if r.in_sample.tradeable]
+    confirms = [r for r in passes if r.confirmed]
+    assert passes, "the fixture produced no in-sample pass to count"
+    assert c.rules == len(h.results), (c.rules, len(h.results))
+    assert c.in_sample_passes == len(passes), (c.in_sample_passes, len(passes))
+    assert c.confirmed == len(confirms), (c.confirmed, len(confirms))
+    assert confirms, "the fixture produced no confirmation to distinguish"
+    assert c.confirmed != len(passes) - len(confirms) or len(confirms) * 2 == len(passes), (
+        "confirmed is indistinguishable from the refusal count on this fixture")
+
+    # and the decay ratio is out-of-sample OVER in-sample, not the reverse
+    expected = sorted(r.out_of_sample.net.net / r.in_sample.net.net
+                      for r in passes
+                      if r.out_of_sample is not None and r.in_sample.net.net > 0)
+    assert sorted(c.decays) == expected, (sorted(c.decays), expected)
+    assert expected, "no decay ratios were produced"
 
 
 def test_the_per_series_rate_is_not_the_per_rule_rate():
@@ -98,7 +129,9 @@ def test_the_decay_comparison_points_at_the_noise_row_only():
     assert "The NOISE row is the one that belongs beside" in text, text
     assert "must NOT be compared to it" in text
     assert "no decay is" not in text or "is correct" in text
-    assert "0.09" in text, "the published figure was dropped"
+    # "0.09" alone also matches the median of [-0.08, -0.10] printed two lines
+    # above, so the assertion has to carry the published figure's own wording
+    assert "0.06/0.66 = 0.09" in text, "the published figure was dropped"
 
 
 def test_a_condition_with_no_passes_reports_no_decay_rather_than_zero():
@@ -116,7 +149,9 @@ def test_the_power_figure_is_labelled_an_upper_bound_with_its_move():
     trend = Condition(name="trend", truth=True, trials=3, rules=18,
                       in_sample_passes=3, confirmed=3, move=2.02)
     text = report(Condition(name="noise", truth=False, trials=3, rules=18), trend)
-    assert "UPPER BOUND" in text
+    # the table row already reads "power — UPPER BOUND, see below", so a bare
+    # substring check passes even with the explanatory paragraph gone
+    assert "THE POWER FIGURE IS AN UPPER BOUND" in text, text
     assert "x2.02" in text, "the price move was not stated"
     assert "EURUSD has" in text and "ever had" in text
     assert "cannot say" in text and "how much lower" in text
@@ -137,6 +172,7 @@ def test_every_benchmark_carries_a_source_and_a_bearing():
 def test_the_report_states_what_a_55_percent_claim_costs_to_establish():
     text = report(Condition(name="noise", truth=False, trials=1, rules=6),
                   Condition(name="trend", truth=True, trials=1, rules=6))
+    assert "AND THE COST OF FINDING OUT" in text, text
     assert "389 trades" in text, text
     assert "years" in text
 
