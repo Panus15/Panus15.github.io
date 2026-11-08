@@ -28,7 +28,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.backtest import BacktestResult, Trade
 from engine.costs import CostModel
-from engine.verdict import (COST_NOT_MEASURED, COSTS_DISAGREE,
+from engine.verdict import (COST_NOT_MEASURED, COSTS_BELOW_RECORDED,
+                            COSTS_DISAGREE,
                             GOVERNED_BY_ASSUMPTION, NEGATIVE_NET_EXPECTANCY,
                             NOT_SIGNIFICANT, NOTHING_MEASURED,
                             NO_WIN_RATE_SAVES_IT, TOO_FEW_TRADES,
@@ -481,6 +482,53 @@ def test_planned_verdicts_also_refuse_unconfirmed_default_costs():
     codes = judge_planned(d, CostModel()).codes
     assert codes == [NOTHING_MEASURED, COST_NOT_MEASURED], codes
     assert COST_NOT_MEASURED not in judge_planned(d, MINE).codes
+
+
+# ---------------------------------------------------------------------------
+# COSTS_BELOW_RECORDED: the one refusal that argues from the data.
+#
+# It runs in one direction only. A spread column can show a cost assumption to
+# be too cheap; it can never show one to be right, because commission and
+# slippage were never in the file. Both halves are tested -- the second matters
+# more, since a measurement mistaken for a confirmation is how an unverified
+# cost model would get waved through.
+# ---------------------------------------------------------------------------
+
+def test_a_round_turn_below_the_recorded_spread_is_refused():
+    # MINE declares 1.2 pips. The file recorded 2.0 on the very bars the edge
+    # was measured on, and a spread is only part of a round turn.
+    v = judge(_baseline(), MINE, n_hypotheses=4, costs_confirmed=True,
+              recorded_spread_pips=2.0)
+    assert COSTS_BELOW_RECORDED in v.codes, v.codes
+    assert not v.tradeable, "a cost the data refutes was still called tradeable"
+    text = " ".join(r.detail for r in v.refusals)
+    assert "2.00" in text and "1.20" in text, (
+        f"the refusal must quote both numbers, got: {text}")
+
+
+def test_a_round_turn_above_the_recorded_spread_is_not_refused():
+    # Guard isolation: the baseline must be rejectable ONLY by the rule under
+    # test, so a spread the cost model already covers has to leave it silent.
+    v = judge(_baseline(), MINE, n_hypotheses=4, costs_confirmed=True,
+              recorded_spread_pips=0.3)
+    assert COSTS_BELOW_RECORDED not in v.codes, (
+        f"a cost model wider than the recorded spread was refused: {v.codes}")
+
+
+def test_a_recorded_spread_is_not_a_confirmed_cost_model():
+    # Passing a measurement must not stand in for costs_confirmed. The spread
+    # is in the file; the commission, the slippage and the swap markup are not.
+    v = judge(_baseline(), CostModel(pair="EURUSD"), n_hypotheses=4,
+              recorded_spread_pips=0.3)
+    assert COST_NOT_MEASURED in v.codes, (
+        f"a spread column was taken as proof of the whole cost model: {v.codes}")
+
+
+def test_an_unmeasured_spread_leaves_the_rule_dormant():
+    v = judge(_baseline(), MINE, n_hypotheses=4, costs_confirmed=True)
+    assert COSTS_BELOW_RECORDED not in v.codes, v.codes
+    assert v.tradeable, (
+        f"the baseline stopped being tradeable for another reason: {v.codes}")
 
 
 def _run_all():

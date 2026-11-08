@@ -59,6 +59,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from engine.costs import pip_size
 from models.patterns import Bar
 
 # --- problem codes, named so they can be looked up and argued with ----------
@@ -92,12 +93,23 @@ _ALIASES = {
     "c": "c", "close": "c", "bidclose": "c", "askclose": "c", "last": "c",
     "t": "t", "time": "t", "date": "t", "datetime": "t", "timestamp": "t",
     "date_time": "t", "gmt time": "t", "local time": "t",
+    #: MetaTrader records the spread per bar, in points. When present it turns
+    #: the round turn from an assumption into a measurement -- see
+    #: `Series.spread_pips`.
+    "spread": "s", "spread_pips": "s", "sprd": "s",
 }
+
+#: Several names map to "t" because a stamp arrives either whole ("datetime") or
+#: split across a date column and a clock column ("date", "time"). The split
+#: layout is what HistData, Dukascopy and MetaTrader all export, so the second
+#: such column is kept as "t2" and joined, NOT allowed to overwrite the first.
+_SPLIT_STAMP = "t2"
 
 #: Timestamp layouts tried in order. Vendors disagree about almost all of this.
 _TIME_FORMATS = (
     "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
     "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d",
+    "%Y.%m.%d %H:%M:%S", "%Y.%m.%d %H:%M", "%Y.%m.%d",   # MetaTrader export
     "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M",
     "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
     "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
@@ -131,6 +143,10 @@ class Series:
     #: `#` lines skipped from the file. Reported rather than silently dropped.
     comments_skipped: int = 0
     source: str = ""
+    #: Per-bar spread in PRICE units, when the file recorded one; None if not.
+    #: A file that carries this can refute a cost assumption -- see
+    #: `spread_pips`.
+    spreads: list = None
 
     @property
     def n(self) -> int:
@@ -175,6 +191,33 @@ class Series:
                 "to nights — pass bars_per_night to run() yourself")
         return 86_400.0 / self.interval.total_seconds()
 
+    def spread_pips(self, quantile: float = 0.5) -> float:
+        """The spread this file recorded, in pips, at `quantile` of the bars.
+
+        This is the SPREAD ONLY. Commission and slippage are not in the file
+        and have to be added on top, so the figure is a FLOOR on the cost of a
+        round trip -- never the round turn itself. Its use is negative: a
+        declared round turn *below* this is a contradiction the data refutes,
+        whatever the broker's marketing says.
+
+        `quantile` is deliberately exposed. The median is what a quiet hour
+        costs; a strategy that trades the open or the news minute pays the
+        upper tail, and on this evidence the tail is an order of magnitude
+        wider than the median.
+        """
+        if not self.spreads:
+            raise ValueError(
+                f"{self.source or 'this file'} recorded no spread column, so "
+                f"the spread cannot be measured from it -- pass the round turn "
+                f"you are actually charged instead of implying one")
+        if not 0.0 <= quantile <= 1.0:
+            raise ValueError(f"quantile must be in [0, 1], got {quantile}")
+        vals = sorted(s for s in self.spreads if s is not None)
+        if not vals:
+            raise ValueError("the spread column held no readable values")
+        i = min(int(quantile * len(vals)), len(vals) - 1)
+        return vals[i] / pip_size(self.pair)
+
     def report(self) -> str:
         head = (f"{self.source or 'series'}: {self.n:,} bars of {self.pair} "
                 f"at the {self.side.upper()}")
@@ -207,6 +250,32 @@ def _clean_time(raw: str) -> str:
     if head and tail.isdigit() and len(tail) in (3, 6):
         s = head                          # drop sub-second precision
     return s
+
+
+def _norm_head(raw: str) -> str:
+    """A column name as the alias table spells it.
+
+    MetaTrader writes `<DATE>`, `<OPEN>`, `<SPREAD>`; without stripping the
+    brackets none of them match, the header row is read as data, and the whole
+    file lands on the headerless `time,O,H,L,C` fallback -- which for this
+    layout maps TIME to open and OPEN to high.
+    """
+    return raw.strip().lstrip("\ufeff").strip("<>").strip().lower()
+
+
+def _decimals(x: float) -> int:
+    """How many decimal places a price is genuinely quoted to.
+
+    `repr` is the shortest string that round-trips, so a file writing
+    "154.3360" and one writing "154.336" agree here: the trailing zero is not a
+    fourth decimal of precision. The MAXIMUM over the file decides the point
+    size, because any one row may happen to end in a zero -- and getting this
+    wrong scales every recorded spread by a factor of ten.
+    """
+    s = repr(float(x))
+    if "e" in s or "E" in s:
+        return 0
+    return len(s.partition(".")[2].rstrip("0"))
 
 
 def _resolve_format(samples: list, explicit: str = None) -> str:
@@ -285,18 +354,27 @@ def _rows(text: str, columns=None, time_format=None):
         return
 
     if columns is None:
-        head = [f.strip().lower().lstrip("﻿") for f in rows[0]]
-        mapped = {_ALIASES[h]: i for i, h in enumerate(head) if h in _ALIASES}
+        head = [_norm_head(f) for f in rows[0]]
+        mapped = {}
+        for i, h in enumerate(head):
+            key = _ALIASES.get(h)
+            if key is None:
+                continue
+            if key not in mapped:
+                mapped[key] = i
+            elif key == "t" and _SPLIT_STAMP not in mapped \
+                    and i == mapped["t"] + 1:
+                mapped[_SPLIT_STAMP] = i   # a date column then a clock column
         if {"o", "h", "l", "c"} <= set(mapped):
             columns, rows = mapped, rows[1:]
-            if "t" not in columns:      # date and time in two separate columns
-                pass
         else:
             # headerless: the near-universal vendor layout is time,O,H,L,C[,vol]
             columns = {"t": 0, "o": 1, "h": 2, "l": 3, "c": 4}
     def stamp(r):
         ts = r[columns["t"]]
-        # HistData and friends split the stamp across two columns
+        if _SPLIT_STAMP in columns:      # the header named a date AND a clock
+            return _clean_time(f"{ts} {r[columns[_SPLIT_STAMP]]}")
+        # headerless files split the stamp across two columns too
         if columns["t"] + 1 < len(r) and ":" in r[columns["t"] + 1] \
                 and columns.get("o") != columns["t"] + 1:
             ts = f"{ts} {r[columns['t'] + 1]}"
@@ -316,7 +394,16 @@ def _rows(text: str, columns=None, time_format=None):
             vals = [float(r[columns[k]]) for k in ("o", "h", "l", "c")]
         except (IndexError, ValueError) as e:
             raise ValueError(f"row {i + 1} could not be read: {r} ({e})") from e
-        yield (t, *vals)
+        # A recorded spread is in POINTS, which is not the pip. It is yielded
+        # raw because converting it needs the point size, and the point size
+        # cannot be known from a single row -- see `_decimals`.
+        spread = None
+        if "s" in columns:
+            try:
+                spread = float(r[columns["s"]])
+            except (IndexError, ValueError):
+                spread = None
+        yield (t, *vals, spread)
 
 
 def inspect(bars: list, times: list) -> tuple:
@@ -442,12 +529,19 @@ def load_csv(path: str, pair: str, *, side: str, columns=None,
             f"from the prices, and it decides what every cost figure means")
     with io.open(path, encoding="utf-8-sig", errors="replace") as fh:
         text = fh.read()
-    bars, times = [], []
-    for t, o, h, l, c in _rows(text, columns, time_format):
+    bars, times, points = [], [], []
+    for t, o, h, l, c, sp in _rows(text, columns, time_format):
         times.append(t)
         bars.append(Bar(o, h, l, c))
+        points.append(sp)
+    spreads = None
+    if any(s is not None for s in points):
+        # Points -> price. The point size is the smallest increment the file
+        # actually uses, taken over every close, not guessed from the pair.
+        point = 10.0 ** -max(_decimals(b.c) for b in bars)
+        spreads = [None if s is None else s * point for s in points]
     problems, interval = inspect(bars, times)
     return Series(pair=pair, side=side, bars=bars, times=times,
                   problems=problems, interval=interval,
                   comments_skipped=getattr(_rows, "skipped", 0),
-                  source=source or path.rsplit("/", 1)[-1])
+                  source=source or path.rsplit("/", 1)[-1], spreads=spreads)

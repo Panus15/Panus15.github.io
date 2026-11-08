@@ -17,16 +17,27 @@ before the trade rather than explained after it.
 SO EVERY REFUSAL HERE HAS A NAME. "This does not look good" is useless; you
 cannot argue with it, fix it, or check whether it was right. A refusal in this
 module is a code you can look up, with the number that triggered it and the
-number it would have needed. There are seven:
+number it would have needed. There are nine:
 
     NOTHING_MEASURED         a planned payoff is not an edge
     COST_NOT_MEASURED        you accepted my default costs instead of yours
     COSTS_DISAGREE           the backtest was run on cheaper costs than these
+    COSTS_BELOW_RECORDED     your own data recorded a wider spread than this
     TOO_FEW_TRADES           the sample cannot support the claim
     NO_WIN_RATE_SAVES_IT     cost >= the whole target; p* >= 100%
     NEGATIVE_NET_EXPECTANCY  measured, and it loses
     NOT_SIGNIFICANT          positive, but inside the noise once corrected
     GOVERNED_BY_ASSUMPTION   the ambiguous-bar rule decided it, not the data
+
+COSTS_BELOW_RECORDED is the only refusal here that argues from the DATA rather
+than from arithmetic. Most price files cannot contradict a cost assumption --
+they hold no cost -- so `costs_confirmed` has to be taken on trust. A
+MetaTrader export carries a per-bar spread column, and that turns the trust
+into a measurement: whatever the broker advertises, a round turn declared below
+the spread the file itself recorded on those very bars cannot have been
+available on them. Note the direction. This can only ever call a cost
+assumption too CHEAP; it can never confirm one, because commission and slippage
+are not in the file either.
 
 COSTS_DISAGREE is the quiet one. Costs are charged inside the backtest, so this
 function cannot re-charge them without double counting — which means a result
@@ -90,6 +101,7 @@ NEGATIVE_NET_EXPECTANCY = "NEGATIVE_NET_EXPECTANCY"
 NOT_SIGNIFICANT = "NOT_SIGNIFICANT"
 GOVERNED_BY_ASSUMPTION = "GOVERNED_BY_ASSUMPTION"
 COSTS_DISAGREE = "COSTS_DISAGREE"
+COSTS_BELOW_RECORDED = "COSTS_BELOW_RECORDED"
 
 #: One-sided significance level before the multiple-testing correction.
 ALPHA = 0.05
@@ -274,7 +286,8 @@ def _gross_view(res: BacktestResult) -> Expectancy:
 
 def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
           n_hypotheses: int = None, costs_confirmed: bool = False,
-          alpha: float = ALPHA, evidence: tuple = None) -> Verdict:
+          alpha: float = ALPHA, evidence: tuple = None,
+          recorded_spread_pips: float = None) -> Verdict:
     """Decide whether a measured result is worth trading, and name every no.
 
     ``n_hypotheses`` is the multiple-testing denominator. Left unset it is
@@ -287,6 +300,12 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
     broker's swap markup is not published, it is charged in both directions, and
     it decides more than any indicator here — so accepting the default is a
     refusal until you say you measured it.
+
+    ``recorded_spread_pips`` is the one part of that which a file CAN check,
+    when it carried a spread column: pass `Series.spread_pips(q)` and a round
+    turn declared below it is refused. It only ever catches a cost assumption
+    that is too cheap — commission and slippage are not in the file, so no
+    value here can confirm a cost model, only contradict one.
     """
     names = {t.name for t in res.trades} or ({name} if name else set())
     if n_hypotheses is None:
@@ -327,6 +346,16 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
             f"{costs.swap_markup_annual:.2%}/yr markup), so this is my guess at "
             f"your broker rather than your broker. {costs.measured_markup_hint}. "
             f"Pass costs_confirmed=True once you have"))
+
+    if recorded_spread_pips is not None \
+            and costs.round_turn_pips < recorded_spread_pips - 1e-9:
+        v.refusals.append(Refusal(
+            COSTS_BELOW_RECORDED,
+            f"the round turn is set to {costs.round_turn_pips:.2f} pips, but "
+            f"your own data recorded a spread of {recorded_spread_pips:.2f} "
+            f"pips on these bars — and the spread is only part of a round turn, "
+            f"before any commission or slippage. A cost this low was not "
+            f"available on the bars the edge was measured on"))
 
     cheapest = min(t.cost_pips for t in res.trades)
     if cheapest < costs.round_turn_pips - 1e-9:

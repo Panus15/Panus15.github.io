@@ -369,6 +369,150 @@ def test_the_report_states_the_pair_the_side_and_the_span():
     assert "not the same as none" in text, "a clean report overclaimed"
 
 
+# ---------------------------------------------------------------------------
+# Split stamps, MetaTrader exports, and the spread a file records about itself.
+#
+# These were all found by one real USDJPY M1 export rather than by inspection,
+# and the first two were SILENT: no exception, no problem code, just a series
+# built out of the wrong columns. That is the reason each test below asserts a
+# price, not merely that the load succeeded.
+# ---------------------------------------------------------------------------
+
+def _write_split(rows, head=("Date", "Time", "Open", "High", "Low", "Close"),
+                 datefmt="%Y-%m-%d", delim=",", spreads=None, places=5):
+    """A file whose stamp is in two columns, optionally with a spread column."""
+    path = os.path.join(_TMP, f"sp{len(os.listdir(_TMP))}.csv")
+    cols = list(head) + (["Spread"] if spreads is not None else [])
+    lines = [delim.join(cols)]
+    for i, r in enumerate(rows):
+        cells = [r[0].strftime(datefmt), r[0].strftime("%H:%M:%S")]
+        cells += [f"{v:.{places}f}" for v in r[1:]]
+        if spreads is not None:
+            cells.append(str(spreads[i % len(spreads)]))
+        lines.append(delim.join(cells))
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    return path
+
+
+def test_a_date_column_and_a_time_column_are_joined_not_overwritten():
+    # Both "date" and "time" alias to the stamp, so a dict built by overwriting
+    # keeps the LAST of them and throws the date away -- which is what this
+    # loader did. The clock alone then fails to parse, so the bug announced
+    # itself here; on a file with no header it would have passed silently.
+    s = load_csv(_write_split(_rows(n=30)), "EURUSD", side="bid")
+    assert s.n == 30, f"expected 30 bars, got {s.n}"
+    assert s.times[0] == MONDAY, (
+        f"the date column was dropped: first stamp is {s.times[0]}, "
+        f"not {MONDAY}")
+    assert s.times[-1] == MONDAY + timedelta(hours=29), s.times[-1]
+    assert s.interval == timedelta(hours=1), s.interval
+
+
+def test_metatrader_angle_bracket_headers_map_to_the_right_columns():
+    # <DATE> matches no alias, so every column falls through to the headerless
+    # time,O,H,L,C guess -- which on this layout reads TIME as the open and
+    # OPEN as the high. Nothing raises. The prices are simply wrong, so the
+    # prices are what this asserts.
+    rows = _rows(n=30)
+    path = _write_split(rows, head=("<DATE>", "<TIME>", "<OPEN>", "<HIGH>",
+                                    "<LOW>", "<CLOSE>"), datefmt="%Y.%m.%d",
+                        delim="\t")
+    s = load_csv(path, "EURUSD", side="bid")
+    assert s.n == 30, f"expected 30 bars, got {s.n}"
+    assert s.times[0] == MONDAY, s.times[0]
+    assert abs(s.bars[0].o - rows[0][1]) < 1e-9, (
+        f"open is {s.bars[0].o}, expected {rows[0][1]} — columns are shifted")
+    assert abs(s.bars[0].h - rows[0][2]) < 1e-9, s.bars[0].h
+    assert abs(s.bars[0].c - rows[0][4]) < 1e-9, s.bars[0].c
+
+
+def test_the_year_first_dotted_date_is_not_read_as_day_first():
+    # %d.%m.%Y was in the table and %Y.%m.%d was not, so MetaTrader's own date
+    # had no layout that fits. A day past the twelfth is used because that is
+    # the case a wrong reading survives: 2024.03.04 would parse under a
+    # day-first rule too, just as the wrong date.
+    rows = _rows(n=20, start=datetime(2024, 3, 25))
+    s = load_csv(_write_split(rows, datefmt="%Y.%m.%d"), "EURUSD", side="bid")
+    assert s.times[0] == datetime(2024, 3, 25), (
+        f"read {s.times[0]}, expected 2024-03-25")
+
+
+def test_a_recorded_spread_is_read_as_points_not_as_pips_or_price():
+    # MetaTrader records the spread in points. On a 3-decimal JPY quote a point
+    # is 0.001 and a pip is 0.01, so 3 points is 0.30 pips. Reading the column
+    # as pips would give 3.0 and as price would give 300.
+    rows = [[MONDAY + timedelta(minutes=i), 154.312, 154.339, 154.311, 154.336]
+            for i in range(40)]
+    s = load_csv(_write_split(rows, spreads=[3], places=3), "USDJPY",
+                 side="mid")
+    assert s.spreads is not None, "the spread column was not read at all"
+    got = s.spread_pips(0.5)
+    assert abs(got - 0.30) < 1e-9, f"{got} pips, expected 0.30"
+
+
+def test_the_point_size_is_taken_over_the_whole_file_not_one_row():
+    # A file may write 154.3360 -- four decimal places, three of precision. If
+    # the point size came from one row's text, a trailing zero would shrink it
+    # tenfold and every recorded spread with it. The two fixtures here differ
+    # only in whether ONE bar genuinely uses a fourth decimal.
+    flat = [[MONDAY + timedelta(minutes=i), 154.3120, 154.3390, 154.3110,
+             154.3360] for i in range(40)]
+    s_flat = load_csv(_write_split(flat, spreads=[3], places=4), "USDJPY",
+                      side="mid")
+    assert abs(s_flat.spread_pips(0.5) - 0.30) < 1e-9, (
+        f"{s_flat.spread_pips(0.5)} pips: a trailing zero was counted as "
+        f"precision")
+
+    finer = [list(r) for r in flat]
+    finer[7][4] = 154.3361                     # one real fourth decimal
+    s_fine = load_csv(_write_split(finer, spreads=[3], places=4), "USDJPY",
+                      side="mid")
+    assert abs(s_fine.spread_pips(0.5) - 0.030) < 1e-9, (
+        f"{s_fine.spread_pips(0.5)} pips: a genuinely finer quote did not "
+        f"change the point size")
+
+
+def test_the_spread_quantile_reports_the_tail_and_not_only_the_median():
+    # The median is what a quiet hour costs. A file whose spread is 3 points
+    # nine bars in ten and 40 in the tenth has a median of 0.3 pips and a cost
+    # of 4.0 on the bar an open or a news minute lands on. Collapsing that to
+    # one number is how a strategy that only trades the tail gets priced as if
+    # it traded the median.
+    rows = [[MONDAY + timedelta(minutes=i), 154.312, 154.339, 154.311, 154.336]
+            for i in range(40)]
+    s = load_csv(_write_split(rows, spreads=[3, 3, 3, 3, 3, 3, 3, 3, 3, 40],
+                              places=3), "USDJPY", side="mid")
+    assert abs(s.spread_pips(0.5) - 0.30) < 1e-9, s.spread_pips(0.5)
+    assert abs(s.spread_pips(1.0) - 4.00) < 1e-9, s.spread_pips(1.0)
+    assert s.spread_pips(0.95) > s.spread_pips(0.5), "the tail was flattened"
+
+
+def test_a_file_with_no_spread_column_says_so_instead_of_inventing_one():
+    s = _load(_rows(n=30))
+    assert s.spreads is None, "a spread appeared from a file that had none"
+    try:
+        s.spread_pips()
+    except ValueError as e:
+        assert "recorded no spread column" in str(e), e
+    else:
+        assert False, "measuring a spread that was never recorded succeeded"
+
+
+def test_a_quantile_outside_zero_to_one_is_refused():
+    rows = [[MONDAY + timedelta(minutes=i), 154.312, 154.339, 154.311, 154.336]
+            for i in range(40)]
+    s = load_csv(_write_split(rows, spreads=[3], places=3), "USDJPY",
+                 side="mid")
+    for bad in (-0.1, 1.5):
+        try:
+            s.spread_pips(bad)
+        except ValueError as e:
+            assert "quantile" in str(e), e
+        else:
+            assert False, f"quantile {bad} was accepted"
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

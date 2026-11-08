@@ -14,6 +14,10 @@ MUTANTS = [
  ("default costs accepted",      "    if _using_default_costs(costs) and not costs_confirmed:", "    if False:"),
  ("confirmation ignored",        "    if _using_default_costs(costs) and not costs_confirmed:", "    if _using_default_costs(costs):"),
  ("either field counts as mine", '            and costs.swap_markup_annual == f["swap_markup_annual"].default)', '            or costs.swap_markup_annual == f["swap_markup_annual"].default)'),
+ # COSTS_BELOW_RECORDED. The second is the dangerous direction: a measurement
+ # that cannot confirm anything, wired up so that it does.
+ ("recorded spread ignored",     "    if recorded_spread_pips is not None \\\n            and costs.round_turn_pips < recorded_spread_pips - 1e-9:", "    if False:"),
+ ("spread comparison inverted",  "            and costs.round_turn_pips < recorded_spread_pips - 1e-9:", "            and costs.round_turn_pips > recorded_spread_pips - 1e-9:"),
  ("cheaper backtest accepted",   "    if cheapest < costs.round_turn_pips - 1e-9:", "    if False:"),
  ("dearest trade checked",       "    cheapest = min(t.cost_pips for t in res.trades)", "    cheapest = max(t.cost_pips for t in res.trades)"),
  ("sample floor removed",        "    if res.n < floor:", "    if False:"),

@@ -38,4 +38,22 @@ MUTANTS = [
  ("comment count not surfaced",  "        if self.comments_skipped:", "        if False:"),
  ("bar size invented",           "        if self.interval is None or self.interval.total_seconds() <= 0:", "        if False:"),
  ("nights per bar inverted",     "        return 86_400.0 / self.interval.total_seconds()", "        return self.interval.total_seconds() / 86_400.0"),
+ # The split stamp and the MetaTrader header. Both of these were live defects
+ # that raised nothing: the first dropped the date column, the second read the
+ # whole file out of the wrong columns.
+ ("date column overwritten",     "            elif key == \"t\" and _SPLIT_STAMP not in mapped \\\n                    and i == mapped[\"t\"] + 1:\n                mapped[_SPLIT_STAMP] = i", "            elif False:\n                mapped[_SPLIT_STAMP] = i"),
+ ("split stamp not joined",      "        if _SPLIT_STAMP in columns:      # the header named a date AND a clock\n            return _clean_time(f\"{ts} {r[columns[_SPLIT_STAMP]]}\")", "        if False:\n            return _clean_time(f\"{ts} {r[columns[_SPLIT_STAMP]]}\")"),
+ ("clock column joined to itself", "            if key not in mapped:\n                mapped[key] = i", "            if True:\n                mapped[key] = i"),
+ ("angle brackets not stripped", "    return raw.strip().lstrip(\"\\ufeff\").strip(\"<>\").strip().lower()", "    return raw.strip().lstrip(\"\\ufeff\").strip().lower()"),
+ ("metatrader date unknown",     "    \"%Y.%m.%d %H:%M:%S\", \"%Y.%m.%d %H:%M\", \"%Y.%m.%d\",   # MetaTrader export", "    # removed"),
+ # The recorded spread. Getting the point size wrong is a factor of ten on
+ # every cost figure the file is able to contribute.
+ ("spread column ignored",       "        spread = None\n        if \"s\" in columns:", "        spread = None\n        if False:"),
+ ("point size from one row",     "        point = 10.0 ** -max(_decimals(b.c) for b in bars)", "        point = 10.0 ** -_decimals(bars[0].c)"),
+ ("trailing zeros count",        "    return len(s.partition(\".\")[2].rstrip(\"0\"))", "    return len(s.partition(\".\")[2])"),
+ ("points read as pips",         "        return vals[i] / pip_size(self.pair)", "        return vals[i]"),
+ ("missing spread invented",     "        if not self.spreads:", "        if False:"),
+ ("quantile bound dropped",      "        if not 0.0 <= quantile <= 1.0:", "        if False:"),
+ ("quantile always the median",  "        i = min(int(quantile * len(vals)), len(vals) - 1)", "        i = len(vals) // 2"),
+ ("quantile overruns the list",  "        i = min(int(quantile * len(vals)), len(vals) - 1)", "        i = int(quantile * len(vals))"),
 ]
