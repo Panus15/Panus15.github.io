@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<script>if(/\.github\.io$/i.test(location.hostname)){location.replace("https://dekplan.pages.dev"+location.pathname+location.search+location.hash);}</script>
+<link rel="canonical" href="https://dekplan.pages.dev/score/">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>เช็กคะแนนคณะ TCAS70 — คิดคะแนนตามเกณฑ์จริงทุกคณะ</title>
+<meta name="description" content="ค้นหาคณะ แล้วรู้ทันทีว่าคะแนนของคุณคิดตามเกณฑ์รอบ 3 TCAS70 ได้เท่าไหร่ ผ่านเกณฑ์ขั้นต่ำไหม ใช้ข้อมูลเกณฑ์จาก mytcas.com">
+<meta property="og:title" content="เช็กคะแนนคณะ TCAS70 — คิดคะแนนตามเกณฑ์จริง">
+<meta property="og:description" content="ค้นหาคณะ ใส่คะแนน รู้ทันทีว่าได้กี่คะแนนตามเกณฑ์รอบ 3 และผ่านขั้นต่ำไหม ฟรี">
+<meta property="og:image" content="https://dekplan.pages.dev/tcas70/img/tcas70-1.jpg">
+<meta name="theme-color" content="#1D4ED8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F4F6FC;--card:#FFFFFF;--ink:#141B2D;--mute:#5E6880;--soft:#8C95AB;--line:#E2E7F2;--blue:#1D4ED8;--blue2:#EEF2FF;--pink:#DB2777;--pink2:#FDF2F8;
+  --green:#15803D;--green2:#DCFCE7;--amber:#B45309;--amber2:#FEF3C7;--red:#B91C1C;--red2:#FEE2E2;--shadow:0 10px 30px rgba(20,40,120,.08);--track:#DCE2EE}
+@media (prefers-color-scheme:dark){:root{--bg:#0F1320;--card:#171C2B;--ink:#E9ECF5;--mute:#A2AAC0;--soft:#7D86A0;--line:#283048;--blue:#7EA2FF;--blue2:#1D2645;
+  --pink:#F472B6;--pink2:#3A1D30;--green:#4ADE80;--green2:#123222;--amber:#FBBF24;--amber2:#3A2E12;--red:#F87171;--red2:#3A1A1A;--shadow:none;--track:#2C3550}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Sarabun,system-ui,sans-serif;background:var(--bg);color:var(--ink);line-height:1.55;font-size:16px}
+button,input{font:inherit;color:inherit}
+.wrap{max-width:620px;margin:0 auto;padding:0 16px 40px}
+header{padding:20px 0 4px}
+.brand{display:flex;justify-content:space-between;align-items:center}
+.brand b{font:700 20px Prompt}.brand b span{color:var(--pink)}
+.tabs{display:flex;gap:6px;margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
+.tabs a{flex:1;text-align:center;text-decoration:none;font:600 15px Prompt;color:var(--mute);padding:9px 6px;border-radius:10px}
+.tabs a.on{background:var(--blue);color:#fff}
+h1{font:700 27px/1.2 Prompt;margin:16px 0 6px}h1 em{font-style:normal;color:var(--blue)}
+.lead{color:var(--mute)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px;margin:14px 0;box-shadow:var(--shadow)}
+.card h2{font:600 18px Prompt;display:flex;align-items:center;gap:8px}
+.card h2 .n{display:inline-flex;width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;font-size:14px;align-items:center;justify-content:center}
+.hint{color:var(--soft);font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px}
+.f label{display:block;font:600 13px Prompt;color:var(--mute);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f input{width:100%;border:1.5px solid var(--line);background:var(--bg);border-radius:12px;padding:10px 12px;font:600 17px Prompt;min-height:46px}
+.f input:focus{outline:none;border-color:var(--blue)}
+.f.need input{border-color:var(--pink);background:var(--pink2)}
+.toggle{margin-top:12px;background:transparent;border:0;color:var(--blue);font:600 14px Prompt;cursor:pointer;padding:6px 0}
+.search{position:relative;margin-top:12px}
+.search input{width:100%;border:1.5px solid var(--line);background:var(--bg);border-radius:14px;padding:13px 14px 13px 42px;font:500 16px Prompt;min-height:50px}
+.search input:focus{outline:none;border-color:var(--blue)}
+.search span{position:absolute;left:14px;top:13px;font-size:18px}
+.res{margin-top:8px;max-height:420px;overflow:auto;border-radius:14px}
+.res button{display:block;width:100%;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:11px 6px;cursor:pointer}
+.res button:hover{background:var(--blue2)}
+.res b{font:600 15px Prompt;display:block}.res small{color:var(--soft);font-size:13.5px}
+.prog{border:1px solid var(--line);border-radius:18px;padding:14px;margin-top:12px}
+.prog .top{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}
+.prog .top b{font:600 16px/1.35 Prompt;display:block}.prog .top small{color:var(--soft);font-size:13.5px}
+.x{border:0;background:transparent;color:var(--soft);font-size:20px;cursor:pointer;padding:0 4px;line-height:1}
+.track{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)}
+.track .tn{font:600 14px Prompt;color:var(--mute)}
+.score{display:flex;align-items:baseline;gap:8px;margin:6px 0}
+.score b{font:700 38px/1 Prompt;color:var(--blue)}.score span{font:600 15px Prompt;color:var(--soft)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.chip{font:500 13px Prompt;border-radius:999px;padding:4px 10px;background:var(--blue2);color:var(--blue)}
+.chip.miss{background:var(--pink2);color:var(--pink)}
+.chk{font-size:14.5px;padding:3px 0;display:flex;gap:8px}
+.ok{color:var(--green)}.bad{color:var(--red)}.wait{color:var(--amber)}
+.links{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px}
+.links a{font:600 14px Prompt;color:var(--blue);text-decoration:none}
+.note{background:var(--amber2);color:var(--amber);border-radius:12px;padding:10px 12px;font-size:14px;margin-top:8px}
+.empty{color:var(--soft);font-size:14.5px;margin-top:10px}
+.loading{color:var(--soft);font-size:14px;margin-top:8px}
+footer{color:var(--soft);font-size:13px;padding:6px 0 30px}
+footer a{color:var(--soft)}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand"><b>แผนอ่าน <span>dek70</span></b></div>
+  <nav class="tabs"><a href="../app/">📚 แผนอ่าน</a><a href="./" class="on">🎯 เช็กคะแนนคณะ</a></nav>
+</header>
+
+<h1>คะแนนเรา<br><em>ถึงคณะที่เล็งยัง?</em></h1>
+<p class="lead">ค้นหาคณะ แล้วระบบคิดคะแนนให้ตามเกณฑ์รอบ 3 (Admission) TCAS70 จริงของคณะนั้น พร้อมเช็กเกณฑ์ขั้นต่ำ ฟรี</p>
+
+<section class="card">
+  <h2><span class="n">1</span>คะแนนของฉัน</h2>
+  <p class="hint">ใส่คะแนนจริงหรือคะแนนสอบจำลอง (TGAT / TPAT / A-Level เต็ม 100 • GPAX เต็ม 4) — ช่องสีชมพู = คณะที่เลือกต้องใช้แต่ยังไม่ได้ใส่</p>
+  <div class="grid" id="inputs"></div>
+  <button class="toggle" id="more">+ แสดงทุกวิชา</button>
+</section>
+
+<section class="card">
+  <h2><span class="n">2</span>ค้นหาคณะ</h2>
+  <p class="hint">พิมพ์ชื่อมหาวิทยาลัย คณะ หรือสาขา เช่น "มช วิศวะ คอม" "จุฬา บัญชี" "เทคนิคการแพทย์"</p>
+  <div class="search"><span>🔍</span><input id="q" type="search" placeholder="ค้นหาจาก 4,000+ หลักสูตร" autocomplete="off" aria-label="ค้นหาคณะ"></div>
+  <p class="loading" id="loadMsg"></p>
+  <div class="res" id="res"></div>
+</section>
+
+<section class="card">
+  <h2><span class="n">3</span>คณะที่เลือก <span class="hint" id="count"></span></h2>
+  <div id="picks"><p class="empty">ยังไม่ได้เลือกคณะ — ค้นหาในข้อ 2 แล้วกดเลือก</p></div>
+</section>
+
+<footer>
+  เกณฑ์รอบ 3 ดึงจากระบบของ mytcas.com (ทปอ.) ทุกครั้งที่เปิด ตัวคำนวณช่วยวางแผน ไม่ใช่ผลทางการ — ตรวจระเบียบการฉบับเต็มของแต่ละคณะเสมอ •
+  เกณฑ์ขั้นต่ำแบบ T-Score ต้องเช็กหลังประกาศผล • ยังไม่มีคะแนนต่ำสุดปีก่อนในระบบ mytcas •
+  เครื่องมือนี้ไม่ได้เกี่ยวข้องกับ ทปอ. • <a href="../tcas70/">เกี่ยวกับเรา</a>
+</footer>
+</div>
+
+<script>
+"use strict";
+const API = "https://my-tcas.s3.ap-southeast-1.amazonaws.com/mytcas";
+const SUBJ = [  // [our key, label, max, mytcas key]
+  ["gpax","GPAX",4,"gpax"],["tgat1","TGAT1 อังกฤษ",100,"tgat1"],["tgat2","TGAT2 เหตุผล",100,"tgat2"],["tgat3","TGAT3 สมรรถนะ",100,"tgat3"],
+  ["tpat21","TPAT2.1 ทัศนศิลป์",100,"tpat21"],["tpat22","TPAT2.2 ดนตรี",100,"tpat22"],["tpat23","TPAT2.3 นาฏศิลป์",100,"tpat23"],
+  ["tpat3","TPAT3 วิทย์ วิศวะ",100,"tpat3"],["tpat4","TPAT4 สถาปัตย์",100,"tpat4"],["tpat5","TPAT5 ครุ",100,"tpat5"],
+  ["a_lv_61","คณิต 1",100],["a_lv_62","คณิต 2",100],["a_lv_63","วิทย์ประยุกต์",100],["a_lv_64","ฟิสิกส์",100],["a_lv_65","เคมี",100],
+  ["a_lv_66","ชีวะ",100],["a_lv_70","สังคม",100],["a_lv_81","ไทย",100],["a_lv_82","อังกฤษ",100],["a_lv_83","ฝรั่งเศส",100],
+  ["a_lv_84","เยอรมัน",100],["a_lv_85","ญี่ปุ่น",100],["a_lv_86","เกาหลี",100],["a_lv_87","จีน",100],["a_lv_88","บาลี",100],["a_lv_89","สเปน",100]];
+const LABEL = Object.fromEntries(SUBJ.map(s => [s[0], s[1]]));
+const MAX = Object.fromEntries(SUBJ.map(s => [s[0], s[2]]));
+const GROUP = { tgat: ["tgat1","tgat2","tgat3"], tpat2: ["tpat21","tpat22","tpat23"], gpax6_score: ["gpax"], gpax5_score: ["gpax"] };
+const GROUP_LABEL = { tgat: "TGAT", tpat2: "TPAT2", gpax6_score: "GPAX", gpax5_score: "GPAX" };
+const PLAN_MAP = { TGAT:["tgat1","tgat2","tgat3"], TPAT3:["tpat3"], TPAT2:["tpat21","tpat22","tpat23"], TPAT4:["tpat4"], TPAT5:["tpat5"],
+  MATH1:["a_lv_61"], MATH2:["a_lv_62"], SCI:["a_lv_63"], PHY:["a_lv_64"], CHEM:["a_lv_65"], BIO:["a_lv_66"], SOC:["a_lv_70"], THAI:["a_lv_81"],
+  ENG:["a_lv_82"], FRE:["a_lv_83"], GER:["a_lv_84"], JAP:["a_lv_85"], KOR:["a_lv_86"], CHI:["a_lv_87"], BAL:["a_lv_88"], SPN:["a_lv_89"] };
+const ALIAS = { "มช":"เชียงใหม่","จุฬา":"จุฬาลงกรณ์","มธ":"ธรรมศาสตร์","มก":"เกษตรศาสตร์","มข":"ขอนแก่น","มอ":"สงขลานครินทร์","มศว":"ศรีนครินทรวิโรฒ",
+  "สจล":"ลาดกระบัง","มจธ":"ธนบุรี","มจพ":"พระนครเหนือ","มฟล":"แม่ฟ้าหลวง","มน":"นเรศวร","มพ":"พะเยา","มม":"มหิดล","มศก":"ศิลปากร","มส":"แม่โจ้",
+  "วิศวะ":"วิศวกรรม","คอม":"คอมพิวเตอร์","หมอ":"แพทยศาสตร์","นิเทศ":"นิเทศ","นิติ":"นิติศาสตร์","เภสัช":"เภสัช","ทันตะ":"ทันตแพทย","สถาปัตย์":"สถาปัตยกรรม",
+  "ครุ":"ครุศาสตร์","เศรษฐ":"เศรษฐศาสตร์","อักษร":"อักษรศาสตร์","วิทย์":"วิทยาศาสตร์","บริหาร":"บริหารธุรกิจ","อินเตอร์":"นานาชาติ","inter":"นานาชาติ","cu":"chulalongkorn","cmu":"chiang mai","tu":"thammasat","ku":"kasetsart","mu":"mahidol",
+  "kku":"khon kaen","psu":"prince of songkla","swu":"srinakharinwirot","kmitl":"ladkrabang","kmutt":"thonburi","kmutnb":"north bangkok","mfu":"mae fah luang","nu":"naresuan","up":"phayao","su":"silpakorn" };
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const KEY = "dek70score.v1";
+function load() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) {} }
+let st = load() || { scores: {}, picks: [], all: false };
+const ROUNDS = {};           // program id → round 3 rows (or {error})
+let COURSES = null, INDEX = null;
+
+// subjects to show: those picked in the study plan + anything a chosen faculty needs
+function planSubjects() {
+  try { const p = JSON.parse(localStorage.getItem("dek70plan.v1")); return (p && p.sel || []).flatMap(k => PLAN_MAP[k] || []); } catch (e) { return []; }
+}
+function neededKeys() {
+  const need = new Set();
+  for (const id of st.picks) for (const tr of (ROUNDS[id] && ROUNDS[id].rows) || []) for (const k of Object.keys(tr.w)) (GROUP[k] || [k]).forEach(x => need.add(x));
+  return need;
+}
+function renderInputs() {
+  const need = neededKeys(), plan = new Set(planSubjects());
+  const show = SUBJ.filter(([k]) => st.all || k === "gpax" || need.has(k) || plan.has(k) || st.scores[k] !== undefined);
+  $("inputs").innerHTML = show.map(([k, lab, mx]) => {
+    const v = st.scores[k], miss = need.has(k) && (v === undefined || v === "");
+    return `<div class="f ${miss ? "need" : ""}"><label for="s_${k}">${esc(lab)}</label><input id="s_${k}" data-k="${k}" type="number" inputmode="decimal" min="0" max="${mx}" step="${mx === 4 ? "0.01" : "0.01"}" placeholder="เต็ม ${mx}" value="${v ?? ""}"></div>`;
+  }).join("");
+  $("more").textContent = st.all ? "− ซ่อนวิชาที่ไม่ใช้" : "+ แสดงทุกวิชา";
+}
+$("inputs").addEventListener("input", e => {
+  const k = e.target.dataset.k; if (!k) return;
+  const raw = e.target.value.trim();
+  if (raw === "") delete st.scores[k]; else { let v = Math.max(0, Math.min(MAX[k], +raw)); if (!isNaN(v)) st.scores[k] = v; }
+  e.target.parentElement.classList.toggle("need", neededKeys().has(k) && raw === "");
+  save(); renderPicks();
+});
+$("more").addEventListener("click", () => { st.all = !st.all; save(); renderInputs(); });
+
+// ---------- search ----------
+async function loadCourses() {
+  if (COURSES) return;
+  $("loadMsg").textContent = "กำลังโหลดรายชื่อหลักสูตรจาก mytcas…";
+  try {
+    const r = await fetch(`${API}/courses.json`); const data = await r.json();
+    const seen = new Set(); COURSES = {};
+    INDEX = [];
+    for (const c of data) {
+      if (seen.has(c.program_id)) continue; seen.add(c.program_id);
+      const o = { id: c.program_id, u: c.university_name_th, cp: c.campus_name_th, f: c.faculty_name_th, fd: c.field_name_th, p: c.program_name_th,
+                  t: c.program_type_name_th, ut: c.university_type_id };
+      COURSES[o.id] = o;
+      INDEX.push([o, `${o.u} ${o.cp} ${o.f} ${o.fd} ${o.p} ${o.t} ${c.university_name_en || ""} ${c.faculty_name_en || ""} ${c.field_name_en || ""}`.toLowerCase(),
+                  { u: `${o.u} ${c.university_name_en || ""}`.toLowerCase(), f: `${o.f} ${c.faculty_name_en || ""}`.toLowerCase(), fd: `${o.fd} ${c.field_name_en || ""}`.toLowerCase() }]);
+    }
+    $("loadMsg").textContent = "";
+  } catch (e) { $("loadMsg").textContent = "โหลดรายชื่อไม่สำเร็จ ลองรีเฟรชอีกครั้ง"; }
+}
+function search(q) {
+  const toks = q.toLowerCase().replace(/[.,]/g, " ").split(/\s+/).filter(Boolean);
+  if (!toks.length || !INDEX) return [];
+  const out = [];
+  const has = (h, t) => ALIAS[t] ? h.includes(ALIAS[t].toLowerCase()) || h.includes(t + " ") : h.includes(t);   // abbreviations match their expansion only
+  for (const [o, hay, part] of INDEX) {
+    if (!toks.every(t => has(hay, t))) continue;
+    // rank: a word that names the faculty or field counts more than one found only in the long programme title
+    const rank = toks.reduce((a, t) => a + (has(part.f, t) ? 3 : 0) + (has(part.fd, t) ? 2 : 0) + (has(part.u, t) ? 2 : 0), 0);
+    out.push([rank, o]);
+  }
+  return out.sort((a, b) => b[0] - a[0] || (a[1].ut || "9").localeCompare(b[1].ut || "9") || a[1].u.localeCompare(b[1].u, "th")).slice(0, 25).map(x => x[1]);
+}
+let tmr;
+$("q").addEventListener("focus", loadCourses);
+$("q").addEventListener("input", () => {
+  clearTimeout(tmr);
+  tmr = setTimeout(async () => {
+    await loadCourses();
+    const q = $("q").value, hits = search(q);
+    $("res").innerHTML = !q.trim() ? "" : hits.length ? hits.map(o => `<button data-id="${o.id}"><b>${esc(o.u)} • ${esc(o.f)}</b>
+      <small>${esc(o.fd)} — ${esc(o.p)} • ${esc(o.t)}${o.cp && o.cp !== "วิทยาเขตหลัก" ? " • " + esc(o.cp) : ""}</small></button>`).join("")
+      : '<p class="empty">ไม่เจอ ลองพิมพ์สั้นลง เช่น "เชียงใหม่ คอม"</p>';
+  }, 180);
+});
+$("res").addEventListener("click", e => {
+  const b = e.target.closest("button[data-id]"); if (!b) return;
+  const id = b.dataset.id;
+  if (!st.picks.includes(id)) { if (st.picks.length >= 10) { alert("เลือกได้สูงสุด 10 คณะ"); return; } st.picks.unshift(id); }
+  if (COURSES && COURSES[id]) (st.meta = st.meta || {})[id] = COURSES[id];
+  save(); $("q").value = ""; $("res").innerHTML = ""; fetchRounds(id).then(() => { renderInputs(); renderPicks(); });
+  renderPicks(); document.getElementById("picks").scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+// ---------- criteria ----------
+async function fetchRounds(id) {
+  if (ROUNDS[id]) return;
+  ROUNDS[id] = { loading: true };
+  try {
+    const r = await fetch(`${API}/rounds/${id}.json`);
+    if (!r.ok) throw new Error(r.status);
+    const rows = (await r.json()).filter(x => String(x.type || "").startsWith("3_")).map(x => {
+      const raw = x.scores || {}, special = Object.keys(raw).some(k => k.startsWith("cal_"));
+      const w = {}; if (!special) for (const [k, v] of Object.entries(raw)) { const n = parseFloat(v); if (n) w[k] = n; }
+      return { name: (x.project_name_th || "").trim(), seats: x.receive_student_number, minGpax: parseFloat(x.min_gpax) || 0,
+               minTotal: parseFloat(x.min_total_score) || 0, cond: x.score_conditions || {}, w, special, link: x.link };
+    });
+    ROUNDS[id] = { rows };
+  } catch (e) { ROUNDS[id] = { error: true }; }
+}
+function val(k) {           // user's score for a mytcas key as a fraction 0..1, or null if missing/unsupported
+  const parts = GROUP[k] || (MAX[k] !== undefined ? [k] : null);
+  if (!parts) return null;
+  const vs = parts.map(p => st.scores[p]);
+  if (vs.some(v => v === undefined || v === "")) return undefined;
+  return vs.reduce((a, v, i) => a + v / MAX[parts[i]], 0) / parts.length;
+}
+const nameOf = k => GROUP_LABEL[k] || LABEL[k] || k;
+function evalTrack(tr) {
+  if (tr.special) return { special: true };
+  const keys = Object.keys(tr.w), unsupported = keys.filter(k => val(k) === null), missing = keys.filter(k => val(k) === undefined);
+  const total = keys.reduce((a, k) => a + tr.w[k], 0);
+  let score = null;
+  if (!unsupported.length && !missing.length && total) score = keys.reduce((a, k) => a + tr.w[k] * val(k), 0) * 100 / total;
+  const checks = [];
+  if (tr.minGpax) { const g = st.scores.gpax; checks.push(g === undefined ? ["wait", `GPAX ขั้นต่ำ ${tr.minGpax.toFixed(2)} (ยังไม่ได้ใส่ GPAX)`] : g >= tr.minGpax ? ["ok", `GPAX ${g.toFixed(2)} ≥ ${tr.minGpax.toFixed(2)}`] : ["bad", `GPAX ${g.toFixed(2)} ต่ำกว่าขั้นต่ำ ${tr.minGpax.toFixed(2)}`]); }
+  if (tr.minTotal && score !== null) checks.push(score >= tr.minTotal ? ["ok", `คะแนนรวม ≥ ${tr.minTotal}`] : ["bad", `คะแนนรวมต่ำกว่าขั้นต่ำ ${tr.minTotal}`]);
+  for (const [ck, cv] of Object.entries(tr.cond)) {
+    if (ck === "min_gpax" || !ck.startsWith("min_")) continue;
+    const k = ck.slice(4), ts = k.endsWith("_tscore"), base = ts ? k.slice(0, -7) : k;
+    if (ts) { checks.push(["wait", `${nameOf(base)} ต้องได้ T-Score ≥ ${cv} — เช็กได้หลังประกาศผล`]); continue; }
+    const v = val(base);
+    if (v === null) checks.push(["wait", `${base} ≥ ${cv} (ยังไม่รองรับ ดูระเบียบการ)`]);
+    else if (v === undefined) checks.push(["wait", `${nameOf(base)} ขั้นต่ำ ${cv} (ยังไม่ได้ใส่คะแนน)`]);
+    else { const raw = v * (base === "gpax" ? 4 : 100); checks.push(raw >= cv ? ["ok", `${nameOf(base)} ${+raw.toFixed(2)} ≥ ${cv}`] : ["bad", `${nameOf(base)} ${+raw.toFixed(2)} ต่ำกว่าขั้นต่ำ ${cv}`]); }
+  }
+  return { score, unsupported, missing, checks };
+}
+function renderPicks() {
+  $("count").textContent = st.picks.length ? `(${st.picks.length}/10)` : "";
+  if (!st.picks.length) { $("picks").innerHTML = '<p class="empty">ยังไม่ได้เลือกคณะ — ค้นหาในข้อ 2 แล้วกดเลือก</p>'; return; }
+  $("picks").innerHTML = st.picks.map(id => {
+    const m = (st.meta || {})[id] || (COURSES && COURSES[id]) || { u: id, f: "", fd: "", p: "", t: "" }, R = ROUNDS[id];
+    let body;
+    if (!R || R.loading) body = '<p class="loading">กำลังดึงเกณฑ์จาก mytcas…</p>';
+    else if (R.error) body = '<p class="note">ดึงเกณฑ์ไม่สำเร็จ ลองรีเฟรชอีกครั้ง</p>';
+    else if (!R.rows.length) body = '<p class="note">ยังไม่ประกาศเกณฑ์รอบ 3 ของหลักสูตรนี้ — ดูรอบอื่นที่ mytcas</p>';
+    else body = R.rows.map(tr => {
+      const ev = evalTrack(tr);
+      if (ev.special) return `<div class="track"><div class="tn">${esc(tr.name || "รอบ 3")}${tr.seats ? ` • รับ ${tr.seats} คน` : ""}</div>
+        <p class="note">ใช้สูตรคำนวณพิเศษของคณะ — ดูวิธีคิดในระเบียบการ</p></div>`;
+      if (!Object.keys(tr.w).length) return `<div class="track"><div class="tn">${esc(tr.name && tr.name !== "Admission" ? tr.name : "รอบ 3 Admission")}${tr.seats ? ` • รับ ${tr.seats} คน` : ""}</div>
+        <p class="note">ยังไม่ประกาศค่าน้ำหนักคะแนนของรอบนี้ในระบบ mytcas</p></div>`;
+      const chips = Object.entries(tr.w).map(([k, v]) => `<span class="chip ${ev.missing.includes(k) || ev.unsupported.includes(k) ? "miss" : ""}">${esc(nameOf(k))} ${v}%</span>`).join("");
+      const sc = ev.score !== null ? `<div class="score"><b>${ev.score.toFixed(2)}</b><span>/ 100 คะแนน</span></div>`
+        : ev.unsupported.length ? `<p class="note">ใช้วิชาที่ยังไม่รองรับ: ${esc(ev.unsupported.join(", "))} — ดูระเบียบการ</p>`
+        : `<p class="hint" style="margin:6px 0">ใส่คะแนนให้ครบก่อน: ${esc(ev.missing.map(nameOf).join(", "))}</p>`;
+      const ck = ev.checks.map(([c, t]) => `<div class="chk ${c}">${c === "ok" ? "✅" : c === "bad" ? "❌" : "⏳"} <span>${esc(t)}</span></div>`).join("");
+      return `<div class="track"><div class="tn">${esc(tr.name && tr.name !== "Admission" ? tr.name : "รอบ 3 Admission")}${tr.seats ? ` • รับ ${tr.seats} คน` : ""}</div>${sc}<div class="chips">${chips}</div>${ck}</div>`;
+    }).join("");
+    return `<div class="prog"><div class="top"><div><b>${esc(m.u)} • ${esc(m.f)}</b><small>${esc(m.fd)} — ${esc(m.p)} • ${esc(m.t)}</small></div>
+      <button class="x" data-del="${id}" aria-label="ลบ">✕</button></div>${body}
+      <div class="links"><a href="https://course.mytcas.com/programs/${encodeURIComponent(id)}" target="_blank" rel="noopener">ดูระเบียบการเต็มที่ mytcas ↗</a></div></div>`;
+  }).join("");
+}
+$("picks").addEventListener("click", e => {
+  const b = e.target.closest("[data-del]"); if (!b) return;
+  st.picks = st.picks.filter(x => x !== b.dataset.del); save(); renderInputs(); renderPicks();
+});
+
+// ---------- boot ----------
+renderInputs(); renderPicks();
+Promise.all(st.picks.map(fetchRounds)).then(() => { renderInputs(); renderPicks(); });
+</script>
+</body>
+</html>

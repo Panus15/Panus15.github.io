@@ -34,6 +34,9 @@ header{padding:22px 0 6px}
 .brand b{font:700 20px Prompt;letter-spacing:.2px}
 .brand b span{color:var(--pink)}
 .brand a{font:500 14px Prompt;color:var(--blue);text-decoration:none}
+.tabs{display:flex;gap:6px;margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
+.tabs a{flex:1;text-align:center;text-decoration:none;font:600 15px Prompt;color:var(--mute);padding:9px 6px;border-radius:10px}
+.tabs a.on{background:var(--blue);color:#fff}
 h1{font:700 28px/1.2 Prompt;margin:14px 0 6px}
 h1 em{font-style:normal;color:var(--blue)}
 .lead{color:var(--mute)}
@@ -132,7 +135,8 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
 <body>
 <div class="wrap">
 <header>
-  <div class="brand"><b>แผนอ่าน <span>dek70</span></b><a href="../tcas70/">ร้านของเรา →</a></div>
+  <div class="brand"><b>แผนอ่าน <span>dek70</span></b><a href="../tcas70/">เกี่ยวกับเรา →</a></div>
+  <nav class="tabs"><a href="./" class="on">📚 แผนอ่าน</a><a href="../score/">🎯 เช็กคะแนนคณะ</a></nav>
 </header>
 
 <!-- ================= SETUP ================= -->
@@ -215,7 +219,7 @@ footer{color:var(--soft);font-size:13px;padding:10px 0 40px}
     <h2>🔔 อยากให้เตือนก่อนถึงกำหนด?</h2>
     <p class="hint">แอด LINE ร้าน เดี๋ยวส่งข้อความเตือนก่อนวันสมัคร วันสอบ และวันประกาศผล ฟรี</p>
     <a class="line-cta" href="https://lin.ee/xyMOK2T" target="_blank" rel="noopener">แอด LINE รับการแจ้งเตือน</a>
-    <a class="shop" href="../tcas70/">ดูเครื่องมือเวอร์ชันเต็ม (คำนวณคะแนนคณะ) →</a>
+    <a class="shop" href="../score/">🎯 เช็กว่าคะแนนถึงคณะที่เล็งยัง →</a>
   </section>
 
   <div class="row2"><button class="ghost" id="edit">✏️ แก้วิชา / เวลาอ่าน</button></div>
