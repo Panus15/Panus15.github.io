@@ -63,12 +63,41 @@ def test_a_resample_keeps_the_move_distribution_it_was_built_from():
 
 
 def test_every_bar_of_a_resample_is_a_valid_bar():
-    # Rebuilding from closes alone would give highs inside the body, which the
-    # loader calls fatal and the detectors read as fills that cannot happen.
     sim = resample(moves_of(_walk(800)), 40, 150.0, random.Random(5))
     for i, b in enumerate(sim):
         assert b.h >= max(b.o, b.c) and b.l <= min(b.o, b.c) and b.h >= b.l, (
             f"bar {i} is malformed: {b}")
+
+
+def test_a_move_is_close_to_close_and_a_wick_is_measured_from_the_body():
+    # Literal values, because every way of getting this wrong produces a
+    # plausible-looking series. Open-to-open has almost the same standard
+    # deviation as close-to-close, and wicks of zero still make valid bars --
+    # so neither a distribution check nor a validity check can see them.
+    bars = [Bar(100.0, 101.0, 99.0, 100.5),
+            Bar(102.0, 104.0, 101.5, 103.0)]
+    (d, up, dn), = moves_of(bars)
+    assert abs(d - 2.5) < 1e-12, f"move {d}, expected 103.0 - 100.5 = 2.5"
+    assert abs(up - 1.0) < 1e-12, f"upper wick {up}, expected 104.0 - 103.0"
+    assert abs(dn - 0.5) < 1e-12, f"lower wick {dn}, expected 102.0 - 101.5"
+
+
+def test_a_resample_keeps_the_bar_RANGES_not_only_the_closes():
+    # Bars rebuilt from closes alone have h == max(o, c) and l == min(o, c):
+    # bodies with no wicks. They are still VALID bars, which is why the check
+    # above cannot catch it -- `h >= max(o, c)` is satisfied by equality, the
+    # exact broken version. The swing detectors read highs and lows, so a
+    # wickless null is a different market.
+    bars = _walk(2000, sigma=0.02)
+    sim = resample(moves_of(bars), 100, bars[0].c, random.Random(4))
+    want = statistics.fmean(b.h - b.l for b in bars)
+    got = statistics.fmean(b.h - b.l for b in sim)
+    assert abs(got - want) / want < 0.15, (
+        f"mean bar range {got:.5f} against the file's {want:.5f}")
+    wicked = sum(1 for b in sim if b.h > max(b.o, b.c) + 1e-12)
+    assert wicked > len(sim) * 0.9, (
+        f"only {wicked} of {len(sim)} bars have an upper wick at all: the "
+        f"bars were rebuilt from closes")
 
 
 def test_a_short_block_destroys_structure_a_long_block_preserves_it():

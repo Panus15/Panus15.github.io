@@ -90,8 +90,15 @@ def resample(moves: list, block: int, start_px: float, rnd) -> list:
     if not moves:
         return []
     block = min(block, len(moves))
+    # The number of blocks is COMPUTED, not looped until long enough. A
+    # `while len(seq) < len(moves)` loop makes no progress when a block comes
+    # out empty, so it HANGS rather than failing -- and a hang cannot be caught
+    # by a test, because the test hangs with it. That is not hypothetical: it
+    # cost two nine-minute mutation sweeps here, each killed by a timeout that
+    # then left a live mutant in the tree. Dividing by the block length makes
+    # the degenerate case raise on the spot instead.
     seq = []
-    while len(seq) < len(moves):
+    for _ in range(-(-len(moves) // block)):
         j = rnd.randrange(0, max(len(moves) - block, 0) + 1)
         seq.extend(moves[j:j + block])
     px, out = start_px, []
