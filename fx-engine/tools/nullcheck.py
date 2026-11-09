@@ -89,7 +89,11 @@ def resample(moves: list, block: int, start_px: float, rnd) -> list:
         raise ValueError(f"block must be at least 1 bar, got {block}")
     if not moves:
         return []
-    block = min(block, len(moves))
+    # No clamp to len(moves) here, deliberately. It would be dead code: for a
+    # block at least as long as the file, `moves[j:j + block]` returns the
+    # whole list and the loop below runs exactly once, so clamped and
+    # unclamped produce the same exact copy of the file. Its mutant survived
+    # every test because nothing it could change is observable.
     # The number of blocks is COMPUTED, not looped until long enough. A
     # `while len(seq) < len(moves)` loop makes no progress when a block comes
     # out empty, so it HANGS rather than failing -- and a hang cannot be caught

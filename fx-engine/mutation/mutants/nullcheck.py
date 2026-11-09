@@ -23,7 +23,6 @@ MUTANTS = [
  ("bars built without range",    "        out.append(Bar(o, max(o, c) + up, min(o, c) - dn, c))", "        out.append(Bar(o, max(o, c), min(o, c), c))"),
  ("high and low swapped",        "        out.append(Bar(o, max(o, c) + up, min(o, c) - dn, c))", "        out.append(Bar(o, max(o, c) + up, min(o, c) + dn, c))"),
  ("zero block allowed",          "    if block < 1:", "    if False:"),
- ("long block not clamped",      "    block = min(block, len(moves))", "    block = block"),
  ("every null the same draw",    "            rnd = random.Random(seed + s)", "            rnd = random.Random(seed)"),
  # The sweep's bookkeeping.
  ("floor refusals not counted",  "            if TOO_FEW_TRADES in v.codes:\n                floored += 1", "            if False:\n                floored += 1"),

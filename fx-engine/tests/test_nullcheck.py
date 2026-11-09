@@ -291,12 +291,12 @@ def test_every_trial_is_a_different_draw():
         f"independent draws")
 
 
-def test_a_block_longer_than_the_file_is_clamped_to_it():
-    # Unclamped, `moves[j:j + block]` still returns the whole list, so the
-    # series comes out the right length and the bug is invisible there. What
-    # changes is that a block longer than the file can only ever be the file
-    # itself: every "resample" is then an exact copy, and the tool would be
-    # comparing the file against itself.
+def test_a_block_longer_than_the_file_yields_the_file_itself():
+    # Asserted as an OUTCOME, not a mechanism: a block at least as long as the
+    # file leaves only one possible draw, so every "resample" is an exact copy
+    # and the tool would be comparing the file against itself. Worth pinning
+    # because it is the degenerate end of the sweep -- a reader who widens
+    # --blocks far enough gets a 100% pass rate that means nothing.
     bars = _walk(400, seed=17)
     base = moves_of(bars)
     a = resample(base, len(base) * 3, bars[0].c, random.Random(1))
