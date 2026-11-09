@@ -23,7 +23,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.backtest import MAX_HOLD_BARS
-from models.patterns import MAX_SPAN, Bar
+from models.patterns import MAX_SPAN, Bar, Detection
 from tools.nullcheck import (DEFAULT_BLOCKS, moves_of, report, resample, sweep)
 from engine.costs import CostModel
 
@@ -152,10 +152,45 @@ def test_a_block_shorter_than_one_bar_is_refused():
         assert False, "a zero-length block was accepted"
 
 
-def test_a_block_longer_than_the_file_is_clamped_not_an_error():
-    base = moves_of(_walk(200))
-    sim = resample(base, 10_000, 150.0, random.Random(0))
-    assert len(sim) == len(base), len(sim)
+def _rising(n=1200, step=0.05):
+    """A series that only ever goes up, so a long's outcome is not a coin toss.
+
+    Resampling preserves it: every move in the file is +step, so every move in
+    any block of them is too. That is what makes a planted long's result
+    KNOWN after resampling, which is what the bookkeeping tests need.
+    """
+    px, bars = 150.0, []
+    for _ in range(n):
+        o = px
+        c = px + step
+        bars.append(Bar(o, c + 0.01, o - 0.01, c))
+        px = c
+    return bars
+
+
+def _stub(n):
+    """A detector that plants exactly `n` winning trades on a rising series.
+
+    The real detectors make the sweep's bookkeeping untestable: how many
+    trades a resample yields is whatever the data gives, so every count the
+    sweep reports is consistent with every way of mis-wiring it. With the
+    count AND the outcome fixed, each field has one right answer.
+
+    The target is 20 pips out against a 1 pip cost. A target inside the cost
+    would make every "winner" a net loss, which is how the first draft of
+    these tests reported 0 passes out of 3 and looked like a bookkeeping bug.
+    """
+    def detect(bars):
+        out = []
+        for k in range(n):
+            i = 5 + k * 12
+            if i + 2 >= len(bars):
+                break
+            px = bars[i].c
+            out.append(Detection(name="double_top", index=i, direction=1,
+                                 entry=px, stop=px - 1.00, target=px + 0.20))
+        return out
+    return detect
 
 
 def test_the_sweep_reports_one_row_per_block_in_the_order_given():
@@ -169,6 +204,110 @@ def test_the_sweep_reports_one_row_per_block_in_the_order_given():
         assert trials == 2 and 0 <= passed <= trials, (block, passed, trials)
         assert 0 <= floored <= trials, floored
         assert med >= 0, med
+
+
+def test_a_pass_is_counted_as_a_pass_and_a_floor_refusal_as_a_floor_refusal():
+    # 60 planted winners: comfortably over the 30-trade floor and plainly
+    # tradeable, so passed must be ALL the trials and floored none of them.
+    # Swapping the two, or counting refusals as passes, has a different answer
+    # here -- which it does not when the trade count is left to the data.
+    bars = _rising(1200)
+    costs = CostModel(pair="USDJPY", round_turn_pips=1.0,
+                      swap_markup_annual=0.006)
+    (block, passed, trials, floored, med, best), = sweep(
+        bars, costs, pattern="double_top", blocks=(300,), trials=3,
+        bars_per_night=1440.0, n_hypotheses=4, detector=_stub(60))
+    assert med == 60, f"the stub plants 60 trades, the sweep reported {med}"
+    assert passed == trials == 3, f"{passed}/{trials} passed, expected 3/3"
+    assert floored == 0, f"{floored} refused for the trade floor, expected 0"
+    assert best > 0, best
+
+
+def test_a_sample_under_the_floor_is_counted_as_floored_and_not_as_a_pass():
+    bars = _rising(1200)
+    costs = CostModel(pair="USDJPY", round_turn_pips=1.0,
+                      swap_markup_annual=0.006)
+    (_b, passed, trials, floored, med, _best), = sweep(
+        bars, costs, pattern="double_top", blocks=(300,), trials=3,
+        bars_per_night=1440.0, n_hypotheses=4, detector=_stub(5))
+    assert med == 5, med
+    assert floored == trials == 3, f"{floored}/{trials} floored, expected 3/3"
+    assert passed == 0, f"{passed} passed on 5 trades, expected 0"
+
+
+def test_the_nulls_are_judged_with_costs_CONFIRMED():
+    # The nulls are run at the cost model the caller is testing, so refusing
+    # them for COST_NOT_MEASURED would make every pass rate zero and the whole
+    # sweep read as "no false positives". The cost model here is all defaults,
+    # which is the only case where the flag changes anything.
+    bars = _rising(1200)
+    (_b, passed, trials, _f, _m, _best), = sweep(
+        bars, CostModel(pair="USDJPY"), pattern="double_top", blocks=(300,),
+        trials=2, bars_per_night=1440.0, n_hypotheses=4, detector=_stub(60))
+    assert passed == trials == 2, (
+        f"{passed}/{trials}: the nulls were refused for unmeasured costs, so "
+        f"every rate this tool reports would be zero")
+
+
+def test_the_trade_count_reported_is_the_median_not_the_maximum():
+    # One trial in three finds far more trades than the others. A tool that
+    # reported the maximum would overstate how comparable its nulls are to the
+    # file, which is the judgement the whole report hangs on.
+    bars = _rising(1200)
+    costs = CostModel(pair="USDJPY", round_turn_pips=1.0,
+                      swap_markup_annual=0.006)
+    counts = iter([40, 40, 95])
+    planted = []
+
+    def varying(bs):
+        n = next(counts)
+        planted.append(n)
+        return _stub(n)(bs)
+
+    (_b, _p, _t, _f, med, _best), = sweep(
+        bars, costs, pattern="double_top", blocks=(300,), trials=3,
+        bars_per_night=1440.0, n_hypotheses=4, detector=varying)
+    assert planted == [40, 40, 95], planted
+    assert med == 40, f"reported {med}: that is the maximum, not the median"
+
+
+def test_every_trial_is_a_different_draw():
+    # Seeded per trial, not once: `Random(seed)` for all of them would run the
+    # same resample `trials` times and report a rate of 0% or 100% with no
+    # sampling in between.
+    bars = _walk(3000, seed=13, sigma=0.03)
+    costs = CostModel(pair="USDJPY", round_turn_pips=1.0,
+                      swap_markup_annual=0.006)
+    seen = []
+
+    def spy(bs):
+        seen.append(tuple(round(b.c, 6) for b in bs[:20]))
+        return []
+
+    sweep(bars, costs, pattern="double_top", blocks=(50,), trials=4,
+          bars_per_night=1440.0, n_hypotheses=4, detector=spy)
+    assert len(set(seen)) == 4, (
+        f"{len(set(seen))} distinct resamples out of 4: the trials are not "
+        f"independent draws")
+
+
+def test_a_block_longer_than_the_file_is_clamped_to_it():
+    # Unclamped, `moves[j:j + block]` still returns the whole list, so the
+    # series comes out the right length and the bug is invisible there. What
+    # changes is that a block longer than the file can only ever be the file
+    # itself: every "resample" is then an exact copy, and the tool would be
+    # comparing the file against itself.
+    bars = _walk(400, seed=17)
+    base = moves_of(bars)
+    a = resample(base, len(base) * 3, bars[0].c, random.Random(1))
+    b = resample(base, len(base) * 3, bars[0].c, random.Random(2))
+    assert len(a) == len(base) and len(b) == len(base), (len(a), len(b))
+    ca = [round(x.c, 9) for x in a]
+    cb = [round(x.c, 9) for x in b]
+    orig = [round(x.c, 9) for x in bars[1:]]
+    assert ca == cb == orig, (
+        "a block longer than the file should clamp to the file, making the "
+        "resample an exact copy — it is not")
 
 
 def test_a_rate_from_nulls_that_look_nothing_like_the_file_is_refused():
