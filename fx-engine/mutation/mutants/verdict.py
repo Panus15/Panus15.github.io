@@ -26,7 +26,6 @@ MUTANTS = [
  ("refusal downgraded to a note","        if rest <= 0 and rest_n > 0:", "        if False:"),
  ("concentration note dropped",  "        elif share > 0.5:", "        elif False:"),
  ("segments cut by trade count", "    for t in res.trades:\n        j = min(int((t.entry_index - lo) / width), k - 1)", "    for n_, t in enumerate(res.trades):\n        j = min(int(n_ / (len(res.trades) / k)), k - 1)"),
- ("last segment overruns",       "        j = min(int((t.entry_index - lo) / width), k - 1)", "        j = int((t.entry_index - lo) / width)"),
  ("one segment allowed",         "    if k < 2:", "    if False:"),
  ("breakdown not surfaced",      "        if self.segments:", "        if False:"),
  ("recorded spread ignored",     "    if recorded_spread_pips is not None \\\n            and costs.round_turn_pips < recorded_spread_pips - 1e-9:", "    if False:"),

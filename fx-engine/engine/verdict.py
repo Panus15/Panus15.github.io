@@ -296,6 +296,13 @@ def segment_trades(res: BacktestResult, k: int = SEGMENTS) -> list:
     question is whether the edge is confined to a period, and a split by trade
     count would hide exactly that by construction -- it would give every
     stretch the same number of trades however they were bunched.
+
+    The `min(..., k - 1)` below cannot fire and is kept as a guard rather than
+    a branch: with `width = (hi - lo + 1) / k`, the largest index gives
+    `k(hi - lo) / (hi - lo + 1)`, which is strictly below `k`. It earns its
+    place only against a later edit to `width` -- `(hi - lo) / k` would put the
+    last trade one past the end -- so its mutant is recorded as equivalent in
+    mutation/README.md instead of sitting in the table as a known survivor.
     """
     if k < 2:
         raise ValueError(f"need at least 2 segments to compare, got {k}")

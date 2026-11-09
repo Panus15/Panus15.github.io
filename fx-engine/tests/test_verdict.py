@@ -592,6 +592,27 @@ def test_an_edge_confined_to_one_stretch_is_refused_however_significant():
     assert "%" in detail and "stretch" in detail, detail
 
 
+def test_concentration_short_of_a_refusal_is_still_reported():
+    # The shape the real USDJPY file produced: 3-3-2-25 trades across the four
+    # stretches, 95% of the profit in the last. Removing it leaves the rest
+    # POSITIVE, so there is nothing to refuse on -- and that is exactly when a
+    # reader needs telling, because every number on the verdict looks clean.
+    res = BacktestResult()
+    for k in (0, 9, 18, 27, 36, 45, 54, 63):
+        res.trades.append(_trade(5.5, 1.5, "double_top", k))      # net +4.0
+    for k in range(75, 100):
+        res.trades.append(_trade(23.5, 1.5, "double_top", k))     # net +22.0
+    v = judge(res, MINE, n_hypotheses=4, costs_confirmed=True)
+    assert [n for n, _w, _net, _t in v.segments] == [3, 3, 2, 25], v.segments
+    assert RESTS_ON_ONE_PERIOD not in v.codes, (
+        f"the remainder is positive, so there was nothing to refuse: {v.codes}")
+    assert v.tradeable, v.codes
+    note = " ".join(v.notes)
+    assert "94%" in note or "95%" in note, f"the share was not reported: {note}"
+    assert "not the independent draws" in note, note
+    assert "94%" in v.summary() or "95%" in v.summary(), "the note never printed"
+
+
 def test_an_evenly_spread_edge_is_not_refused_for_concentration():
     # Guard isolation. The baseline's profit is spread across all four
     # stretches, and it must stay tradeable.

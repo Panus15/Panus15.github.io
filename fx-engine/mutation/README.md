@@ -92,3 +92,9 @@ says about it. Two outcomes are legitimate:
   `mean(gross) − mean(cost)` *is* `mean(net)`, verified to 1e-14 on random
   inputs. Those are documented in the module and removed from the table, never
   left in as a permanent "known survivor".
+
+  The other recorded one is the `min(..., k - 1)` clamp in `segment_trades`.
+  With `width = (hi - lo + 1) / k` the largest index yields
+  `k(hi - lo) / (hi - lo + 1)`, strictly below `k`, so the clamp cannot fire —
+  checked across spans from 2 to 10^9 and every `k` in use. It is kept as a
+  guard against a later edit to `width`, not as a reachable branch.
