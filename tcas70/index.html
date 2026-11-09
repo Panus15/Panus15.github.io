@@ -2,133 +2,115 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<script>/* moved: send visitors of the old github.io address to the new one */if(/\.github\.io$/i.test(location.hostname)){location.replace("https://dekplan.pages.dev"+location.pathname+location.search+location.hash);}</script>
+<script>if(/\.github\.io$/i.test(location.hostname)){location.replace("https://dekplan.pages.dev"+location.pathname+location.search+location.hash);}</script>
 <link rel="canonical" href="https://dekplan.pages.dev/tcas70/">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TCAS70 Tracker — วางแผนสอบและคำนวณคะแนนใน Google Sheets</title>
-<meta name="description" content="ไฟล์ Google Sheets สำหรับ #dek70: ปฏิทินนับถอยหลัง TCAS70, คำนวณคะแนนตามค่าน้ำหนักคณะ 20 คณะ, จัดลำดับวิชาที่ควรอ่านก่อน, เช็กลิสต์พอร์ต และงบค่าสมัคร">
-<meta property="og:title" content="TCAS70 Tracker — ไฟล์เดียว จบทุกเรื่อง TCAS">
-<meta property="og:description" content="นับถอยหลังวันสอบ • คำนวณคะแนน 20 คณะ • บอกว่าควรอ่านวิชาไหนก่อน • ลองเวอร์ชันฟรีได้">
-<meta property="og:image" content="https://dekplan.pages.dev/tcas70/img/tcas70-1.jpg">
+<title>แพลนเนอร์ dek70 — วางแผนอ่านถึงวันสอบ TCAS70 (GoodNotes / Notability)</title>
+<meta name="description" content="แพลนเนอร์ดิจิทัล 262 หน้า พ.ย. 2569 – พ.ค. 2570 วันสำคัญ TCAS70 อยู่ในทุกหน้า นับถอยหลังถึงวันสอบทุกวัน กดลิงก์ข้ามหน้าได้ มีโหมดสว่างและมืด">
+<meta property="og:title" content="แพลนเนอร์ dek70 — วางแผนอ่านถึงวันสอบ TCAS70">
+<meta property="og:description" content="262 หน้า • วันสำคัญ TCAS70 ในทุกหน้า • นับถอยหลังทุกวัน • ใช้กับ GoodNotes / Notability / Samsung Notes">
+<meta property="og:image" content="https://dekplan.pages.dev/tcas70/img/planner-1.jpg">
 <meta property="og:type" content="product">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@500;600;700&family=Sarabun:wght@400;600&display=swap" rel="stylesheet">
 <style>
-:root{--blue:#1D4ED8;--pink:#DB2777;--ink:#172033;--mute:#55607A;--bg:#F5F7FF;--card:#fff;--line:#E3E8F5}
+:root{--blue:#1D4ED8;--pink:#DB2777;--ink:#141B2D;--mute:#55607A;--bg:#F4F6FC;--card:#fff;--line:#E2E7F2}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Sarabun,system-ui,sans-serif;color:var(--ink);background:var(--bg);line-height:1.6}
-a{color:inherit}
+a{color:var(--blue)}
 .wrap{max-width:980px;margin:0 auto;padding:0 16px}
-header.hero{background:linear-gradient(160deg,#1D4ED8 0%,#3B5BDB 55%,#DB2777 140%);color:#fff;padding:56px 0 64px}
-.hero .wrap{display:grid;grid-template-columns:1.1fr .9fr;gap:36px;align-items:center}
-.kicker{font:600 15px Prompt;color:#FBCFE8;letter-spacing:.3px}
-h1{font:700 clamp(38px,6vw,60px)/1.1 Prompt;margin:8px 0 12px}
+header.hero{background:linear-gradient(155deg,#1D4ED8 0%,#3B5BDB 52%,#DB2777 140%);color:#fff;padding:52px 0 60px}
+.hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;gap:36px;align-items:center}
+.kicker{font:600 15px Prompt;color:#FBCFE8}
+h1{font:700 clamp(40px,6vw,62px)/1.08 Prompt;margin:8px 0 12px}
 .lead{font-size:18px;color:#E0E7FF;max-width:30em}
 .cta{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}
-.btn{display:inline-flex;align-items:center;gap:8px;font:600 17px Prompt;text-decoration:none;border-radius:999px;padding:14px 24px;border:0;cursor:pointer}
+.btn{display:inline-flex;align-items:center;gap:8px;font:600 17px Prompt;text-decoration:none;border-radius:999px;padding:14px 24px}
 .btn.buy{background:#fff;color:var(--blue)}
 .btn.free{background:rgba(255,255,255,.14);color:#fff;border:2px solid rgba(255,255,255,.5)}
 .btn.disabled{opacity:.75;pointer-events:none}
 .price{margin-top:16px;font:500 16px Prompt;color:#E0E7FF}
-.price b{font:700 26px Prompt;color:#fff}
-.price s{opacity:.7;margin-left:6px}
+.price b{font:700 26px Prompt;color:#fff}.price s{opacity:.7;margin-left:6px}
 .hero img{width:100%;height:auto;border-radius:22px;box-shadow:0 24px 60px rgba(0,0,0,.3)}
-section{padding:56px 0}
+section{padding:52px 0}
 h2{font:700 clamp(26px,4vw,34px)/1.25 Prompt;margin-bottom:8px}
-.sub{color:var(--mute);margin-bottom:24px}
+.sub{color:var(--mute);margin-bottom:22px}
 .feats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .f{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
-.f .e{font-size:30px}
-.f h3{font:600 18px Prompt;margin:6px 0 4px}
-.f p{color:var(--mute);font-size:15px}
+.f .e{font-size:30px}.f h3{font:600 18px Prompt;margin:6px 0 4px}.f p{color:var(--mute);font-size:15px}
 .gallery{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .gallery a{display:block;border-radius:16px;overflow:hidden;border:1px solid var(--line);background:#fff}
 .gallery img{width:100%;height:auto;display:block}
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.tool{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px}
+.tool b{font:600 20px Prompt;display:block;margin:6px 0 4px}.tool p{color:var(--mute);font-size:15px}.tool span{font:600 15px Prompt;color:var(--blue)}
 .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;counter-reset:s}
 .step{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px}
 .step:before{counter-increment:s;content:counter(s);display:inline-flex;width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;font:700 18px Prompt;align-items:center;justify-content:center;margin-bottom:8px}
-.step h3{font:600 18px Prompt}
-.step p{color:var(--mute);font-size:15px}
-.compare{width:100%;border-collapse:collapse;background:#fff;border-radius:16px;overflow:hidden;border:1px solid var(--line)}
-.compare th,.compare td{padding:12px 14px;border-bottom:1px solid var(--line);text-align:left;font-size:15px}
-.compare th{font:600 15px Prompt;background:#EEF2FF}
-.compare td:nth-child(2),.compare td:nth-child(3),.compare th:nth-child(2),.compare th:nth-child(3){text-align:center;width:22%}
-section.closed{display:none}
+.step h3{font:600 18px Prompt}.step p{color:var(--mute);font-size:15px}
 details{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 18px;margin-bottom:10px}
-summary{font:600 17px Prompt;cursor:pointer}
-details p{color:var(--mute);margin-top:8px}
-.note{font-size:13px;color:var(--mute)}
+summary{font:600 17px Prompt;cursor:pointer}details p{color:var(--mute);margin-top:8px}
 footer{padding:32px 0 48px;color:var(--mute);font-size:13px;border-top:1px solid var(--line)}
-@media (max-width:760px){
-  .hero .wrap{grid-template-columns:1fr}
-  .feats,.steps{grid-template-columns:1fr}
-  .gallery{grid-template-columns:repeat(2,1fr)}
-  header.hero{padding:40px 0 48px}
-}
+section.closed{display:none}
+@media (max-width:760px){.hero .wrap{grid-template-columns:1fr}.feats,.steps,.tools{grid-template-columns:1fr}.gallery{grid-template-columns:repeat(2,1fr)}header.hero{padding:40px 0 48px}}
 </style>
 </head>
 <body>
 <header class="hero">
   <div class="wrap">
     <div>
-      <div class="kicker">สำหรับ #dek70 🎓 • Google Sheets</div>
-      <h1>TCAS70 Tracker</h1>
-      <p class="lead">ไฟล์เดียวจบทุกเรื่อง TCAS — นับถอยหลังวันสอบ คำนวณคะแนนตามค่าน้ำหนักคณะ และบอกว่าควรอ่านวิชาไหนก่อน ใช้บนมือถือได้</p>
+      <div class="kicker">สำหรับ #dek70 🎓 • GoodNotes / Notability / Samsung Notes</div>
+      <h1>แพลนเนอร์ dek70</h1>
+      <p class="lead">วางแผนอ่านถึงวันสอบ วันสำคัญ TCAS70 อยู่ในทุกหน้า นับถอยหลังให้ทุกวัน 262 หน้า กดลิงก์ข้ามหน้าได้ มีโหมดสว่างและโหมดมืด</p>
       <div class="cta">
-        <a class="btn buy" id="buyBtn" href="#how">🛒 สั่งซื้อ</a>
-        <a class="btn free" href="../app/">🎁 ลองแผนอ่านฟรี</a>
+        <a class="btn buy" id="buyBtn" href="#how">🛒 สั่งซื้อทาง LINE</a>
+        <a class="btn free" href="../app/">🎁 ลองเครื่องมือฟรี</a>
       </div>
       <p class="price" id="price"></p>
     </div>
-    <img src="img/tcas70-1.jpg" alt="ภาพตัวอย่าง TCAS70 Tracker หน้าสรุป" width="1080" height="1350">
+    <img src="img/planner-1.jpg" alt="แพลนเนอร์ dek70 หน้าเดือนมกราคม 2570" width="1080" height="1350">
   </div>
 </header>
 
 <section>
   <div class="wrap">
-    <h2>มีอะไรในไฟล์</h2>
-    <p class="sub">ทุกชีตมีวิธีใช้ ช่องสีเหลืองกรอกเอง ช่องสีขาวระบบคิดให้ ไม่ต้องเก่ง Excel</p>
+    <h2>มีอะไรในแพลนเนอร์</h2>
+    <p class="sub">พ.ย. 2569 – พ.ค. 2570 ครบทุกวันตั้งแต่สมัครสอบจนถึงประกาศผล</p>
     <div class="feats">
-      <div class="f"><div class="e">📅</div><h3>ปฏิทิน TCAS70</h3><p>นับถอยหลังทุกวันสำคัญ เตือน 🔥 เมื่อเหลือไม่ถึง 7 วัน วันที่แสดงเป็น พ.ศ. เพิ่มกิจกรรมเองได้</p></div>
-      <div class="f"><div class="e">🎯</div><h3>คำนวณคะแนน 20 คณะ</h3><p>ใส่ค่าน้ำหนักตามระเบียบการ ระบบคิดคะแนนและเทียบกับคะแนนต่ำสุดปีก่อน เตือนถ้าน้ำหนักรวมไม่ครบ 100%</p></div>
-      <div class="f"><div class="e">📚</div><h3>ควรอ่านอะไรก่อน</h3><p>จัดลำดับวิชาจากคะแนนที่ยังขาดเป้า × น้ำหนักที่คณะที่เล็งให้วิชานั้น</p></div>
-      <div class="f"><div class="e">📊</div><h3>ตารางคะแนน</h3><p>GPAX, TGAT1–3, TPAT2–5 และ A-Level ทุกวิชา พร้อมคะแนนเป้าหมาย</p></div>
-      <div class="f"><div class="e">📁</div><h3>เช็กลิสต์พอร์ต</h3><p>15 ข้อที่ต้องเตรียม พร้อม % ความคืบหน้า</p></div>
-      <div class="f"><div class="e">💸</div><h3>งบค่าสมัคร</h3><p>รวมค่าสมัครและค่าใช้จ่ายให้อัตโนมัติ ใช้คุยกับที่บ้านได้เลย</p></div>
+      <div class="f"><div class="e">📅</div><h3>วัน TCAS70 ในทุกหน้า</h3><p>วันสมัคร วันสอบ วันประกาศผล ใส่ไว้ให้แล้ว มีหน้าไทม์ไลน์ที่กดไปหน้าวันนั้นได้</p></div>
+      <div class="f"><div class="e">⏳</div><h3>นับถอยหลังทุกวัน</h3><p>ทุกหน้ารายวันบอกว่าเหลือกี่วันถึงสอบครั้งถัดไป และขึ้น "วันนี้!" ในวันสอบ</p></div>
+      <div class="f"><div class="e">⏱️</div><h3>อ่านแบบ 25 นาที</h3><p>ช่องระบายวงกลมทีละ 25 นาทีต่อวิชา และตารางรวมชั่วโมงอ่านรายสัปดาห์</p></div>
+      <div class="f"><div class="e">🎯</div><h3>เป้าหมาย + แผนรายวิชา</h3><p>หน้าคณะในฝัน 10 อันดับ และแผนหัวข้อที่ต้องอ่านของแต่ละวิชา</p></div>
+      <div class="f"><div class="e">📈</div><h3>บันทึกสอบจำลอง</h3><p>จดคะแนนทุกครั้งที่ทำข้อสอบเก่า ดูว่าคะแนนขึ้นไหม และต้องทบทวนเรื่องอะไร</p></div>
+      <div class="f"><div class="e">🌙</div><h3>สว่าง + มืด</h3><p>ได้ทั้ง 2 แบบ เลือกแบบที่อ่านสบายตา หรือสั่งพิมพ์เป็นกระดาษก็ได้</p></div>
     </div>
   </div>
 </section>
 
 <section style="padding-top:0">
   <div class="wrap">
-    <h2>ดูภาพตัวอย่าง</h2>
-    <p class="sub">กดที่ภาพเพื่อดูขนาดเต็ม</p>
+    <h2>ดูหน้าตัวอย่าง</h2>
+    <p class="sub">ภาพจากไฟล์จริง กดเพื่อดูขนาดเต็ม</p>
     <div class="gallery">
-      <a href="img/tcas70-2.jpg"><img src="img/tcas70-2-sm.jpg" alt="หน้าสรุปของฉันวันนี้" loading="lazy" width="540" height="675"></a>
-      <a href="img/tcas70-3.jpg"><img src="img/tcas70-3-sm.jpg" alt="ตัวคำนวณคะแนนคณะที่เล็ง" loading="lazy" width="540" height="675"></a>
-      <a href="img/tcas70-4.jpg"><img src="img/tcas70-4-sm.jpg" alt="จัดลำดับวิชาที่ควรอ่านก่อน" loading="lazy" width="540" height="675"></a>
-      <a href="img/tcas70-5.jpg"><img src="img/tcas70-5-sm.jpg" alt="ปฏิทิน TCAS70 นับถอยหลัง" loading="lazy" width="540" height="675"></a>
-      <a href="img/tcas70-6.jpg"><img src="img/tcas70-6-sm.jpg" alt="เช็กลิสต์พอร์ตและค่าใช้จ่าย" loading="lazy" width="540" height="675"></a>
-      <a href="img/tcas70-7.jpg"><img src="img/tcas70-7-sm.jpg" alt="ได้อะไรบ้าง" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-2.jpg"><img src="img/planner-2-sm.jpg" alt="หน้าไทม์ไลน์ TCAS70" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-3.jpg"><img src="img/planner-3-sm.jpg" alt="หน้ารายวันนับถอยหลัง" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-4.jpg"><img src="img/planner-4-sm.jpg" alt="หน้ารายสัปดาห์" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-5.jpg"><img src="img/planner-5-sm.jpg" alt="หน้าเป้าหมายและบันทึกสอบจำลอง" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-6.jpg"><img src="img/planner-6-sm.jpg" alt="โหมดสว่างและโหมดมืด" loading="lazy" width="540" height="675"></a>
+      <a href="img/planner-7.jpg"><img src="img/planner-7-sm.jpg" alt="ได้อะไรบ้าง" loading="lazy" width="540" height="675"></a>
     </div>
   </div>
 </section>
 
 <section style="padding-top:0">
   <div class="wrap">
-    <h2>แผนอ่านฟรี vs Tracker เต็ม</h2>
-    <p class="sub">เริ่มจากแผนอ่านฟรีบนเว็บได้เลย ใช้บนมือถือ ไม่ต้องสมัคร — <a href="../app/">เปิดแผนอ่านฟรี →</a></p>
-    <table class="compare">
-      <tr><th>ฟีเจอร์</th><th>แผนอ่านฟรี</th><th>Tracker เต็ม</th></tr>
-      <tr><td>นับถอยหลังแยกตามวิชาที่สอบ</td><td>✅</td><td>✅</td></tr>
-      <tr><td>จัดแผนอ่านรายวัน / รายสัปดาห์ให้อัตโนมัติ</td><td>✅</td><td>—</td></tr>
-      <tr><td>การ์ดนับถอยหลังลงสตอรี่</td><td>✅</td><td>—</td></tr>
-      <tr><td>ตารางคะแนน + คะแนนเป้าหมาย</td><td>—</td><td>✅</td></tr>
-      <tr><td>คำนวณคะแนนตามค่าน้ำหนัก 20 คณะ</td><td>—</td><td>✅</td></tr>
-      <tr><td>จัดลำดับวิชาที่ควรอ่านก่อนจากคะแนนจริง</td><td>—</td><td>✅</td></tr>
-      <tr><td>เช็กลิสต์พอร์ต + งบค่าสมัคร</td><td>—</td><td>✅</td></tr>
-    </table>
+    <h2>เครื่องมือฟรีของเรา</h2>
+    <p class="sub">ใช้บนมือถือได้เลย ไม่ต้องสมัคร</p>
+    <div class="tools">
+      <a class="tool" href="../app/"><div>📚</div><b>แผนอ่าน dek70</b><p>เลือกวิชาที่สอบ แล้วรู้ทันทีว่าวันนี้ควรอ่านวิชาไหนกี่นาที นับถอยหลังแยกทุกวิชา</p><span>เปิดแผนอ่าน →</span></a>
+      <a class="tool" href="../score/"><div>🎯</div><b>เช็กคะแนนคณะ</b><p>ค้นหาคณะ ใส่คะแนน รู้ว่าได้กี่คะแนนตามเกณฑ์รอบ 3 และผ่านเกณฑ์ขั้นต่ำไหม</p><span>เช็กคะแนน →</span></a>
+    </div>
   </div>
 </section>
 
@@ -137,9 +119,9 @@ footer{padding:32px 0 48px;color:var(--mute);font-size:13px;border-top:1px solid
     <h2>สั่งซื้อยังไง</h2>
     <p class="sub">ใช้เวลาไม่กี่นาที</p>
     <div class="steps">
-      <div class="step"><h3>ทักแชต</h3><p id="howLine">ทัก LINE ของร้าน แจ้งว่าต้องการ TCAS70 Tracker</p></div>
+      <div class="step"><h3>แอด LINE ร้าน</h3><p id="howLine">แอด LINE แล้วพิมพ์ว่า "ซื้อ"</p></div>
       <div class="step"><h3>โอนผ่านพร้อมเพย์</h3><p>ร้านส่ง QR พร้อมเพย์ให้ โอนแล้วส่งสลิปในแชต</p></div>
-      <div class="step"><h3>รับลิงก์ Google Sheets</h3><p>กด "ทำสำเนา" แล้วเป็นไฟล์ของคุณทันที ต้องมีบัญชี Google (Gmail)</p></div>
+      <div class="step"><h3>รับไฟล์</h3><p>ได้ลิงก์ดาวน์โหลด PDF ทั้งแบบสว่างและมืด แล้วนำเข้า GoodNotes / Notability ได้เลย</p></div>
     </div>
   </div>
 </section>
@@ -147,33 +129,30 @@ footer{padding:32px 0 48px;color:var(--mute);font-size:13px;border-top:1px solid
 <section style="padding-top:0">
   <div class="wrap">
     <h2>คำถามที่พบบ่อย</h2>
-    <details><summary>ใช้บนมือถือได้ไหม?</summary><p>ได้ เปิดด้วยแอป Google Sheets บนมือถือหรือแท็บเล็ต ส่วนการกรอกค่าน้ำหนักหลายคณะ จะสะดวกกว่าบนคอม</p></details>
-    <details><summary>วันที่ในปฏิทินถูกต้องไหม?</summary><p>รวบรวมจากข่าวการศึกษาหลายแหล่ง (ข้อมูล ณ 2 พ.ย. 2569) และแก้เองได้ทุกช่อง ควรเทียบกับ mytcas.com ซึ่งเป็นแหล่งทางการเสมอ ผู้ซื้อได้ไฟล์อัปเดตฟรีเมื่อมีประกาศเพิ่ม</p></details>
-    <details><summary>ตัวคำนวณบอกได้ไหมว่าจะติด?</summary><p>ไม่ได้ ตัวคำนวณบอกว่าคะแนนของคุณอยู่ตรงไหนเมื่อเทียบกับคะแนนต่ำสุดปีก่อน ซึ่งเปลี่ยนทุกปีตามผู้สมัคร ใช้เป็นตัวช่วยวางแผน ไม่ใช่การรับประกันผล</p></details>
-    <details><summary>รองรับ TPAT1 (กสพท) ไหม?</summary><p>ปฏิทินมีวันสอบ TPAT1 แต่ตัวคำนวณไม่รวม TPAT1 เพราะ กสพท มีวิธีคิดคะแนนเฉพาะ</p></details>
-    <details><summary>ขอคืนเงินได้ไหม?</summary><p>เป็นสินค้าดิจิทัลที่ส่งเป็นลิงก์ จึงคืนเงินไม่ได้หลังส่งลิงก์แล้ว แนะนำให้ดูภาพตัวอย่างและลองแผนอ่านฟรีก่อน ถ้าไฟล์ใช้งานไม่ได้ ทักมาได้เลย ร้านช่วยแก้ให้</p></details>
+    <details><summary>ใช้กับแอปไหนได้บ้าง?</summary><p>GoodNotes, Notability, Samsung Notes และแอปจดโน้ตที่เปิด PDF ได้ บน iPad หรือแท็บเล็ต Android หรือจะสั่งพิมพ์เป็นกระดาษก็ได้ (หน้าแนวนอน)</p></details>
+    <details><summary>ลิงก์ข้ามหน้ากดได้จริงไหม?</summary><p>ได้ ใน GoodNotes ให้สลับเป็นโหมดอ่าน (Read-only) แล้วแตะลิงก์ ใน Notability ใช้เครื่องมือมือ ควรนำเข้าเป็นไฟล์ PDF ไม่ใช่ "นำเข้าเป็นรูปภาพ" เพราะลิงก์จะหาย</p></details>
+    <details><summary>วันที่ในแพลนเนอร์ถูกต้องไหม?</summary><p>วันสำคัญ TCAS70 รวบรวมจากข่าวการศึกษาหลายแหล่ง ณ 2 พ.ย. 2569 ควรตรวจกับ mytcas.com เสมอ วันหยุดตามจันทรคติและวันหยุดชดเชยจะเพิ่มหลังมีประกาศทางการ ผู้ซื้อได้ไฟล์อัปเดตฟรีทาง LINE</p></details>
+    <details><summary>ขอคืนเงินได้ไหม?</summary><p>เป็นไฟล์ดิจิทัล จึงคืนเงินไม่ได้หลังส่งไฟล์แล้ว แนะนำให้ดูภาพตัวอย่างก่อน ถ้าไฟล์เปิดไม่ได้หรือมีปัญหา ทักมาได้เลย ร้านช่วยแก้ให้</p></details>
   </div>
 </section>
 
 <footer>
   <div class="wrap">
-    <p>TCAS70 Tracker เป็นเครื่องมือวางแผนส่วนตัว ไม่ได้เกี่ยวข้องกับ ทปอ. หรือระบบ TCAS อย่างเป็นทางการ • ตรวจสอบประกาศทางการที่ mytcas.com</p>
-    <p class="note" style="margin-top:6px">ภาพตัวอย่างใช้ข้อมูลสมมุติ ชื่อมหาวิทยาลัยในภาพไม่ใช่สถาบันจริง</p>
+    <p>แพลนเนอร์และเครื่องมือนี้เป็นของนักเรียน dek70 ที่ทำเพื่อเพื่อน ๆ ไม่ได้เกี่ยวข้องกับ ทปอ. หรือระบบ TCAS อย่างเป็นทางการ • ตรวจสอบประกาศทางการที่ mytcas.com</p>
   </div>
 </footer>
 
 <script>
-// ---- ตั้งค่าร้าน: แก้ 3 บรรทัดนี้แล้ว push ----
+// ---- ตั้งค่าร้าน ----
 const SHOP = {
-  open: false,                       // true = เปิดรับออเดอร์ (ต้องมีลิงก์ /copy พร้อมส่งก่อน) • false = แสดง "เปิดขายเร็ว ๆ นี้"
-  line: "https://lin.ee/xyMOK2T",   // ลิงก์ LINE OA
-  price: 99,           // ราคาปกติ (บาท)
-  early: { price: 59, until: "2026-11-10" }  // ราคาโปรเปิดตัว และวันสุดท้าย (ปี ค.ศ.)
+  open: false,                        // true = เปิดรับออเดอร์ (ทดสอบไฟล์ใน GoodNotes + เตรียมลิงก์ดาวน์โหลดก่อน)
+  line: "https://lin.ee/xyMOK2T",    // ลิงก์ LINE OA
+  price: 99,                          // ราคาปกติ (บาท)
+  early: { price: 69, until: "2026-11-30" }   // ราคาเปิดตัว และวันสุดท้าย (ปี ค.ศ.)
 };
 (function () {
   const buy = document.getElementById("buyBtn"), price = document.getElementById("price"), how = document.getElementById("howLine");
   const today = new Date().toISOString().slice(0, 10);
-  const earlyOn = SHOP.early && today <= SHOP.early.until;
   if (!SHOP.open) {
     buy.textContent = "🔔 แจ้งฉันเมื่อเปิดขาย";
     if (SHOP.line) { buy.href = SHOP.line; buy.target = "_blank"; buy.rel = "noopener"; } else buy.classList.add("disabled");
@@ -181,19 +160,12 @@ const SHOP = {
     document.getElementById("how").classList.add("closed");
     return;
   }
-  if (earlyOn) {
-    const d = new Date(SHOP.early.until + "T00:00:00");
-    const th = d.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
+  if (SHOP.early && today <= SHOP.early.until) {
+    const th = new Date(SHOP.early.until + "T00:00:00").toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
     price.innerHTML = `ราคาเปิดตัว <b>${SHOP.early.price} บาท</b><s>${SHOP.price} บาท</s> • ถึง ${th}`;
-  } else {
-    price.innerHTML = `ราคา <b>${SHOP.price} บาท</b> • อัปเดตฟรีทั้งฤดู TCAS70`;
-  }
-  if (SHOP.line) {
-    buy.href = SHOP.line; buy.target = "_blank"; buy.rel = "noopener";
-    how.innerHTML = `ทัก <a href="${SHOP.line}" target="_blank" rel="noopener">LINE ของร้าน</a> แจ้งว่าต้องการ TCAS70 Tracker`;
-  } else {
-    buy.textContent = "🛒 เปิดขายเร็ว ๆ นี้"; buy.classList.add("disabled");
-  }
+  } else price.innerHTML = `ราคา <b>${SHOP.price} บาท</b> • อัปเดตฟรีทาง LINE`;
+  buy.href = SHOP.line; buy.target = "_blank"; buy.rel = "noopener";
+  how.innerHTML = `แอด <a href="${SHOP.line}" target="_blank" rel="noopener">LINE ร้าน</a> แล้วพิมพ์ว่า "ซื้อ"`;
 })();
 </script>
 </body>
