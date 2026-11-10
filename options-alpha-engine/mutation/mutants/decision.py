@@ -59,15 +59,21 @@ MUTANTS = [
  # taking the best instead of compounding them, loosens every size.
  ("effects not compounded",      """    mult = 1.0
     for i in inputs:
-        mult *= i.effect""", """    mult = 1.0
-    for i in inputs:
-        mult = min(mult, i.effect) if i.effect < 1.0 else mult"""),
+        mult *= i.effect
+    return round(mult, 4)""", """    return min([i.effect for i in inputs] or [1.0])"""),
  ("effects ignored entirely",    """    mult = 1.0
     for i in inputs:
-        mult *= i.effect""", "    mult = 1.0"),
+        mult *= i.effect
+    return round(mult, 4)""", "    return 1.0"),
  ("worst input taken as size",   """    mult = 1.0
     for i in inputs:
-        mult *= i.effect""", """    mult = max([i.effect for i in inputs] or [1.0])"""),
+        mult *= i.effect
+    return round(mult, 4)""", """    return max([i.effect for i in inputs] or [1.0])"""),
+ ("no inputs zeroes the size",   "    mult = 1.0\n    for i in inputs:", "    mult = 0.0\n    for i in inputs:"),
+ # Rule 1, now enforced in code rather than described in a comment.
+ ("rule 1 not enforced",         "        if not 0.0 <= self.effect <= 1.0:", "        if False:"),
+ ("rule 1 upper bound dropped",  "        if not 0.0 <= self.effect <= 1.0:", "        if not 0.0 <= self.effect:"),
+ ("rule 1 lower bound dropped",  "        if not 0.0 <= self.effect <= 1.0:", "        if not self.effect <= 1.0:"),
 
  # Warnings from the card must survive into the decision. A dropped warning is
  # a caveat the reader never sees next to a number they will act on.

@@ -66,6 +66,22 @@ class Input:
     effect: float = 1.0        # multiplier applied to size; <= 1.0 always
     note: str = ""
 
+    def __post_init__(self):
+        """Rule 1, enforced rather than described.
+
+        `effect <= 1.0` was a comment on the field for as long as this module
+        existed, and a comment does not stop an input being constructed with
+        1.5. That one number is the whole failure mode the module was written
+        against: an unmeasured signal manufacturing position size. It is now
+        refused at construction, so the rule holds for every caller including
+        ones not written yet.
+        """
+        if not 0.0 <= self.effect <= 1.0:
+            raise ValueError(
+                f"{self.name!r} has effect {self.effect}, outside [0, 1]. An "
+                f"input may only REDUCE size: letting one raise it is how an "
+                f"unmeasured signal ends up manufacturing a position")
+
     def line(self) -> str:
         eff = "" if self.effect >= 1.0 else f"  size x{self.effect:.2f}"
         return (f"  {self.name:16} {self.reading:34} [{self.status}]{eff}"
@@ -174,6 +190,23 @@ def _crowding_input(share, note, *, crowded_cut: float, crowded_at: float):
     return Input("fund crowding", reading, NO_DATA, 1.0)
 
 
+def combined_effect(inputs) -> float:
+    """Every input's effect, COMPOUNDED -- not the smallest of them.
+
+    Extracted because it cannot be tested through `build_decision`. Only
+    `_crowding_input` can currently return an effect below 1.0, so with one
+    factor the product and the minimum agree and a mutant swapping them
+    survives every test. The distinction is still load-bearing: `_rotation_input`
+    becomes live again if some future sample produces a positive registered
+    result, and then two simultaneous cuts of 0.6 and 0.5 must size at 30%, not
+    50%. Two independent reasons to halve a position are not one reason.
+    """
+    mult = 1.0
+    for i in inputs:
+        mult *= i.effect
+    return round(mult, 4)
+
+
 def build_decision(card, *, rotation_point=None, crowding=None,
                    lagging_cut: float = 0.5, weakening_cut: float = 0.75,
                    crowded_cut: float = 0.6, crowded_at: float = 0.30) -> Decision:
@@ -223,10 +256,7 @@ def build_decision(card, *, rotation_point=None, crowding=None,
             reason=getattr(card, "vol_reason", "the variance edge did not fire"),
             size_multiplier=0.0, inputs=inputs, warnings=warnings)
 
-    mult = 1.0
-    for i in inputs:
-        mult *= i.effect
-    mult = round(mult, 4)
+    mult = combined_effect(inputs)
 
     reason = getattr(card, "vol_reason", "")
     if mult < 1.0:

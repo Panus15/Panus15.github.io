@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.decision import (FIXTURE_ONLY, NO_DATA, TESTED_NO_EDGE, VALIDATED,
-                             Decision, Input, build_decision)
+                             Decision, Input, build_decision, combined_effect)
 from models.rotation import RotationPoint
 
 
@@ -207,6 +207,68 @@ def test_card_warnings_survive_the_fusion():
     d = build_decision(c, rotation_point=_pt("Leading"), crowding=(0.0, ""))
     assert any("44%" in w for w in d.warnings)
     assert "44%" in d.render()
+
+
+# ---------------------------------------------------------------------------
+# The four gaps the first mutation sweep of this module found. Every one of
+# them passed the twelve tests above.
+# ---------------------------------------------------------------------------
+
+def test_an_input_cannot_be_built_that_RAISES_size():
+    # Rule 1 was a comment on the field (`<= 1.0 always`) and a comment does
+    # not stop anyone constructing 1.5. That single number is the failure the
+    # module exists to prevent: an unmeasured signal manufacturing a position.
+    for bad in (1.5, 1.0001, -0.1):
+        try:
+            Input("made up", "reading", NO_DATA, bad)
+        except ValueError as e:
+            assert "only REDUCE" in str(e) or "outside" in str(e), e
+        else:
+            assert False, f"an input with effect {bad} was accepted"
+    Input("fine", "reading", NO_DATA, 1.0)       # the boundary must still work
+    Input("fine", "reading", NO_DATA, 0.0)
+
+
+def test_two_cuts_compound_rather_than_taking_the_worst():
+    # Unreachable through build_decision: only crowding can currently cut, and
+    # with one factor the product and the minimum agree, so a mutant swapping
+    # them survives. Two independent reasons to halve a position are not one
+    # reason -- 0.6 and 0.5 must size at 30%, not 50%.
+    ins = [Input("a", "r", NO_DATA, 0.6), Input("b", "r", NO_DATA, 0.5),
+           Input("c", "r", VALIDATED, 1.0)]
+    got = combined_effect(ins)
+    assert abs(got - 0.30) < 1e-9, (
+        f"{got}: 0.50 is the minimum, 0.60 is the first factor, 0.30 is the "
+        f"product — only the product compounds")
+
+
+def test_no_cuts_leaves_size_untouched():
+    assert combined_effect([Input("a", "r", VALIDATED, 1.0)]) == 1.0
+    assert combined_effect([]) == 1.0, "no inputs must not zero the size"
+
+
+def test_an_empty_or_missing_vol_side_is_NO_TRADE_not_a_full_size_trade():
+    # `vol_side in ("NO TRADE", "", None)` -- the "" and None arms had no test,
+    # so a card whose variance edge produced nothing at all would fall through
+    # and be SIZED. A missing string is not a signal to trade.
+    for side in ("", None):
+        d = build_decision(_Card(side=side))
+        assert d.action == "NO TRADE", f"vol_side {side!r} gave {d.action!r}"
+        assert d.size_multiplier == 0.0, (
+            f"vol_side {side!r} was sized at {d.size_multiplier}")
+
+
+def test_a_sized_down_decision_says_which_inputs_cut_it():
+    # A reader shown "size 60%" and no reason cannot tell whether it was
+    # crowding, a stale archive or a bug. Both the suppression and the
+    # inverted selection survived the suite.
+    d = build_decision(_Card(), crowding=(0.80, "80% of float held by funds"))
+    assert d.size_multiplier < 1.0, d.size_multiplier
+    assert "sized down" in d.reason, d.reason
+    assert "fund crowding" in d.reason, (
+        f"the cutting input is not named: {d.reason!r}")
+    assert "variance edge" not in d.reason, (
+        f"an input that did NOT cut is named as if it had: {d.reason!r}")
 
 
 def _run_all():
