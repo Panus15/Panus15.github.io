@@ -662,6 +662,50 @@ def test_segmenting_needs_at_least_two_stretches():
         assert False, "one segment cannot be compared against anything"
 
 
+# ---------------------------------------------------------------------------
+# COSTS_DISAGREE's floor depends on HOW the backtest charged.
+#
+# On the flat path every trade pays the round turn, so anything cheaper means
+# the result was measured on a different model. On the measured-spread path the
+# charge is the file's own spread plus commission, and the spread is below the
+# flat figure most of the time -- comparing against the round turn there
+# refuses a correct run, which is what it did when that path was first wired.
+# ---------------------------------------------------------------------------
+
+def test_a_measured_run_is_not_refused_for_charging_less_than_the_round_turn():
+    res = _result(36, 20.0, 24, 10.0, cost=0.4)   # below MINE's 1.2 round turn
+    res.costs_from_file = True
+    v = judge(res, CostModel(pair="EURUSD", round_turn_pips=1.2,
+                             swap_markup_annual=0.012, commission_pips=0.3),
+              n_hypotheses=4, costs_confirmed=True)
+    assert COSTS_DISAGREE not in v.codes, (
+        f"a measured run charging 0.4 against a 0.3 commission was refused "
+        f"for undercharging: {v.codes}")
+
+
+def test_a_measured_run_IS_refused_below_the_commission_it_declared():
+    # 0.4 charged against a declared 0.9 commission: impossible, since the
+    # commission is paid before any spread. The guard still has teeth here.
+    res = _result(36, 20.0, 24, 10.0, cost=0.4)
+    res.costs_from_file = True
+    v = judge(res, CostModel(pair="EURUSD", round_turn_pips=1.2,
+                             swap_markup_annual=0.012, commission_pips=0.9),
+              n_hypotheses=4, costs_confirmed=True)
+    assert COSTS_DISAGREE in v.codes, v.codes
+    detail = next(r.detail for r in v.refusals if r.code == COSTS_DISAGREE)
+    assert "commission you declared" in detail, detail
+
+
+def test_a_flat_run_is_still_refused_for_charging_less_than_the_round_turn():
+    # Guard isolation in the other direction: the original rule must survive.
+    res = _result(36, 20.0, 24, 10.0, cost=0.4)
+    assert res.costs_from_file is False
+    v = judge(res, MINE, n_hypotheses=4, costs_confirmed=True)
+    assert COSTS_DISAGREE in v.codes, v.codes
+    detail = next(r.detail for r in v.refusals if r.code == COSTS_DISAGREE)
+    assert "round turn ALONE" in detail, detail
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

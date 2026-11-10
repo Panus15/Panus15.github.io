@@ -9,6 +9,12 @@ TARGET = "engine/costs.py"
 TESTS = "tests/test_expectancy.py"
 
 MUTANTS = [
+ # The measured-spread substitution. It must replace the spread part and keep
+ # the commission, never double-charge and never silently discard either.
+ ("measured spread discarded",   "        spread = self.round_turn_pips if spread_pips is None \\\n            else spread_pips + self.commission_pips", "        spread = self.round_turn_pips"),
+ ("commission dropped",          "            else spread_pips + self.commission_pips", "            else spread_pips"),
+ ("round turn charged as well",  "            else spread_pips + self.commission_pips", "            else spread_pips + self.commission_pips + self.round_turn_pips"),
+ ("negative commission allowed", "        if self.commission_pips < 0:", "        if False:"),
  ("JPY pip size wrong",         '    return 0.01 if pair.upper().endswith("JPY") else 0.0001', '    return 0.0001'),
  ("pip size case sensitive",    '    return 0.01 if pair.upper().endswith("JPY") else 0.0001', '    return 0.01 if pair.endswith("JPY") else 0.0001'),
  ("bp per pip inverted",        "    return pip_size(pair) / price * 10_000.0", "    return price / pip_size(pair) * 10_000.0"),

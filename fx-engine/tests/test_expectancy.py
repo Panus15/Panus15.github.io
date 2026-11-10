@@ -307,6 +307,54 @@ def test_the_summary_leads_with_the_verdict_not_the_win_rate():
     assert "PROFITABLE" in good
 
 
+# ---------------------------------------------------------------------------
+# The measured-spread substitution. It replaces the SPREAD part of the round
+# turn and keeps the commission, because a price file contains the one and
+# never the other.
+# ---------------------------------------------------------------------------
+
+def test_a_measured_spread_replaces_the_round_turn_and_keeps_the_commission():
+    c = CostModel(pair="EURUSD", round_turn_pips=1.5, swap_markup_annual=0.01,
+                  commission_pips=0.4)
+    flat = c.total_cost_pips(0, 1.10)
+    assert abs(flat - 1.5) < 1e-12, f"flat path charged {flat}, expected 1.5"
+    meas = c.total_cost_pips(0, 1.10, spread_pips=0.2)
+    assert abs(meas - 0.6) < 1e-12, (
+        f"measured path charged {meas}, expected 0.2 spread + 0.4 commission. "
+        f"1.5 means the measurement was discarded; 2.1 means the round turn "
+        f"was charged on top of it")
+
+
+def test_a_measured_spread_can_cost_MORE_than_the_flat_assumption():
+    # The substitution is not a discount. A trade entered in the minute after
+    # a release pays the recorded spread of that minute, and on the file this
+    # was written against that is 4.6 pips against a 0.30 median.
+    c = CostModel(pair="USDJPY", round_turn_pips=1.0, swap_markup_annual=0.006,
+                  commission_pips=0.0)
+    assert c.total_cost_pips(0, 154.0, spread_pips=4.6) > c.total_cost_pips(0, 154.0)
+
+
+def test_a_negative_commission_is_refused():
+    # The one input that would make any strategy look alive: a broker paying
+    # you to trade. Refused for the same reason as a negative round turn.
+    try:
+        CostModel(pair="EURUSD", commission_pips=-0.1)
+    except ValueError as e:
+        assert "commission_pips" in str(e), e
+    else:
+        assert False, "a negative commission was accepted"
+
+
+def test_financing_is_still_charged_on_the_measured_path():
+    c = CostModel(pair="EURUSD", round_turn_pips=1.5, swap_markup_annual=0.02,
+                  commission_pips=0.1)
+    held = c.total_cost_pips(10, 1.10, spread_pips=0.2)
+    flat_held = c.total_cost_pips(0, 1.10, spread_pips=0.2)
+    assert held > flat_held, (
+        "ten nights cost no more than none on the measured path — financing "
+        "was dropped along with the round turn")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

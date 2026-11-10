@@ -56,6 +56,7 @@ from models.patterns import DETECTORS, PARAMETER_COUNT
 def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             costs_measured: bool = False, time_format: str = None,
             patterns=None, holdout: float = None, spread_quantile: float = 0.5,
+            use_recorded_spread: bool = True,
             report_path: str = None, rule_paths=None, out=print) -> int:
     """Load, check, scan, backtest, judge. Returns a process exit code.
 
@@ -99,6 +100,17 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
             f"before commission")
     out("")
 
+    # When the file recorded its own spread, charge THAT per trade instead of
+    # one flat figure for all of them. `side` decides which bar's spread each
+    # leg pays, which is the only thing in the engine that reads it.
+    charge = {}
+    if series.spreads and use_recorded_spread:
+        charge = {"spreads": series.spreads, "side": side}
+        out(f"charging:  the spread each trade's own bars recorded, plus "
+            f"{costs.commission_pips:.2f} pip commission"
+            f"{'  (commission is ZERO — see --commission)' if not costs.commission_pips else ''}")
+        out("")
+
     # name -> (detect_fn, declared parameter count, evidence override).
     # A rule you wrote goes in beside the built-ins and is treated identically:
     # same costs, same ambiguous-bar rule, same correction, same refusals.
@@ -134,7 +146,8 @@ def analyse(path: str, pair: str, side: str, costs: CostModel, *,
         f"  verdict")
     passed, judged, results = [], {}, {}
     for name, (fn, _pc, ev) in chosen.items():
-        res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn)
+        res = run(series.bars, fn(series.bars), costs, bars_per_night=bpn,
+                  **charge)
         v = judge(res, costs, name=name, n_hypotheses=n_hyp,
                   costs_confirmed=costs_measured, evidence=ev,
                   recorded_spread_pips=rec)
@@ -216,6 +229,15 @@ def main(argv=None) -> int:
                    help="broker markup over tom-next, per year, as a fraction")
     p.add_argument("--carry", type=float, default=0.0,
                    help="net yield differential you expect to earn (+) or pay (-)")
+    p.add_argument("--commission", type=float, default=0.0, metavar="PIPS",
+                   help="commission plus slippage per round turn, in pips. "
+                        "Used with a file that records its own spread, where "
+                        "it is the part the file CANNOT contain. Zero models a "
+                        "broker that works for nothing; a $7/lot round turn on "
+                        "EURUSD is about 0.7")
+    p.add_argument("--flat-cost", action="store_true",
+                   help="ignore a recorded spread column and charge "
+                        "--round-turn flat to every trade, as before")
     p.add_argument("--spread-quantile", type=float, default=0.5,
                    metavar="Q",
                    help="which percentile of a recorded spread column to hold "
@@ -246,13 +268,15 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
 
     costs = CostModel(pair=a.pair, round_turn_pips=a.round_turn,
-                      swap_markup_annual=a.swap_markup, carry_annual=a.carry)
+                      swap_markup_annual=a.swap_markup, carry_annual=a.carry,
+                      commission_pips=a.commission)
     try:
         return analyse(a.path, a.pair, a.side, costs,
                        costs_measured=a.costs_measured,
                        time_format=a.time_format, patterns=a.pattern,
                        holdout=a.holdout, report_path=a.report,
                        spread_quantile=a.spread_quantile,
+                       use_recorded_spread=not a.flat_cost,
                        rule_paths=a.rule)
     except (OSError, ValueError) as e:
         print(f"could not analyse {a.path}: {e}", file=sys.stderr)

@@ -5,22 +5,22 @@ python3 mutation/run.py                 # every target
 python3 mutation/run.py verdict data    # named targets only
 ```
 
-**348 deliberate defects across 13 targets. All 348 caught.**
+**366 deliberate defects across 13 targets. All 366 caught.**
 
 | target | file | defects |
 |---|---|---|
-| `verdict` | `engine/verdict.py` | 57 |
+| `verdict` | `engine/verdict.py` | 59 |
 | `data` | `engine/data.py` | 42 |
+| `backtest` | `engine/backtest.py` | 33 |
 | `rules` | `engine/rules.py` | 29 |
 | `analyse` | `tools/analyse.py` | 28 |
 | `holdout` | `engine/holdout.py` | 25 |
 | `levers` | `engine/levers.py` | 25 |
 | `report` | `tools/report.py` | 23 |
 | `calibrate` | `tools/calibrate.py` | 22 |
+| `costs` | `engine/costs.py` | 22 |
 | `nullcheck` | `tools/nullcheck.py` | 22 |
-| `backtest` | `engine/backtest.py` | 21 |
 | `stats` | `engine/stats.py` | 20 |
-| `costs` | `engine/costs.py` | 18 |
 | `patterns` | `models/patterns.py` | 16 |
 
 ## Why this is in the repository

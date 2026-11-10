@@ -91,6 +91,12 @@ class BacktestResult:
     slipped_stops: int = 0
     worst_slippage_pips: float = 0.0
     timeouts: int = 0
+    #: True when every trade was charged the spread its own bars recorded,
+    #: rather than one flat assumption. `verdict.judge` needs this: the floor a
+    #: trade's cost can legitimately sit at is `round_turn_pips` on the flat
+    #: path and `commission_pips` on the measured one, and comparing against
+    #: the wrong one refuses a correct configuration.
+    costs_from_file: bool = False
 
     @property
     def n(self) -> int:
@@ -159,14 +165,57 @@ class BacktestResult:
         return out
 
 
+#: Which leg of a round trip crosses the spread, per side of the book the bars
+#: were quoted on. This is the only thing in the engine that reads `side`, and
+#: it is why the loader demands it.
+#:
+#:   BID bars. A long enters at the ask (bid + spread at the ENTRY bar) and
+#:   exits at the bid, so it pays the entry bar's spread and nothing at the
+#:   exit. A short sells at the bid and buys back at the ask, so it pays the
+#:   EXIT bar's spread.
+#:   ASK bars. The mirror image: a long pays at the exit, a short at the entry.
+#:   MID bars. Neither price is tradeable, so each leg crosses HALF a spread --
+#:   half of the entry bar's and half of the exit bar's.
+#:
+#: One full spread per round trip in every case; what differs is WHICH bar's
+#: spread, and on a file whose spread moves by a factor of fifteen that is not
+#: a rounding detail.
+SPREAD_LEGS = {
+    "bid": {1: (1.0, 0.0), -1: (0.0, 1.0)},
+    "ask": {1: (0.0, 1.0), -1: (1.0, 0.0)},
+    "mid": {1: (0.5, 0.5), -1: (0.5, 0.5)},
+}
+
+
+def spread_paid(side: str, direction: int, entry_spread: float,
+                exit_spread: float) -> float:
+    """The spread one round trip crosses, given the side the bars are quoted on."""
+    if side not in SPREAD_LEGS:
+        raise ValueError(f"side must be one of {sorted(SPREAD_LEGS)}, got "
+                         f"{side!r} — it decides which bar's spread is paid")
+    if direction not in (1, -1):
+        raise ValueError(f"direction must be +1 or -1, got {direction!r}")
+    w_in, w_out = SPREAD_LEGS[side][direction]
+    return w_in * entry_spread + w_out * exit_spread
+
+
 def run(bars: list, detections: list, costs: CostModel, *,
         max_hold: int = MAX_HOLD_BARS,
-        bars_per_night: float = 1.0) -> BacktestResult:
+        bars_per_night: float = 1.0,
+        spreads: list = None, side: str = None) -> BacktestResult:
     """Walk each detection forward and resolve it honestly.
 
     Entry is at the NEXT bar's open after the pattern completed — never at the
     detection bar's close, which would assume you acted on a bar while it was still
     forming.
+
+    ``spreads`` and ``side`` switch cost from a flat assumption to the spread
+    the file RECORDED on the bars each trade crossed. Both are required
+    together: a per-bar spread is useless without knowing which side of the
+    book the bars are, because that decides which leg pays it. With them, each
+    trade is charged its own measured spread plus `costs.commission_pips` --
+    the part no price file contains. Without them nothing changes and
+    `round_turn_pips` is charged flat, as before.
 
     ``bars_per_night`` is how many bars make one financing rollover: 1 for daily
     bars, 24 for hourly, 96 for 15-minute. The default of 1 is correct for daily
@@ -180,7 +229,15 @@ def run(bars: list, detections: list, costs: CostModel, *,
     bars alone cannot say, since they carry no clock. It errs low there and
     nowhere else, and `financing_note` says so.
     """
-    res = BacktestResult()
+    if (spreads is None) != (side is None):
+        raise ValueError(
+            "pass `spreads` and `side` together or neither: a per-bar spread "
+            "cannot be charged without knowing which side of the book the bars "
+            "are quoted on, because that is what decides which leg pays it")
+    if spreads is not None and side not in SPREAD_LEGS:
+        raise ValueError(f"side must be one of {sorted(SPREAD_LEGS)}, got "
+                         f"{side!r}")
+    res = BacktestResult(costs_from_file=spreads is not None)
     psize = pip_size(costs.pair)
     if bars_per_night <= 0:
         raise ValueError(f"bars_per_night must be positive, got {bars_per_night!r}")
@@ -242,7 +299,13 @@ def run(bars: list, detections: list, costs: CostModel, *,
 
         gross = (exit_px - entry_px) * d.direction / psize
         nights = int(max(exit_i - i0, 0) / bars_per_night)
-        cost = costs.total_cost_pips(nights, entry_px)
+        sp = None
+        if spreads is not None:
+            a = spreads[i0] if i0 < len(spreads) else None
+            b = spreads[exit_i] if exit_i < len(spreads) else None
+            if a is not None and b is not None:
+                sp = spread_paid(side, d.direction, a, b) / psize
+        cost = costs.total_cost_pips(nights, entry_px, spread_pips=sp)
         res.trades.append(Trade(
             name=d.name, entry_index=i0, exit_index=exit_i, direction=d.direction,
             entry=entry_px, exit=exit_px, pips=gross, cost_pips=cost,

@@ -18,7 +18,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from engine.backtest import (AMBIGUITY_WARN_FRAC, MAX_HOLD_BARS, run, summary)
+from engine.backtest import (AMBIGUITY_WARN_FRAC, MAX_HOLD_BARS, SPREAD_LEGS,
+                             run, spread_paid, summary)
 from engine.costs import CostModel
 from models.patterns import Bar, Detection
 
@@ -279,6 +280,97 @@ def test_the_summary_carries_the_warnings_with_the_numbers():
     assert "gap case" in text and "!!" in text
     assert "gapped THROUGH" in text
     assert summary(run(_flat(1.10, 3), [], FREE)) == "backtest: no trades"
+
+
+# ---------------------------------------------------------------------------
+# The measured-spread path, and the only thing in the engine that reads `side`.
+#
+# A round trip crosses ONE full spread whichever side the bars are quoted on --
+# what differs is WHICH bar's spread. On BID bars a long enters at the ask and
+# exits at the bid, so it pays the entry bar's spread; a short pays the exit
+# bar's. Getting that backwards is invisible on a file with a steady spread and
+# costs real money on one whose spread moves by a factor of thirty.
+# ---------------------------------------------------------------------------
+
+def test_a_round_trip_crosses_exactly_one_spread_on_every_side():
+    # The invariant that makes the table readable: the two legs always sum to
+    # one, so no side is systematically cheaper than another.
+    for side, by_dir in sorted(SPREAD_LEGS.items()):
+        for direction, (w_in, w_out) in sorted(by_dir.items()):
+            assert abs(w_in + w_out - 1.0) < 1e-12, (
+                f"{side} {direction:+d} crosses {w_in + w_out} spreads")
+
+
+def test_which_bar_pays_depends_on_the_side_and_the_direction():
+    # Literal values. Entry bar spread 1.0, exit bar spread 9.0 -- far apart on
+    # purpose, so an averaged or swapped reading cannot land on the right
+    # answer by accident.
+    assert spread_paid("bid", 1, 1.0, 9.0) == 1.0, "a long on BID pays at entry"
+    assert spread_paid("bid", -1, 1.0, 9.0) == 9.0, "a short on BID pays at exit"
+    assert spread_paid("ask", 1, 1.0, 9.0) == 9.0, "a long on ASK pays at exit"
+    assert spread_paid("ask", -1, 1.0, 9.0) == 1.0, "a short on ASK pays at entry"
+    assert spread_paid("mid", 1, 1.0, 9.0) == 5.0, "MID crosses half of each"
+    assert spread_paid("mid", -1, 1.0, 9.0) == 5.0
+
+
+def test_an_unknown_side_or_direction_is_refused():
+    for bad in ("", "BID", "mid ", None):
+        try:
+            spread_paid(bad, 1, 1.0, 1.0)
+        except ValueError as e:
+            assert "side" in str(e), e
+        else:
+            assert False, f"side {bad!r} was accepted"
+    try:
+        spread_paid("bid", 0, 1.0, 1.0)
+    except ValueError as e:
+        assert "direction" in str(e), e
+    else:
+        assert False, "direction 0 was accepted"
+
+
+def test_spreads_and_side_must_be_passed_together():
+    bars = [Bar(1.1000, 1.1010, 1.0990, 1.1005) for _ in range(20)]
+    for kw in ({"spreads": [0.0001] * 20}, {"side": "bid"}):
+        try:
+            run(bars, [], CostModel(pair="EURUSD"), **kw)
+        except ValueError as e:
+            assert "together" in str(e), e
+        else:
+            assert False, f"run accepted {sorted(kw)} alone"
+
+
+def test_a_measured_spread_is_charged_instead_of_the_flat_round_turn():
+    # Flat would charge 1.5 pips to every trade. The file records 0.3 pips at
+    # the entry bar, and the declared commission is 0.2, so the honest charge
+    # is 0.5 -- a number neither the flat path nor a commission-free measured
+    # path can produce.
+    bars = [Bar(1.1000, 1.1030, 1.0999, 1.1020) for _ in range(30)]
+    det = Detection(name="double_top", index=0, direction=1,
+                    entry=1.1000, stop=1.0950, target=1.1010)
+    costs = CostModel(pair="EURUSD", round_turn_pips=1.5,
+                      swap_markup_annual=0.01, commission_pips=0.2)
+    flat = run(bars, [det], costs)
+    assert flat.costs_from_file is False
+    assert abs(flat.trades[0].cost_pips - 1.5) < 1e-9, flat.trades[0].cost_pips
+
+    meas = run(bars, [det], costs, spreads=[0.00003] * 30, side="bid")
+    assert meas.costs_from_file is True
+    assert abs(meas.trades[0].cost_pips - 0.5) < 1e-9, (
+        f"{meas.trades[0].cost_pips}: expected 0.3 measured + 0.2 commission")
+
+
+def test_a_bar_with_no_recorded_spread_falls_back_to_the_flat_charge():
+    # A file can carry a spread column with gaps in it. Inventing a spread for
+    # those bars would be the loader's cardinal sin; charging the flat figure
+    # is the documented fallback.
+    bars = [Bar(1.1000, 1.1030, 1.0999, 1.1020) for _ in range(30)]
+    det = Detection(name="double_top", index=0, direction=1,
+                    entry=1.1000, stop=1.0950, target=1.1010)
+    costs = CostModel(pair="EURUSD", round_turn_pips=1.5,
+                      swap_markup_annual=0.01, commission_pips=0.2)
+    res = run(bars, [det], costs, spreads=[None] * 30, side="bid")
+    assert abs(res.trades[0].cost_pips - 1.5) < 1e-9, res.trades[0].cost_pips
 
 
 def _run_all():

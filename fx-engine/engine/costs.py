@@ -51,6 +51,13 @@ TYPICAL_ROUND_TURN_PIPS = (0.9, 2.5)
 #: commonly run 2-3%. It is charged in BOTH directions.
 TYPICAL_SWAP_MARKUP = (0.005, 0.03)
 
+#: Commission plus slippage, in pips per round turn, for the measured-spread
+#: path. Zero is a DELIBERATE under-estimate and it is reported as one: on a
+#: raw/ECN account the commission is most of the cost (about 0.7 pips for $7
+#: per lot on EURUSD), so leaving this at zero while charging a measured 0.3-pip
+#: spread models a broker that works for nothing.
+DEFAULT_COMMISSION_PIPS = 0.0
+
 #: Days per year used to accrue financing. Calendar, not trading: a position held
 #: over a weekend is financed for those days too, and Wednesday is charged triple
 #: to cover the weekend value date.
@@ -105,12 +112,21 @@ class CostModel:
     #: (short it), as a fraction per year. Signed from the position's point of
     #: view, before the markup is applied.
     carry_annual: float = 0.0
+    #: Commission plus slippage per round turn, in pips. Used ONLY on the
+    #: measured-spread path, where it is the part of the cost the file cannot
+    #: contain. On the flat path `round_turn_pips` already includes it and this
+    #: is ignored, so it is never charged twice.
+    commission_pips: float = DEFAULT_COMMISSION_PIPS
 
     def __post_init__(self):
         if self.round_turn_pips < 0:
             raise ValueError("round_turn_pips cannot be negative")
         if self.swap_markup_annual < 0:
             raise ValueError("swap_markup_annual cannot be negative")
+        if self.commission_pips < 0:
+            raise ValueError(
+                "commission_pips cannot be negative — a broker that pays you "
+                "to trade is the one input that makes any strategy look alive")
 
     # ---- per-trade -------------------------------------------------------
 
@@ -139,13 +155,26 @@ class CostModel:
         bp = net_annual * frac * 10_000.0
         return bp / bp_per_pip(self.pair, price)
 
-    def total_cost_pips(self, nights: int, price: float) -> float:
+    def total_cost_pips(self, nights: int, price: float, *,
+                        spread_pips: float = None) -> float:
         """All-in cost of one round trip held for ``nights``, in pips.
 
         This is the number that goes into the expectancy calculation. Anything
         smaller is a backtest lying to itself.
+
+        ``spread_pips`` replaces the SPREAD PART of `round_turn_pips` with a
+        measured figure, when the file recorded one for the bars this trade
+        actually crossed. What stays is `commission_pips`: the part no price
+        file contains and nobody can measure for you.
+
+        The substitution is not a discount. It can raise the cost as easily as
+        lower it, and on a strategy whose entries bunch into the minute after a
+        release it raises it a long way -- the file this was written against
+        has a median spread of 0.30 pips and a 99th percentile of 4.60.
         """
-        return self.round_turn_pips + self.financing_pips(nights, price)
+        spread = self.round_turn_pips if spread_pips is None \
+            else spread_pips + self.commission_pips
+        return spread + self.financing_pips(nights, price)
 
     # ---- per-year --------------------------------------------------------
 

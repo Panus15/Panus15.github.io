@@ -458,14 +458,25 @@ def judge(res: BacktestResult, costs: CostModel, *, name: str = "",
                 f"t-stat assumes it is")
 
     cheapest = min(t.cost_pips for t in res.trades)
-    if cheapest < costs.round_turn_pips - 1e-9:
+    # Which floor applies depends on how the backtest charged. On the flat path
+    # every trade pays `round_turn_pips`, so anything below it means the result
+    # was measured on a cheaper model than the one being judged. On the
+    # measured-spread path the charge is the file's own spread plus commission,
+    # and the spread is legitimately below the flat figure most of the time --
+    # comparing against `round_turn_pips` there refuses a correct run, which is
+    # exactly what it did when the measured path was first wired up.
+    floor = costs.commission_pips if res.costs_from_file \
+        else costs.round_turn_pips
+    what = ("the commission you declared" if res.costs_from_file
+            else "the round turn ALONE")
+    if cheapest < floor - 1e-9:
         v.refusals.append(Refusal(
             COSTS_DISAGREE,
             f"the backtest charged as little as {cheapest:.2f} pips per trade, "
-            f"but this cost model puts the round turn ALONE at "
-            f"{costs.round_turn_pips:.2f} before any financing. The result was "
-            f"measured on cheaper costs than the ones being judged — re-run the "
-            f"backtest with this CostModel rather than adjusting afterwards"))
+            f"but this cost model puts {what} at {floor:.2f} before any "
+            f"financing. The result was measured on cheaper costs than the "
+            f"ones being judged — re-run the backtest with this CostModel "
+            f"rather than adjusting afterwards"))
 
     floor = MIN_TRADES_CONTESTED if ev in CONTESTED else MIN_TRADES
     if res.n < floor:

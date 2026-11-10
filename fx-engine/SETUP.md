@@ -37,7 +37,7 @@ they are the only evidence that the copy you have works:
 for t in tests/test_*.py; do python3 "$t" | tail -1; done
 ```
 
-You should see fourteen lines, each `N/N passed`, totalling 317. Any `FAIL` line
+You should see fourteen lines, each `N/N passed`, totalling 330. Any `FAIL` line
 means stop — do not use a copy whose tests fail, and open an issue instead.
 
 Optionally, check the engine against deliberate sabotage. This rewrites source
@@ -45,7 +45,7 @@ files in place and puts them back, so it refuses to run if you have uncommitted
 changes:
 
 ```bash
-python3 mutation/run.py            # 348 defects introduced, 348 should be caught
+python3 mutation/run.py            # 366 defects introduced, 366 should be caught
 ```
 
 ## 3. See it work before you give it your data
