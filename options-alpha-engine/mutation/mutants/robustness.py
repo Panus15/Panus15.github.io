@@ -17,6 +17,13 @@ clustering the block bootstrap exists to preserve:
     * the sample standard deviation divided by n instead of n-1
     * the returned interval taking the point estimate as its own bound
 
+ONE EQUIVALENT MUTANT IS DELIBERATELY ABSENT. Clamping `block` to the number
+of trades cannot change an answer: a block longer than the data makes
+`n_blocks` exactly 1, the inner loop appends the whole wrapped series, and
+`sample = sample[:n]` cuts it back to the same n values an unclamped block
+would have produced. The clamp is kept because it bounds the work the loop
+does, not because it changes a number.
+
 The module's own history is the argument for this file: on the repo's fixture,
 the same strategy with only the seed changed ran a Sharpe of -0.02 to +3.91. A
 reader shown 1.85 concludes something a reader shown -0.02 does not.
@@ -55,7 +62,6 @@ MUTANTS = [
  # clustering that produces a drawdown and reports a tighter interval than the
  # data supports -- the defect the parameter exists to prevent.
  ("blocks broken up",           "    blk = max(1, min(int(block), n))", "    blk = 1"),
- ("block longer than the data", "    blk = max(1, min(int(block), n))", "    blk = max(1, int(block))"),
  ("sample truncated away",      "        sample = sample[:n]", "        sample = sample"),
  ("resample not wrapped",       "                sample.append(pnl[(start + j) % n])", "                sample.append(pnl[min(start + j, n - 1)])"),
  ("every resample identical",   "            start = rng.randrange(n)", "            start = 0"),
