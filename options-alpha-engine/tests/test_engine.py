@@ -474,6 +474,102 @@ def test_an_identifiable_quote_is_still_solved():
                 f"K={K} T={T}: {got}")
 
 
+def _bisect_iv(px, S, K, T, r, q, kind, lo=1e-4, hi=5.0):
+    """A deliberately stupid bisection, as an INDEPENDENT check on the solver.
+
+    engine/iv.py is Newton with a bisection fallback and bracket maintenance --
+    fast, and with several places a sign can go the wrong way while it still
+    converges to something plausible. Six such mutants survived a round-trip
+    grid asserted to 1e-4, because they land close enough to pass it: measured,
+    they change the answer on 24 to 202 of 286 quotes, but rarely by much.
+
+    So this is the oracle. Two hundred halvings of [1e-4, 5] leave a bracket
+    narrower than any float cares about, there is nothing in it to get subtly
+    wrong, and the real solver has to agree with it.
+    """
+    f = lambda v: pricing.price(S, K, T, r, q, v, kind) - px
+    if f(lo) * f(hi) > 0:
+        return None
+    a, b = lo, hi
+    for _ in range(200):
+        m = 0.5 * (a + b)
+        if f(m) > 0:
+            b = m
+        else:
+            a = m
+    return 0.5 * (a + b)
+
+
+def test_the_solver_agrees_with_an_independent_bisection():
+    compared = 0
+    for K in (60.0, 80.0, 95.0, 100.0, 105.0, 120.0, 160.0):
+        for T in (1.0 / 365, 7.0 / 365, 30.0 / 365, 0.5, 2.0):
+            for vol in (0.08, 0.20, 0.45, 1.20):
+                for kind in ("call", "put"):
+                    px = pricing.price(100.0, K, T, 0.04, 0.01, vol, kind)
+                    # Only where the root is SEPARATED. With vega near zero
+                    # the price is flat in vol, and then neither method is
+                    # measuring anything: the bisection lands wherever a float
+                    # comparison flips and the solver returns its seed. Those
+                    # quotes belong to the identifiability test, not here.
+                    if pricing.greeks(100.0, K, T, 0.04, 0.01, vol,
+                                      kind).vega < 1e-2:
+                        continue
+                    # A TIGHT price tolerance, deliberately. At the default
+                    # 1e-6 a low-vega quote leaves 1e-4 of vol slack, and the
+                    # solver is entitled to it -- asserting inside that would
+                    # be testing the tolerance rather than the algorithm. Ask
+                    # for 1e-12 and the answer has to be the root.
+                    got = implied_vol(px, 100.0, K, T, 0.04, 0.01, kind,
+                                      tol=1e-12)
+                    if got is None:
+                        continue      # refused: its own tests cover that
+                    ref = _bisect_iv(px, 100.0, K, T, 0.04, 0.01, kind)
+                    assert ref is not None, (
+                        f"the solver answered {got} where a bisection finds no "
+                        f"root at all: K={K} T={T:.4f} {kind}")
+                    assert abs(got - ref) < 1e-7, (
+                        f"K={K} T={T:.4f} vol={vol} {kind}: solver {got:.9f} "
+                        f"against bisection {ref:.9f}")
+                    compared += 1
+    assert compared > 150, f"only {compared} quotes compared"
+
+
+def test_every_vol_the_solver_returns_reprices_the_quote_it_was_given():
+    """The function's literal contract, and nothing asserted it.
+
+    Three measurements decided what belongs in the mutant table for this
+    module. Breaking the Newton step, skewing the bisection midpoint, or
+    disabling the flat-gradient break all change the answer -- on 24 to 202 of
+    286 quotes -- and every one of those answers still reprices the quote to
+    within `tol`, max 9.9e-7 against the real code's 9.901e-7. They move which
+    of the many vols inside the tolerance band comes back, which is the
+    bracket doing its job, not a defect.
+
+    So this is the property worth holding: whatever the solver returns, it has
+    to reproduce the price it was asked about. A Newton break severe enough to
+    stop convergence fails here; one the bisection absorbs does not, and
+    should not.
+    """
+    tol = 1e-6
+    checked = 0
+    for K in (60.0, 80.0, 95.0, 100.0, 105.0, 120.0, 160.0):
+        for T in (1.0 / 365, 7.0 / 365, 30.0 / 365, 0.5, 2.0):
+            for vol in (0.08, 0.20, 0.45, 1.20):
+                for kind in ("call", "put"):
+                    px = pricing.price(100.0, K, T, 0.04, 0.01, vol, kind)
+                    got = implied_vol(px, 100.0, K, T, 0.04, 0.01, kind,
+                                      tol=tol)
+                    if got is None:
+                        continue
+                    back = pricing.price(100.0, K, T, 0.04, 0.01, got, kind)
+                    assert abs(back - px) <= tol, (
+                        f"K={K} T={T:.4f} {kind}: vol {got:.9f} reprices to "
+                        f"{back:.9f} against the quote {px:.9f}")
+                    checked += 1
+    assert checked > 150, f"only {checked} answers checked"
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

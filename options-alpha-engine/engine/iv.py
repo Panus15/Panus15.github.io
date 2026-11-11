@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import math
 
-from .pricing import price
+from .pricing import greeks, price
 
 
 def _lower_bound(S: float, K: float, T: float, r: float, q: float,
@@ -105,9 +105,13 @@ def implied_vol(
             b = vol
         else:
             a = vol
-        # Vega (unnormalised) for the Newton step.
-        d1 = (math.log(S / K) + (r - q + 0.5 * vol * vol) * T) / (vol * math.sqrt(T))
-        vega = S * math.exp(-q * T) * (math.exp(-0.5 * d1 * d1) / math.sqrt(2 * math.pi)) * math.sqrt(T)
+        # Vega for the Newton step, from the pricer rather than restated
+        # here. It used to be a second copy of the formula, and a copy is a
+        # place for the two to disagree: dropping the sqrt(T) from this one
+        # left the solver still converging, via bisection, with nothing to
+        # show for it. `pricing.greeks` is covered by a finite-difference
+        # oracle, so there is exactly one vega in this engine and it is tested.
+        vega = greeks(S, K, T, r, q, vol, kind).vega
         if vega < 1e-8:
             break  # flat gradient -> hand over to bisection
         step = diff / vega
