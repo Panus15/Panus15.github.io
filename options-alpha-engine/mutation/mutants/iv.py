@@ -25,10 +25,15 @@ TESTS = "tests/test_engine.py"
 
 MUTANTS = [
  # The three refusals.
- ("below intrinsic accepted",    "    if market_price < _intrinsic(S, K, kind) - 1e-8:\n        return None", "    if False:\n        return None"),
- ("intrinsic tolerance inverted", "    if market_price < _intrinsic(S, K, kind) - 1e-8:", "    if market_price < _intrinsic(S, K, kind) + 1e-8:"),
- ("intrinsic sign flipped",      '    return max((S - K) if kind.lower() == "call" else (K - S), 0.0)', '    return max((K - S) if kind.lower() == "call" else (S - K), 0.0)'),
- ("intrinsic can be negative",   '    return max((S - K) if kind.lower() == "call" else (K - S), 0.0)', '    return (S - K) if kind.lower() == "call" else (K - S)'),
+ ("below the floor accepted",    "    if market_price < _lower_bound(S, K, T, r, q, kind) - 1e-8:\n        return None", "    if False:\n        return None"),
+ ("floor tolerance inverted",    "    if market_price < _lower_bound(S, K, T, r, q, kind) - 1e-8:", "    if market_price < _lower_bound(S, K, T, r, q, kind) + 1e-8:"),
+ ("floor sign flipped",          '    return max((fwd_s - fwd_k) if kind.lower() == "call" else (fwd_k - fwd_s),\n               0.0)', '    return max((fwd_k - fwd_s) if kind.lower() == "call" else (fwd_s - fwd_k),\n               0.0)'),
+ ("floor can be negative",       '    return max((fwd_s - fwd_k) if kind.lower() == "call" else (fwd_k - fwd_s),\n               0.0)', '    return (fwd_s - fwd_k) if kind.lower() == "call" else (fwd_k - fwd_s)'),
+ ("floor undiscounted again",    "    fwd_s = S * math.exp(-q * T)\n    fwd_k = K * math.exp(-r * T)", "    fwd_s = S\n    fwd_k = K"),
+ ("floor discounts the wrong leg", "    fwd_s = S * math.exp(-q * T)\n    fwd_k = K * math.exp(-r * T)", "    fwd_s = S * math.exp(-r * T)\n    fwd_k = K * math.exp(-q * T)"),
+ # The identifiability refusal: the defect that returned the Newton seed.
+ ("unidentified vol returned",   "            return vol if identified(vol) else None\n        # Keep the bracket tight for the fallback.", "            return vol\n        # Keep the bracket tight for the fallback."),
+ ("identifiability always true", "        return abs(price(S, K, T, r, q, v + step, kind)\n                   - price(S, K, T, r, q, max(v - step, 1e-12), kind)) > tol", "        return True"),
  ("unbracketed price solved",    "    if f_lo * f_hi > 0:\n        return None", "    if False:\n        return None"),
  ("bracket test inverted",       "    if f_lo * f_hi > 0:", "    if f_lo * f_hi < 0:"),
  ("zero price inverted",         "    if T <= 0 or market_price <= 0:\n        return None", "    if False:\n        return None"),

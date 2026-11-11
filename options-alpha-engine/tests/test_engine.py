@@ -305,6 +305,175 @@ def test_the_kind_is_read_case_insensitively():
     assert pricing.greeks(100.0, 100.0, 0.5, 0.05, 0.0, 0.2, "PUT").delta < 0.0
 
 
+# ---------------------------------------------------------------------------
+# The implied-vol solver. Its first sweep scored 5 of 23 -- the worst of any
+# module here -- because two tests covered it: one round trip at one point, and
+# one refusal.
+#
+# Implied vol is what the whole engine competes against: every "rich" or
+# "cheap" call is this number against a forecast. The dangerous failure is not
+# inaccuracy, it is a CONFIDENT answer on a quote that has none, which is why
+# the refusals get as much attention here as the arithmetic.
+# ---------------------------------------------------------------------------
+
+def test_the_solver_recovers_vol_across_a_grid_including_the_ugly_corners():
+    # One round trip at the money says almost nothing. Deep ITM and OTM
+    # quotes, and very short tenors, are where vega collapses, Newton stalls
+    # or overshoots, and the bisection fallback is the only thing keeping the
+    # answer right -- and they are exactly the quotes a real chain is full of.
+    checked = 0
+    for S in (100.0,):
+        for K in (60.0, 80.0, 95.0, 100.0, 105.0, 120.0, 160.0):
+            for T in (1.0 / 365, 7.0 / 365, 30.0 / 365, 0.5, 2.0):
+                for vol in (0.08, 0.20, 0.45, 1.20):
+                    for kind in ("call", "put"):
+                        px = pricing.price(S, K, T, 0.04, 0.01, vol, kind)
+                        if px < 1e-6:
+                            continue          # no information left to invert
+                        # The attainable vol accuracy is about tol/vega,
+                        # because `tol` is a tolerance on PRICE: at a vega of
+                        # 0.01 a 1e-6 price tolerance pins the vol only to
+                        # 1e-4, which is what is asserted below. Quotes under
+                        # that are not well posed, and the solver is required
+                        # to refuse them -- their own test is further down.
+                        if pricing.greeks(S, K, T, 0.04, 0.01, vol,
+                                          kind).vega < 1e-2:
+                            continue
+                        got = implied_vol(px, S, K, T, 0.04, 0.01, kind)
+                        assert got is not None, (
+                            f"no vol for a price this engine itself produced: "
+                            f"K={K} T={T:.4f} vol={vol} {kind} px={px:.6f}")
+                        assert abs(got - vol) < 1e-4, (
+                            f"K={K} T={T:.4f} {kind}: put in {vol}, got "
+                            f"{got:.6f} from px={px:.6f}")
+                        checked += 1
+    # 192 at the vega floor above, measured. The bar is a floor on coverage,
+    # not a figure to match: it exists so that narrowing the grid or raising
+    # the vega cut cannot quietly reduce this to a handful of quotes.
+    assert checked > 150, f"only {checked} quotes exercised"
+
+
+def test_a_quote_below_intrinsic_value_has_no_implied_vol():
+    # 5.0 for a call whose intrinsic is 20.0: no vol reaches it, and a solver
+    # that returns one hands the scanner a free-money signal on every such
+    # quote. A wide bid-ask on an illiquid strike produces these constantly.
+    assert implied_vol(5.0, 120.0, 100.0, 0.5, 0.04, 0.0, "call") is None
+    assert implied_vol(5.0, 80.0, 100.0, 0.5, 0.04, 0.0, "put") is None
+    # And the boundary: a quote AT intrinsic is the zero-vol limit, which is
+    # outside [lo, hi] and so also unsolvable -- never a confident number.
+    assert implied_vol(20.0, 120.0, 100.0, 0.5, 0.04, 0.0, "call") is None
+
+
+def test_the_no_arbitrage_floor_is_the_EUROPEAN_one_and_so_discounted():
+    """`max(K - S, 0)` is the AMERICAN floor and it does not apply here.
+
+    The solver used it against a European pricer, so every in-the-money
+    European put trading between the discounted and undiscounted bounds was
+    rejected as "below intrinsic" -- 16% of the well-posed quotes on a
+    realistic chain at 4% rates, which is the entire in-the-money put wing on
+    an engine whose only trade is selling puts.
+    """
+    from engine.iv import _lower_bound
+    S, K, T, r = 100.0, 105.0, 0.25, 0.05
+    undiscounted = K - S                                  # 5.00, the American floor
+    european = _lower_bound(S, K, T, r, 0.0, "put")
+    assert european < undiscounted - 0.1, (
+        f"the put floor is {european}, not meaningfully below {undiscounted} "
+        f"— it is still the undiscounted bound")
+    assert abs(european - max(K * math.exp(-r * T) - S, 0.0)) < 1e-12, european
+    # Far enough out, the discounting swallows the moneyness entirely and the
+    # floor is zero -- at r=5% over a year the 105 put's floor is exactly 0.
+    assert _lower_bound(S, K, 1.0, r, 0.0, "put") == 0.0
+
+    # Zero rates and no dividend: the two bounds coincide, which is the case
+    # the old code was right about and must stay right about.
+    assert abs(_lower_bound(120.0, 100.0, 0.25, 0.0, 0.0, "call") - 20.0) < 1e-12
+    assert abs(_lower_bound(80.0, 100.0, 0.25, 0.0, 0.0, "put") - 20.0) < 1e-12
+    # And it is never negative.
+    assert _lower_bound(80.0, 100.0, 0.25, 0.04, 0.0, "call") == 0.0
+    assert _lower_bound(120.0, 100.0, 0.25, 0.04, 0.0, "put") == 0.0
+
+
+def test_an_in_the_money_european_put_is_solvable_below_undiscounted_intrinsic():
+    # The quote that found it: a 7-day 105 put on a 100 spot at 4% prices to
+    # 4.9856, below the 5.00 American floor and above the European one.
+    S, K, T, r, q = 100.0, 105.0, 7.0 / 365, 0.04, 0.01
+    px = pricing.price(S, K, T, r, q, 0.20, "put")
+    assert px < K - S, "the fixture no longer sits below undiscounted intrinsic"
+    got = implied_vol(px, S, K, T, r, q, "put")
+    assert got is not None, (
+        f"a legitimate European put quote at {px:.6f} was refused because it "
+        f"is below K - S = {K - S}")
+    assert abs(got - 0.20) < 1e-4, got
+
+
+def test_a_quote_outside_the_vol_bracket_is_refused():
+    # A price dearer than the 500% cap can produce has no root in the bracket.
+    # Asked for 800% instead of this, the test would be unsound: a call's
+    # price saturates near spot, so 800% and 500% are numerically the same
+    # quote and the refusal would be untestable through them.
+    S = K = 100.0
+    at_cap = pricing.price(S, K, 0.5, 0.04, 0.0, 5.0, "call")
+    assert implied_vol(at_cap + 1.0, S, K, 0.5, 0.04, 0.0, "call") is None, (
+        "a price above everything the bracket can produce was still solved")
+
+
+def test_a_non_positive_price_or_tenor_is_refused():
+    for px in (0.0, -1.0):
+        assert implied_vol(px, 100.0, 100.0, 0.5, 0.04, 0.0, "call") is None, px
+    for T in (0.0, -1.0):
+        assert implied_vol(5.0, 100.0, 100.0, T, 0.04, 0.0, "call") is None, T
+
+
+def test_the_solver_is_monotone_in_the_price_it_is_given():
+    # A dearer option implies a higher vol, always. This is the property the
+    # scanner leans on when it calls one strike rich against another, and a
+    # swapped bracket or a reversed objective breaks it while still returning
+    # plausible numbers.
+    S = K = 100.0
+    prev = None
+    for vol in (0.10, 0.15, 0.20, 0.30, 0.50, 0.80):
+        px = pricing.price(S, K, 0.5, 0.04, 0.0, vol, "call")
+        got = implied_vol(px, S, K, 0.5, 0.04, 0.0, "call")
+        assert got is not None, vol
+        if prev is not None:
+            assert got > prev, (
+                f"vol {got:.4f} from a dearer option is not above {prev:.4f}")
+        prev = got
+
+
+def test_a_quote_that_cannot_identify_a_vol_is_refused_not_seeded():
+    """The defect this found: a confident answer where there is no answer.
+
+    `tol` is a tolerance on PRICE, so where vega collapses a band of vols
+    price the quote identically, the criterion is met by the SEED on the first
+    iteration, and the solver returned 0.20 whatever the market implied.
+
+    The fixture is measured, not invented: a 1-day call at S=100, K=60 prices
+    to the same 40.003835294 at every vol from 0.02 to 0.20, and its vega is
+    exactly 0.0. If the price cannot tell 8% from 20%, neither can anyone.
+    """
+    S, K, T, r, q = 100.0, 60.0, 1.0 / 365, 0.04, 0.01
+    px = pricing.price(S, K, T, r, q, 0.08, "call")
+    assert pricing.price(S, K, T, r, q, 0.20, "call") == px, (
+        "the fixture no longer has a flat vol profile, so it no longer tests "
+        "what it was built to test")
+    got = implied_vol(px, S, K, T, r, q, "call")
+    assert got is None, (
+        f"returned {got} for a quote whose price is identical across vols "
+        f"— 0.2 is the Newton seed, not a measurement")
+
+
+def test_an_identifiable_quote_is_still_solved():
+    # Guard isolation: the refusal above must not swallow ordinary quotes.
+    for T in (7.0 / 365, 0.25, 1.0):
+        for K in (90.0, 100.0, 110.0):
+            px = pricing.price(100.0, K, T, 0.04, 0.0, 0.25, "call")
+            got = implied_vol(px, 100.0, K, T, 0.04, 0.0, "call")
+            assert got is not None and abs(got - 0.25) < 1e-4, (
+                f"K={K} T={T}: {got}")
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
