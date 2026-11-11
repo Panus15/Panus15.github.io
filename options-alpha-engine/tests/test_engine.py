@@ -239,6 +239,72 @@ def test_scanner_finds_injected_dislocation():
     assert any(m.verdict == "RICH" for m in ideas)
 
 
+# ---------------------------------------------------------------------------
+# Gaps the first mutation sweep of engine/pricing.py left: the expiry branch
+# and the input guards. The oracles above are strong -- finite differences
+# alone caught seventeen defects -- but they all price a LIVE option with
+# sane inputs, so nothing touched the edges.
+# ---------------------------------------------------------------------------
+
+def test_an_expired_option_is_worth_its_intrinsic_value():
+    # T <= 0 returns before _d1_d2 is ever called, so this whole branch sat
+    # outside every test. Signs reversed, it prices an in-the-money call at
+    # zero and a worthless one at a positive number.
+    assert pricing.price(110.0, 100.0, 0.0, 0.05, 0.0, 0.2, "call") == 10.0
+    assert pricing.price(90.0, 100.0, 0.0, 0.05, 0.0, 0.2, "put") == 10.0
+    assert pricing.price(110.0, 100.0, -1.0, 0.05, 0.0, 0.2, "call") == 10.0
+
+
+def test_an_expired_worthless_option_is_worth_zero_never_less():
+    # Without the floor an out-of-the-money expiry prices NEGATIVE, which in a
+    # short book reads as a position that pays you to close it.
+    for S, K, kind in ((90.0, 100.0, "call"), (110.0, 100.0, "put")):
+        v = pricing.price(S, K, 0.0, 0.05, 0.0, 0.2, kind)
+        assert v == 0.0, f"{kind} at S={S} K={K} expired worth {v}"
+
+
+def test_a_live_option_is_worth_more_than_intrinsic():
+    # The other half: the expiry shortcut must not fire on a live option.
+    live = pricing.price(110.0, 100.0, 0.5, 0.05, 0.0, 0.2, "call")
+    assert live > 10.0, (
+        f"a 6-month call priced at {live}, its intrinsic value — the expiry "
+        f"branch is firing on a live option")
+
+
+def test_nonsense_inputs_are_refused_rather_than_priced():
+    # A zero vol, a zero spot or a zero strike all make d1 undefined. Pricing
+    # them anyway returns a number with no meaning that the scanner would
+    # then compare a market quote against.
+    for kwargs in ({"vol": 0.0}, {"vol": -0.2}, {"S": 0.0}, {"K": 0.0},
+                   {"S": -100.0}):
+        args = {"S": 100.0, "K": 100.0, "T": 0.5, "r": 0.05, "q": 0.0,
+                "vol": 0.2, "kind": "call"}
+        args.update(kwargs)
+        try:
+            pricing.price(**args)
+        except ValueError as e:
+            assert "positive" in str(e), e
+        else:
+            assert False, f"priced an option with {kwargs}"
+
+
+def test_greeks_refuse_a_zero_tenor_rather_than_dividing_by_it():
+    try:
+        pricing.greeks(100.0, 100.0, 0.0, 0.05, 0.0, 0.2, "call")
+    except ValueError as e:
+        assert "positive" in str(e), e
+    else:
+        assert False, "greeks at T=0 divided by a zero sqrt(T) and returned"
+
+
+def test_the_kind_is_read_case_insensitively():
+    # A chain feed hands you "CALL". Dropping the .lower() turns every one of
+    # those into the bad-kind refusal.
+    for k in ("CALL", "Call", "cAlL"):
+        assert pricing.price(100.0, 100.0, 0.5, 0.05, 0.0, 0.2, k) > 0.0, k
+    assert pricing.greeks(100.0, 100.0, 0.5, 0.05, 0.0, 0.2, "PUT").delta < 0.0
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

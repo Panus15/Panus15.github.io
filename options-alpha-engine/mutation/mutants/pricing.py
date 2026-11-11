@@ -12,6 +12,13 @@ wrong one generally cannot, which is why this table leans on sign flips and
 dropped terms rather than on magnitudes: those are the errors that survive a
 smoke test and fail an identity.
 
+ONE EQUIVALENT MUTANT IS DELIBERATELY ABSENT. Neutering the `else: raise` in
+`greeks` changes nothing observable: execution falls through to
+`Greeks(price=price(...))`, and `price` raises the identical ValueError with the
+identical message. The two checks are redundant with each other, and the one in
+`greeks` earns its place only by failing BEFORE the Greeks are computed rather
+than after. No test can distinguish them.
+
 The Greeks are the softer target. The engine sizes short vega against a book
 cap, so a vega that is too small by `sqrt(T)` understates the whole book's
 exposure — and `engine/portfolio.py` would still report it as inside the cap.
@@ -62,14 +69,13 @@ MUTANTS = [
  ("gamma missing its vol",      "    gamma = df_q * nd1 / (S * vol * sqrtT)", "    gamma = df_q * nd1 / (S * sqrtT)"),
  ("vega missing sqrt T",        "    vega = S * df_q * nd1 * sqrtT", "    vega = S * df_q * nd1"),
  ("vega per vol point",         "    vega = S * df_q * nd1 * sqrtT", "    vega = S * df_q * nd1 * sqrtT / 100.0"),
- ("call theta positive",        "        theta = (-(S * df_q * nd1 * vol) / (2 * sqrtT)", "        theta = ((S * df_q * nd1 * vol) / (2 * sqrtT)"),
+ ("call theta positive",        "        theta = (-(S * df_q * nd1 * vol) / (2 * sqrtT)\n                 - r * K * df_r * _norm_cdf(d2)", "        theta = ((S * df_q * nd1 * vol) / (2 * sqrtT)\n                 - r * K * df_r * _norm_cdf(d2)"),
  ("theta decay undoubled",      "        theta = (-(S * df_q * nd1 * vol) / (2 * sqrtT)\n                 - r * K * df_r * _norm_cdf(d2)\n                 + q * S * df_q * _norm_cdf(d1))", "        theta = (-(S * df_q * nd1 * vol) / sqrtT\n                 - r * K * df_r * _norm_cdf(d2)\n                 + q * S * df_q * _norm_cdf(d1))"),
  ("put rho positive",           "        rho = -K * T * df_r * _norm_cdf(-d2)", "        rho = K * T * df_r * _norm_cdf(-d2)"),
  ("rho missing its tenor",      "        rho = K * T * df_r * _norm_cdf(d2)", "        rho = K * df_r * _norm_cdf(d2)"),
 
  # Guards.
  ("bad kind priced",            "    raise ValueError(f\"kind must be 'call' or 'put', got {kind!r}\")\n\n\n@dataclass", "    return 0.0\n\n\n@dataclass"),
- ("bad kind in greeks",         "        raise ValueError(f\"kind must be 'call' or 'put', got {kind!r}\")\n    return Greeks(", "        delta = theta = rho = 0.0\n    return Greeks("),
  ("non positive inputs allowed", "    if T <= 0 or vol <= 0 or S <= 0 or K <= 0:", "    if False:"),
  ("zero vol allowed",           "    if T <= 0 or vol <= 0 or S <= 0 or K <= 0:", "    if T <= 0 or S <= 0 or K <= 0:"),
  ("kind case sensitive",        "def price(S: float, K: float, T: float, r: float, q: float, vol: float, kind: str) -> float:\n    \"\"\"Black-Scholes-Merton fair value of a European option.\"\"\"\n    kind = kind.lower()", "def price(S: float, K: float, T: float, r: float, q: float, vol: float, kind: str) -> float:\n    \"\"\"Black-Scholes-Merton fair value of a European option.\"\"\"\n    kind = kind"),
