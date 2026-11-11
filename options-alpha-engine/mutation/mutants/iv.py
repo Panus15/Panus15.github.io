@@ -77,9 +77,9 @@ MUTANTS = [
 
  # Bracket maintenance. These are the ones that matter: they leave the solver
  # converging, to the wrong answer, with no sign that anything went wrong.
- ("newton bracket sides swapped", "        if diff > 0:\n            b = vol\n        else:\n            a = vol\n        # Vega (unnormalised) for the Newton step.", "        if diff > 0:\n            a = vol\n        else:\n            b = vol\n        # Vega (unnormalised) for the Newton step."),
+ ("newton bracket sides swapped", "        if diff > 0:\n            b = vol\n        else:\n            a = vol\n        # Vega for the Newton step, from the pricer rather than restated", "        if diff > 0:\n            a = vol\n        else:\n            b = vol\n        # Vega for the Newton step, from the pricer rather than restated"),
  ("bisection sides swapped",     "        if diff > 0:\n            b = vol\n        else:\n            a = vol\n    return vol", "        if diff > 0:\n            a = vol\n        else:\n            b = vol\n    return vol"),
- ("bracket never narrowed",      "        if diff > 0:\n            b = vol\n        else:\n            a = vol\n        # Vega (unnormalised) for the Newton step.", "        if False:\n            b = vol\n        else:\n            a = vol\n        # Vega (unnormalised) for the Newton step."),
+ ("bracket never narrowed",      "        if diff > 0:\n            b = vol\n        else:\n            a = vol\n        # Vega for the Newton step, from the pricer rather than restated", "        if False:\n            b = vol\n        else:\n            a = vol\n        # Vega for the Newton step, from the pricer rather than restated"),
 
  # The Newton step itself, and the guards that stop it running away.
  ("newton escape unguarded",     "        if not (a < vol < b):  # Newton left the bracket -> bisect", "        if False:  # Newton left the bracket -> bisect"),
