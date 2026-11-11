@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engine import portfolio
 
 from engine.portfolio import (
+    DEFAULT_VEGA_RHO,
+    cvar_per_contract,
     Portfolio,
     Position,
     RiskGovernor,
@@ -283,6 +285,158 @@ def test_the_shipped_default_alpha_is_one_the_default_scenarios_can_answer():
                            r=0.04, q=0.0, vol=0.16, multiplier=100,
                            days_per_year=252.0)
     portfolio.cvar_per_contract(t, portfolio.vol_spike_scenarios(), alpha)
+
+
+# ---------------------------------------------------------------------------
+# The thirteen survivors of this module's first sweep. The caps that had no
+# test at all were the gross-vega one, the delta one, and the kill-switch
+# boundary -- which is to say, two of the three gates and the edge of the
+# third. A cap that fails open is worse than no cap, because it is believed.
+# ---------------------------------------------------------------------------
+
+def test_the_correlation_is_strictly_between_independent_and_identical():
+    # Nothing distinguished rho=0.8 from rho=1.0, so "treat every pair as
+    # perfectly correlated" survived. Two different underlyings at rho must
+    # sit between the independent and the identical answers, and the DEFAULT
+    # has to be the one that does that -- a default of 0.0 is the false
+    # diversification this module exists to remove.
+    book = Portfolio([_short_put(underlying="SPX"), _short_put(underlying="NDX")])
+    one = abs(_short_put().net_vega())
+    indep = book.independent_vega()
+    identical = book.effective_short_vega(rho=1.0)
+    at_rho = book.effective_short_vega(rho=0.8)
+    assert approx(identical, 2.0 * one, tol=1e-6), (identical, one)
+    assert indep < at_rho < identical, (
+        f"rho=0.8 gives {at_rho}, not between independent {indep} and "
+        f"identical {identical}")
+    assert approx(book.effective_short_vega(), at_rho), (
+        f"the default correlation is not {DEFAULT_VEGA_RHO}: "
+        f"{book.effective_short_vega()} against {at_rho}")
+    assert DEFAULT_VEGA_RHO > 0.5, (
+        f"a default of {DEFAULT_VEGA_RHO} lets a short-vol book diversify "
+        f"away, which is the false comfort this module was written against")
+
+
+def test_the_gross_vega_cap_rejects_and_admits_on_the_right_side():
+    # No test touched this gate: disabling it entirely, and inverting its
+    # comparison, both passed the suite.
+    book = Portfolio([_short_put(qty=-10)])
+    gross = book.gross_vega()
+    gov_tight = RiskGovernor(RiskLimits(max_gross_vega=gross * 0.5))
+    ok, why = gov_tight.can_add(_short_put(), book, 100_000.0, 0.0)
+    assert not ok, f"a book already over the gross cap was allowed: {why}"
+    assert "gross" in why.lower(), why
+    gov_loose = RiskGovernor(RiskLimits(max_gross_vega=gross * 100.0))
+    ok2, why2 = gov_loose.can_add(_short_put(), book, 100_000.0, 0.0)
+    assert ok2, f"a trade far inside the gross cap was vetoed: {why2}"
+
+
+def test_the_net_delta_cap_rejects_and_admits_on_the_right_side():
+    book = Portfolio([_short_put(qty=-10)])
+    nd = abs(book.net_delta())
+    assert nd > 0, "the fixture carries no delta, so this proves nothing"
+    gov_tight = RiskGovernor(RiskLimits(max_net_delta=nd * 0.5))
+    ok, why = gov_tight.can_add(_short_put(), book, 100_000.0, 0.0)
+    assert not ok, f"a book already over the delta cap was allowed: {why}"
+    assert "delta" in why.lower(), why
+    gov_loose = RiskGovernor(RiskLimits(max_net_delta=nd * 100.0))
+    ok2, why2 = gov_loose.can_add(_short_put(), book, 100_000.0, 0.0)
+    assert ok2, f"a trade far inside the delta cap was vetoed: {why2}"
+
+
+def test_the_kill_switch_trips_AT_its_threshold_not_past_it():
+    # `>=` loosened to `>` lets one more trade through at exactly the limit,
+    # which is the trade taken at the worst possible moment. Nothing tested
+    # the boundary.
+    gov = RiskGovernor(RiskLimits(max_drawdown=0.20))
+    book = Portfolio([])
+    ok_at, why_at = gov.can_add(_short_put(), book, 100_000.0, 0.20)
+    assert not ok_at, (
+        f"at exactly the 20% drawdown limit a new position was allowed: "
+        f"{why_at}")
+    ok_under, _ = gov.can_add(_short_put(), book, 100_000.0, 0.1999)
+    assert ok_under, "just under the limit must still trade"
+
+
+def test_cvar_is_a_positive_loss_and_not_the_best_case():
+    # Two scenarios, one a loss and one a gain, with all the probability on
+    # the loss: the expected shortfall is that loss, as a POSITIVE number.
+    # Returning 0.0, or letting the sign through, sizes a position against a
+    # loss that cannot happen.
+    loss = cvar_per_contract(
+        _short_put(),
+        [Scenario(spot_mult=0.80, vol_shift=0.30, prob=1.0)],
+        alpha=1.0)
+    assert loss > 0.0, f"a crash scenario gave a CVaR of {loss}"
+
+
+def test_cvar_of_a_tail_that_is_PROFITABLE_is_zero_rather_than_negative():
+    """A CVaR is a loss. When the modelled tail makes money it is zero.
+
+    Reaching the clamp that enforces this takes some care, and a single
+    profitable scenario does not do it -- that exits through an earlier
+    branch. The tail slice itself has to be profitable while the set is still
+    resolvable at the requested alpha, so the big-mass scenario has to be the
+    MOST profitable one and the thin tail the least:
+
+        5%  spot flat, vol flat    +97.71 per contract
+        5%  spot +5%, vol -2 pts  +145.48
+        90% spot +20%, vol -10    +150.00
+
+    Without the clamp this returns about -98: a negative "loss", which
+    size_by_cvar would divide a positive budget by and size the book UP on
+    the strength of the tail being good.
+    """
+    got = cvar_per_contract(
+        _short_put(),
+        [Scenario(spot_mult=1.00, vol_shift=0.00, prob=0.05),
+         Scenario(spot_mult=1.05, vol_shift=-0.02, prob=0.05),
+         Scenario(spot_mult=1.20, vol_shift=-0.10, prob=0.90)],
+        alpha=0.90)
+    assert got == 0.0, f"a profitable tail produced a CVaR of {got}"
+
+
+def test_a_correlation_outside_zero_to_one_is_refused():
+    # Outside [0, 1] the correlation matrix stops being positive
+    # semi-definite, so the quadratic form can come out negative and its
+    # square root is not an exposure. It used to be clamped silently, which
+    # turned a nonsensical input into a number that gets compared to a cap.
+    book = Portfolio([_short_put(underlying="SPX"),
+                      _short_put(underlying="NDX")])
+    for bad in (-0.5, 1.5, 2.0):
+        try:
+            book.effective_short_vega(rho=bad)
+        except ValueError as e:
+            assert "rho" in str(e), e
+        else:
+            assert False, f"rho={bad} was accepted"
+    book.effective_short_vega(rho=0.0)      # the boundaries must still work
+    book.effective_short_vega(rho=1.0)
+
+
+def test_no_scenarios_means_no_size_rather_than_unlimited_size():
+    assert cvar_per_contract(_short_put(), [], alpha=0.95) == 0.0
+    n = size_by_cvar(100_000.0, _short_put(), shock_scenarios=[],
+                     cvar_limit=0.02)
+    assert n == 0, f"sized {n} contracts against an empty scenario set"
+
+
+def test_a_non_positive_equity_or_limit_sizes_nothing():
+    scen = [Scenario(spot_mult=0.80, vol_shift=0.30, prob=1.0)]
+    for eq, lim in ((0.0, 0.02), (-100.0, 0.02), (100_000.0, 0.0),
+                    (100_000.0, -0.01)):
+        n = size_by_cvar(eq, _short_put(), shock_scenarios=scen,
+                         cvar_limit=lim)
+        assert n == 0, f"equity {eq} and limit {lim} sized {n} contracts"
+
+
+def test_a_short_position_reports_itself_short():
+    assert _short_put(qty=-1).is_short is True
+    long_put = _short_put(qty=1)
+    assert long_put.is_short is False
+    assert _short_put(qty=-1).net_vega() < 0.0, (
+        "a short option's vega must be negative, or the book's short exposure "
+        "reads as long and every cap is measured on the wrong side")
 
 
 def _run_all():

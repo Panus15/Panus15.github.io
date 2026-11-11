@@ -214,6 +214,13 @@ class Portfolio:
         this equals ~N x single -- it does NOT diversify away.
         """
         rho = self.rho if rho is None else rho
+        if not 0.0 <= rho <= 1.0:
+            raise ValueError(
+                f"rho must be in [0, 1], got {rho}. Outside that range the "
+                f"correlation matrix stops being positive semi-definite, the "
+                f"quadratic form below can come out negative, and the square "
+                f"root of it is not an exposure — it is a number that would "
+                f"be compared against a cap")
         vals = [(p.underlying, p.net_vega()) for p in self.positions]
         total = 0.0
         for i, (ui, vi) in enumerate(vals):
