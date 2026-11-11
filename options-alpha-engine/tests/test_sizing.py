@@ -176,6 +176,57 @@ def test_the_unbounded_refusal_is_explicit_not_an_accident_of_float_division():
     assert position_size(EQ, max_loss_per_contract=UNBOUNDED) == 0
 
 
+# ---------------------------------------------------------------------------
+# Gaps the first mutation sweep of this module found.
+# ---------------------------------------------------------------------------
+
+def test_a_wing_caps_a_short_PUT_spread_as_well_as_a_short_call():
+    # Every wing test here used a short CALL, whose wing sits ABOVE the strike,
+    # so `abs(wing - strike)` was never doing anything. On a short PUT the wing
+    # sits BELOW: without the abs the width goes negative, the loss collapses
+    # to zero, and position_size then refuses a perfectly ordinary spread.
+    # Sell the 100 put, buy the 95: five points of width, $500 a contract.
+    loss = max_loss_per_contract_for("put", 100.0, quantity=-1,
+                                     entry_price=1.00, wing_strike=95.0)
+    assert abs(loss - 400.0) < 1e-9, (
+        f"{loss}: expected 5 points x 100 = 500 less the 100 premium kept")
+    n = position_size(100_000.0, max_loss_per_contract=loss,
+                      max_risk_frac=0.02)
+    assert n == 5, f"{n} contracts: 2% of 100k is 2,000, and 2,000/400 is 5"
+
+
+def test_a_kind_that_is_not_put_or_call_is_refused_not_guessed():
+    # Without the check a typo takes the long branch and returns the premium --
+    # a plausible-looking number for a structure the function does not model.
+    for bad in ("banana", "PUTT", "", "p"):
+        try:
+            max_loss_per_contract_for(bad, 100.0, quantity=-1, entry_price=1.0)
+        except ValueError as e:
+            assert "put" in str(e) and "call" in str(e), e
+        else:
+            assert False, f"kind {bad!r} was accepted"
+
+
+def test_the_kind_is_read_case_insensitively():
+    # Upper case is what a chain feed hands you. Dropping the `.lower()` turns
+    # every one of those into the refusal above.
+    for ok in ("PUT", "Put", "pUt"):
+        loss = max_loss_per_contract_for(ok, 100.0, quantity=-1,
+                                         entry_price=1.00)
+        assert abs(loss - 9900.0) < 1e-9, f"{ok}: got {loss}"
+    assert max_loss_per_contract_for("CALL", 100.0, quantity=-1,
+                                     entry_price=1.0) == UNBOUNDED
+
+
+def test_kelly_never_returns_a_negative_bet_or_divides_by_zero_odds():
+    # A negative Kelly means "do not bet", not "bet backwards". Returning the
+    # raw number would hand a caller a negative position fraction.
+    assert kelly_fraction(0.10, 1.0) == 0.0, "a losing edge must size nothing"
+    assert kelly_fraction(0.60, 0.0) == 0.0, "zero odds must not divide"
+    assert kelly_fraction(0.60, -1.0) == 0.0, "negative odds must not size"
+    assert kelly_fraction(0.60, 1.0) > 0.0, "a real edge must still size"
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

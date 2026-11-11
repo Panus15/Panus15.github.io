@@ -16,6 +16,15 @@ engine size LARGER or admits a position whose loss it cannot bound:
     * rounding contracts UP across the budget
 
 A cap that fails open is worse than no cap, because it is believed.
+
+THREE EQUIVALENT MUTANTS ARE DELIBERATELY ABSENT. `position_size` guards its
+inputs at the top (`account_equity <= 0 or max_risk_frac <= 0: return 0`) and
+ALSO clamps its result (`max(int(...), 0)`). Those two are redundant with each
+other: remove the guard and a negative budget floor-divides to a negative that
+the clamp catches; remove the clamp and the guard has already returned 0. So
+removing either one alone changes no answer for any input, and no test can kill
+either -- the redundancy is the point, not dead code. Removing BOTH would admit
+a negative size, which is why neither is removed.
 """
 
 TARGET = "engine/sizing.py"
@@ -47,16 +56,14 @@ MUTANTS = [
  # The budget itself.
  ("budget is the whole account", "    budget = max_risk_frac * account_equity", "    budget = account_equity"),
  ("contracts rounded up",        "    return max(int(budget // max_loss_per_contract), 0)", "    return max(-(-int(budget) // int(max_loss_per_contract or 1)), 0)"),
- ("negative size allowed",       "    return max(int(budget // max_loss_per_contract), 0)", "    return int(budget // max_loss_per_contract)"),
 
  # The guards. Each one admits an input that produces a meaningless size.
- ("zero equity accepted",        "    if account_equity <= 0 or max_risk_frac <= 0:", "    if False:"),
- ("negative risk frac accepted", "    if account_equity <= 0 or max_risk_frac <= 0:", "    if account_equity <= 0:"),
  ("zero loss accepted",          "    if max_loss_per_contract <= 0:", "    if False:"),
  ("bad kind accepted",           "    if kind not in (\"put\", \"call\"):", "    if False:"),
  ("kind case sensitive",         "    kind = kind.lower()", "    kind = kind"),
 
  # kelly_fraction is kept because it is correct for what it says it is. It must
  # not quietly return something usable on inputs it cannot represent.
- ("kelly unclamped",             "def kelly_fraction(edge: float, odds: float) -> float:", "def kelly_fraction(edge: float, odds: float = 1.0) -> float:"),
+ ("kelly returns a negative bet", "    return max(f, 0.0)", "    return f"),
+ ("kelly divides by zero odds",  "    if odds <= 0:\n        return 0.0", "    if False:\n        return 0.0"),
 ]
