@@ -5,15 +5,15 @@ python3 mutation/run.py                 # every target
 python3 mutation/run.py verdict data    # named targets only
 ```
 
-**366 deliberate defects across 13 targets. All 366 caught.**
+**369 deliberate defects across 13 targets. All 369 caught.**
 
 | target | file | defects |
 |---|---|---|
 | `verdict` | `engine/verdict.py` | 59 |
 | `data` | `engine/data.py` | 42 |
 | `backtest` | `engine/backtest.py` | 33 |
+| `analyse` | `tools/analyse.py` | 31 |
 | `rules` | `engine/rules.py` | 29 |
-| `analyse` | `tools/analyse.py` | 28 |
 | `holdout` | `engine/holdout.py` | 25 |
 | `levers` | `engine/levers.py` | 25 |
 | `report` | `tools/report.py` | 23 |

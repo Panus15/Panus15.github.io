@@ -164,10 +164,10 @@ test, not a prediction.
 for t in tests/test_*.py; do python3 "$t"; done
 ```
 
-330 tests. Every module is also mutation-tested:
+335 tests. Every module is also mutation-tested:
 
 ```bash
-python3 mutation/run.py          # 366 deliberate defects, all 366 caught
+python3 mutation/run.py          # 369 deliberate defects, all 369 caught
 ```
 
 That used to be an unverifiable claim — the sweeps lived outside the repository

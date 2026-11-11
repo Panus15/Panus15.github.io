@@ -469,6 +469,100 @@ def test_an_unspent_holdout_is_not_warned_about():
     assert "YOU GET ONE" not in text
 
 
+# ---------------------------------------------------------------------------
+# Charging the spread the file recorded, rather than one flat guess.
+#
+# A file with a Spread column lets the run price each trade on what its own
+# bars cost. All three of these survived the suite when the wiring was added:
+# ignoring the column, ignoring --flat-cost, and dropping the commission.
+# ---------------------------------------------------------------------------
+
+def _csv_with_spread(n=1200, points=3, wide_every=None):
+    """The clean file plus a Spread column, in POINTS as MetaTrader writes it.
+
+    At five decimals a point is 0.00001 and a pip is 0.0001, so `points=3` is
+    0.3 pips -- well under the 1.5-pip flat round turn in COSTS, which is what
+    makes the two paths tell apart.
+    """
+    path = os.path.join(_TMP, f"sp{len(os.listdir(_TMP))}.csv")
+    px, rows = 1.1000, []
+    start = datetime(2023, 1, 2)
+    for i in range(n):
+        o = px
+        c = px + (0.0003 if i % 3 else -0.0002)
+        rows.append([start + i * timedelta(hours=1), o,
+                     max(o, c) + 0.0002, min(o, c) - 0.0002, c,
+                     points * 100 if (wide_every and i % wide_every == 0)
+                     else points])
+        px = c
+    with io.open(path, "w", encoding="utf-8") as fh:
+        fh.write("Date,Open,High,Low,Close,Spread\n")
+        for r in rows:
+            fh.write(f"{r[0]:%Y-%m-%d %H:%M:%S}," +
+                     ",".join(f"{v:.5f}" for v in r[1:5]) + f",{r[5]}\n")
+    return path
+
+
+def test_a_recorded_spread_column_is_charged_per_trade():
+    code, text = _run(_csv_with_spread(), costs_measured=True)
+    assert code == 0, text
+    assert "charging:" in text, (
+        f"the run did not say it was charging the recorded spread:\n{text}")
+    assert "each trade's own bars recorded" in text, text
+
+
+def test_flat_cost_ignores_the_recorded_spread_column():
+    # The escape hatch has to actually switch the path off, or a reader who
+    # asks for the old behaviour silently gets the new one.
+    code, text = _run(_csv_with_spread(), costs_measured=True,
+                      use_recorded_spread=False)
+    assert code == 0, text
+    assert "charging:" not in text, (
+        f"--flat-cost did not switch off the measured path:\n{text}")
+
+
+def test_a_file_with_no_spread_column_charges_flat_without_being_asked():
+    code, text = _run(_csv(), costs_measured=True)
+    assert code == 0, text
+    assert "charging:" not in text, (
+        f"a file with no spread column reported charging a measured one:\n{text}")
+
+
+def test_a_zero_commission_is_called_out_as_an_under_estimate():
+    # Charging a measured 0.3-pip spread with no commission models a broker
+    # that works for nothing. The run must say so rather than quietly produce
+    # the most flattering cost in the file.
+    code, text = _run(_csv_with_spread(), costs_measured=True)
+    assert "commission is ZERO" in text, (
+        f"a zero commission passed without comment:\n{text}")
+
+    priced = CostModel(pair="EURUSD", round_turn_pips=1.5,
+                       swap_markup_annual=0.012, commission_pips=0.7)
+    code, text2 = _run(_csv_with_spread(), costs=priced, costs_measured=True)
+    assert "commission is ZERO" not in text2, (
+        "a declared commission was still called zero")
+    assert "0.70 pip commission" in text2, text2
+
+
+def test_the_commission_flag_reaches_the_cost_model():
+    # The three tests above call `analyse()` directly, so none of them touches
+    # the argv plumbing -- `--commission` could be parsed and thrown away and
+    # they would all still pass. This goes through main() for that reason.
+    import contextlib
+    from tools.analyse import main
+    path = _csv_with_spread()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        code = main([path, "--pair", "EURUSD", "--side", "bid",
+                     "--round-turn", "1.5", "--swap-markup", "0.012",
+                     "--commission", "0.7", "--costs-measured"])
+    text = buf.getvalue()
+    assert code == 0, text
+    assert "0.70 pip commission" in text, (
+        f"--commission 0.7 did not reach the cost model:\n{text}")
+    assert "commission is ZERO" not in text, text
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
