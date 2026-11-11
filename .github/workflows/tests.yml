@@ -35,6 +35,14 @@ jobs:
         working-directory: fx-engine
         run: python3 mutation/run.py
 
+      # The options engine's sweep, for the same reason. It starts with one
+      # table (models/decision.py, where position size is decided) and grows;
+      # running it here is what stops that count becoming historical. The step
+      # is separate so a failure names which engine it came from.
+      - name: Mutation sweep (options-alpha-engine)
+        working-directory: options-alpha-engine
+        run: python3 mutation/run.py
+
   test:
     runs-on: ubuntu-latest
     steps:
