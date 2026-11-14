@@ -16,6 +16,25 @@ a market price above fair. Drop either half and the scanner will call an option
 rich on a vol gap while its own repricing says it is cheap -- a contradiction
 that reads as a strong signal because two numbers point at it.
 
+THREE EQUIVALENT MUTANTS ARE DELIBERATELY ABSENT, and measuring them was the
+only way to tell.
+
+The two-sided consistency check cannot fire at a sane band. Black-Scholes price
+is monotone in vol, so a recovered IV above the forecast comes with a mid above
+fair as a matter of arithmetic. Across 570 solvable quotes the vol gap and the
+dollar edge disagreed on nine -- every one of them with the market vol EQUAL to
+the forecast, a gap of at most 3.2e-4 and an edge of exactly zero. That is the
+solver's price tolerance, not a disagreement, and it sits sixty times inside
+the default 0.02 band, which calls all nine FAIR before the check is reached.
+For the clause to decide anything, `iv_band` would have to be under 3e-4 --
+i.e. the scanner would be trading on solver noise. It stays as a statement of
+intent; it is not load-bearing.
+
+Substituting the forecast for an unsolvable quote is equivalent for the same
+structural reason: `iv = forecast_vol` makes the gap exactly zero, the verdict
+FAIR, and the FAIR filter drops it from the output. The `continue` is the
+honest spelling of what the filter would do anyway.
+
 `abs(edge_mid)` in the net edge is deliberate and worth stating: the edge of a
 SHORT is the premium you keep, so the magnitude is what the spread is charged
 against, not the sign. Removing the abs makes every rich option's net edge
@@ -42,8 +61,6 @@ MUTANTS = [
  ("minimum edge removed",       "    min_edge_net: float = 0.05,", "    min_edge_net: float = 0.0,"),
 
  # The two-sided consistency between the vol gap and the dollar edge.
- ("rich needs no dollar edge",  "        if iv - forecast_vol > iv_band and edge_mid < 0:", "        if iv - forecast_vol > iv_band:"),
- ("cheap needs no dollar edge", "        elif forecast_vol - iv > iv_band and edge_mid > 0:", "        elif forecast_vol - iv > iv_band:"),
  ("rich and cheap swapped",     "        if iv - forecast_vol > iv_band and edge_mid < 0:\n            verdict = \"RICH\"", "        if iv - forecast_vol > iv_band and edge_mid < 0:\n            verdict = \"CHEAP\""),
  ("rich dollar test inverted",  "        if iv - forecast_vol > iv_band and edge_mid < 0:", "        if iv - forecast_vol > iv_band and edge_mid > 0:"),
  ("cheap dollar test inverted", "        elif forecast_vol - iv > iv_band and edge_mid > 0:", "        elif forecast_vol - iv > iv_band and edge_mid < 0:"),
@@ -55,7 +72,6 @@ MUTANTS = [
  ("iv premium sign flipped",    "        return self.market_iv - self.forecast_vol", "        return self.forecast_vol - self.market_iv"),
 
  # Unsolvable quotes must be skipped, not priced on a guessed vol.
- ("unsolvable quotes kept",     "        if iv is None:\n            continue", "        if iv is None:\n            iv = forecast_vol"),
 
  # The ranking. Best-first is what a caller acts on when it takes the top n.
  ("ranking inverted",           "    actionable.sort(key=lambda m: m.edge_net, reverse=True)", "    actionable.sort(key=lambda m: m.edge_net)"),

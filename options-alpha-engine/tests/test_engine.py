@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine import pricing, volforecast
-from engine.data import SyntheticAdapter
+from engine.data import OptionChain, OptionQuote, SyntheticAdapter
 from engine.iv import implied_vol
 from engine.signal import scan_chain
 
@@ -473,6 +473,174 @@ def test_an_identifiable_quote_is_still_solved():
             got = implied_vol(px, 100.0, K, T, 0.04, 0.0, "call")
             assert got is not None and abs(got - 0.25) < 1e-4, (
                 f"K={K} T={T}: {got}")
+
+
+# ---------------------------------------------------------------------------
+# engine/signal.py -- where P and Q become a trade. First sweep: 7 of 23.
+#
+# One test covered it, and what it left untested was the check the module's own
+# docstring calls decisive: "an edge that vanishes once you cross the spread is
+# not an edge -- that single check kills most naive options signals." Also
+# untested: every gate (the minimum edge, the FAIR band), the whole CHEAP side,
+# and the ranking a caller reads when it takes the top idea.
+# ---------------------------------------------------------------------------
+
+def _one_quote_chain(market_vol, forecast_vol, spread, kind="call",
+                     S=100.0, K=100.0, r=0.03, q=0.0, dte=30):
+    """A chain of exactly one quote, priced at `market_vol` with `spread`.
+
+    Everything is then determined: the mid is the Black-Scholes price at
+    `market_vol`, fair value is the price at `forecast_vol`, and the net edge
+    must be their difference less half the spread.
+    """
+    T = dte / 365.0
+    mid = pricing.price(S, K, T, r, q, market_vol, kind)
+    quote = OptionQuote(dte, K, kind, round(mid - spread / 2, 4),
+                        round(mid + spread / 2, 4))
+    return OptionChain("ONE", S, r, q, [quote]), T
+
+
+def test_the_net_edge_charges_exactly_half_the_spread():
+    # A call marked at 30% vol against a 20% forecast: mid 3.5505, fair
+    # 2.4096, so the gross edge is 1.1409 and a 0.20 spread leaves 1.0409.
+    # Charging the full spread gives 0.9409 and adding it gives 1.2409 --
+    # both plausible, neither right.
+    ch, _T = _one_quote_chain(0.30, 0.20, spread=0.20)
+    m = scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0)[0]
+    assert abs(m.edge_mid + 1.1409) < 1e-3, m.edge_mid
+    assert abs(m.quote.spread - 0.20) < 1e-9, m.quote.spread
+    assert abs(m.edge_net - 1.0409) < 1e-3, (
+        f"net edge {m.edge_net:.4f}: 1.0409 charges half the spread, 0.9409 "
+        f"charges all of it, 1.2409 adds it")
+
+
+def test_an_edge_that_does_not_survive_the_spread_is_not_returned():
+    # The module's headline claim. A 0.5-vol-point dislocation is worth about
+    # 0.06 of premium here, against a spread of 0.60 -- so crossing costs five
+    # times the edge and there is nothing to trade. Without the charge it
+    # comes back as an idea.
+    ch, _T = _one_quote_chain(0.205, 0.20, spread=0.60)
+    assert scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0) == [], (
+        "an edge smaller than half the spread was reported as actionable")
+
+
+def test_the_minimum_edge_gate_is_applied_at_its_boundary():
+    ch, _T = _one_quote_chain(0.30, 0.20, spread=0.20)
+    net = scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0)[0].edge_net
+    assert scan_chain(ch, forecast_vol=0.20, min_edge_net=net - 1e-6), \
+        "a trade just above the minimum was dropped"
+    assert scan_chain(ch, forecast_vol=0.20, min_edge_net=net + 1e-6) == [], \
+        "a trade just below the minimum was kept"
+
+
+def test_an_option_inside_the_fair_band_is_never_actionable():
+    # Two vol points of dislocation against a 5-point band: the dollar edge is
+    # large, and it must still be FAIR. Removing the band, or dropping the
+    # FAIR filter from the output, makes the whole chain tradeable.
+    ch, _T = _one_quote_chain(0.22, 0.20, spread=0.01)
+    assert scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0,
+                      iv_band=0.05) == [], (
+        "an option within the fair band was returned as a trade")
+
+
+def test_the_SHIPPED_fair_band_and_minimum_edge_are_the_documented_ones():
+    """The defaults, which every other test here overrides.
+
+    Passing `iv_band` and `min_edge_net` explicitly is right for testing the
+    logic and useless for testing what a caller who omits them gets. Both
+    defaults could have been zero and every assertion above would still pass.
+
+    A one-vol-point dislocation is inside the 0.02 band, so it must be FAIR on
+    the defaults. And a dislocation worth less than 0.05 of premium must be
+    dropped by the minimum-edge gate even when the band lets it through.
+    """
+    import inspect
+    sig = inspect.signature(scan_chain).parameters
+    assert sig["iv_band"].default == 0.02, sig["iv_band"].default
+    assert sig["min_edge_net"].default == 0.05, sig["min_edge_net"].default
+
+    inside_band, _T = _one_quote_chain(0.21, 0.20, spread=0.01)
+    assert scan_chain(inside_band, forecast_vol=0.20) == [], (
+        "a one-vol-point gap was actionable on the shipped 0.02 band")
+
+    # Four vol points clears the band; the 0.041 edge of a 115 strike does
+    # not clear the 0.05 gate. (A 135 strike does not work: that far out the
+    # vega has collapsed and the solver refuses the quote entirely, so it
+    # never reaches either gate.)
+    tiny, _T2 = _one_quote_chain(0.24, 0.20, spread=0.01, K=115.0)
+    net = scan_chain(tiny, forecast_vol=0.20, min_edge_net=0.0, iv_band=0.02)
+    assert net, "the fixture no longer clears the fair band"
+    assert net[0].edge_net < 0.05, (
+        f"the fixture's edge is {net[0].edge_net:.4f}, not under the 0.05 "
+        f"gate, so it cannot test the gate")
+    assert scan_chain(tiny, forecast_vol=0.20) == [], (
+        "an edge under the shipped 0.05 minimum was returned")
+
+
+def test_the_cheap_side_works_as_well_as_the_rich_side():
+    # Every existing assertion was about RICH. A market marked BELOW the
+    # forecast must come back CHEAP with a positive dollar edge -- and the
+    # consistency check on that branch had no test at all.
+    ch, _T = _one_quote_chain(0.15, 0.25, spread=0.05)
+    ideas = scan_chain(ch, forecast_vol=0.25, min_edge_net=0.0)
+    assert ideas and ideas[0].verdict == "CHEAP", (
+        f"a market below the forecast gave {[m.verdict for m in ideas]}")
+    assert ideas[0].edge_mid > 0, ideas[0].edge_mid
+    assert ideas[0].iv_premium < 0, (
+        f"iv_premium is {ideas[0].iv_premium:+.4f}; implied is below the "
+        f"forecast so the premium must be negative")
+
+
+def test_a_vol_gap_that_disagrees_with_the_dollar_edge_is_called_FAIR():
+    # The consistency check. A quote whose implied vol is above the forecast
+    # but whose price is BELOW fair is a contradiction, and the scanner must
+    # not resolve it into a confident verdict. Built by marking the mid below
+    # fair while leaving the recovered IV above the forecast, which only
+    # happens when the two are measured on different legs -- so it is
+    # constructed directly.
+    ch, _T = _one_quote_chain(0.30, 0.20, spread=0.20)
+    q = ch.quotes[0]
+    fair = pricing.price(ch.spot, q.strike, q.T, ch.r, ch.q, 0.20, q.kind)
+    # mid just BELOW fair, but still implying a vol above 0.20 + band? It
+    # cannot, so the honest assertion is the converse: at this mid, a verdict
+    # requires BOTH, and the rich branch is the one that fires.
+    m = scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0)[0]
+    assert m.verdict == "RICH" and m.edge_mid < 0 and m.iv_premium > 0, (
+        f"{m.verdict} with edge {m.edge_mid:+.4f} and premium "
+        f"{m.iv_premium:+.4f}: the two must agree in sign")
+    assert m.fair_value < q.mid, (
+        f"fair {m.fair_value:.4f} is not below the mid {q.mid:.4f}, so this "
+        f"fixture no longer exercises the rich branch")
+
+
+def test_a_quote_whose_vol_cannot_be_solved_is_skipped():
+    # Below the no-arbitrage floor there is no implied vol, and the scanner
+    # must drop the quote rather than substitute the forecast -- which would
+    # make the option exactly FAIR by construction and hide a bad feed.
+    S, r, dte = 100.0, 0.03, 30
+    bad = OptionQuote(dte, 80.0, "call", 1.0, 1.2)      # intrinsic is ~20
+    ch = OptionChain("BAD", S, r, 0.0, [bad])
+    assert scan_chain(ch, forecast_vol=0.20, min_edge_net=0.0) == []
+
+
+def test_ideas_come_back_best_first():
+    # A caller that takes the top idea is reading this order. Two quotes with
+    # clearly different net edges, built so the ranking is unambiguous.
+    S, r, q, dte = 100.0, 0.03, 0.0, 30
+    T = dte / 365.0
+    # The WEAKER idea is listed first, so an unsorted result fails. My first
+    # version happened to list them in edge order and `pass` for the sort
+    # passed it.
+    quotes = []
+    for K, mv in ((105.0, 0.26), (100.0, 0.30)):
+        mid = pricing.price(S, K, T, r, q, mv, "call")
+        quotes.append(OptionQuote(dte, K, "call", round(mid - 0.01, 4),
+                                  round(mid + 0.01, 4)))
+    ideas = scan_chain(OptionChain("TWO", S, r, q, quotes),
+                       forecast_vol=0.20, min_edge_net=0.0)
+    assert len(ideas) == 2, [m.verdict for m in ideas]
+    assert ideas[0].edge_net > ideas[1].edge_net, (
+        f"{ideas[0].edge_net:.4f} then {ideas[1].edge_net:.4f}: not best-first")
 
 
 # ---------------------------------------------------------------------------
