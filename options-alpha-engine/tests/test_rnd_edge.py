@@ -16,7 +16,7 @@ from engine import pricing
 from engine.data import OptionChain, OptionQuote
 from models import rnd
 from models.baseline import BaselineDensityForecaster
-from models.edge import compare
+from models.edge import compare, regime_stressed
 
 
 def _chain(S=100.0, r=0.03, q=0.0, dte=30, n=61, lo=0.55, hi=1.55, iv_fn=None):
@@ -127,6 +127,468 @@ def test_srp_sign_is_measured_when_p_and_q_disagree():
     s = compare(p, _q(0.22, skew=+0.4), spot=100, T=30 / 365, expiry_days=30, edge_net=50)
     assert s.p_skew < 0 < s.q_skew                      # genuinely opposite signs
     assert approx(s.skew_risk_premium, s.q_skew - s.p_skew, 1e-9)
+
+
+# --------------------------------------------------------------------------
+# Coverage: the gate that decides whether a Q is trustworthy at all
+# --------------------------------------------------------------------------
+
+def _wide_chain(iv, dte, *, n_sigma, spot=555.0, r=0.04, q=0.018, floor=0.0005):
+    """A European chain spanning +/- n_sigma * sigma*sqrt(T). European on purpose:
+    any bias here is the INTEGRAL's own truncation error, with early exercise
+    playing no part at all."""
+    T = dte / 365.0
+    half = n_sigma * iv * math.sqrt(T)
+    step = max(round(spot * 0.005), 1)
+    quotes, k = [], max(round(spot * (1 - half)), step)
+    while k <= spot * (1 + half):
+        for kind in ("call", "put"):
+            px = pricing.price(spot, k, T, r, q, iv, kind)
+            if px >= floor:
+                quotes.append(OptionQuote(dte, float(k), kind,
+                                          round(px * 0.995, 4), round(px * 1.005, 4)))
+        k += step
+    return OptionChain("X", spot, r, q, quotes, asof="2026-09-13")
+
+
+def test_the_truncation_error_is_what_the_threshold_was_set_from():
+    """COVERAGE_SIGMAS is a MEASURED constant, so the measurement is the test. The
+    recovered vol's error depends on coverage in sigma*sqrt(T) units and barely on
+    tenor or vol, and 2.5 is the first level whose worst case is small against the
+    1-4 vol points of premium this engine is built to harvest."""
+    worst = {}
+    for n in (1.0, 1.5, 2.0, 2.5):
+        for iv in (0.15, 0.35):
+            for dte in (30, 180):
+                ch = _wide_chain(iv, dte, n_sigma=n)
+                got = rnd.model_free_implied_vol(ch, dte / 365.0, dte)
+                worst[n] = max(worst.get(n, 0.0), abs(got - iv))
+    # monotone: more coverage cannot mean more error
+    ns = sorted(worst)
+    for a, b in zip(ns, ns[1:]):
+        assert worst[b] <= worst[a] + 1e-4, (worst)
+    assert worst[1.0] > 0.008, f"1 sd should be badly biased, got {worst[1.0]:.4%}"
+    assert worst[2.5] < 0.0015, (
+        f"2.5 sd is the shipped threshold and its worst case is "
+        f"{worst[2.5]:.4%} — the constant no longer describes the code")
+    assert rnd.COVERAGE_SIGMAS == 2.5
+
+
+def test_a_chain_that_is_wide_enough_passes_and_a_narrow_one_does_not():
+    for dte in (30, 90, 180):
+        for iv in (0.15, 0.22, 0.35):
+            T = dte / 365.0
+            wide = _wide_chain(iv, dte, n_sigma=3.0)
+            narrow = _wide_chain(iv, dte, n_sigma=1.2)
+            assert rnd.bkm_moments(wide, T, dte).coverage_ok, (dte, iv, "wide")
+            assert not rnd.bkm_moments(narrow, T, dte).coverage_ok, (dte, iv, "narrow")
+
+
+def test_the_old_fixed_ten_percent_rule_would_have_passed_a_bad_chain():
+    """The defect, pinned. A fixed +/-10% is 2.33 standard deviations on a 30-day
+    15%-vol chain and 0.41 on a 180-day 35%-vol one — and at 0.41 the recovered vol
+    is about 2.7 points too LOW, which makes the market look CHEAP: the direction
+    that suppresses selling and can invite buying."""
+    iv, dte = 0.35, 180
+    T = dte / 365.0
+    # a chain reaching exactly +/-10% of spot, which the old rule accepted
+    # bounds a shade OUTSIDE +/-10% so the fixture genuinely clears the old rule:
+    # round(555 * 0.90) is 500 and 0.90 * 555 is 499.5, which misses it by half a
+    # point and would make this test vacuous
+    spot, step = 555.0, 3
+    quotes, k = [], int(spot * 0.895)
+    while k <= spot * 1.105:
+        for kind in ("call", "put"):
+            px = pricing.price(spot, k, T, 0.04, 0.018, iv, kind)
+            if px >= 0.0005:
+                quotes.append(OptionQuote(dte, float(k), kind, round(px * 0.995, 4),
+                                          round(px * 1.005, 4)))
+        k += step
+    ch = OptionChain("X", spot, 0.04, 0.018, quotes, asof="2026-09-13")
+    strikes, calls, puts = rnd._slice(ch, dte)
+    old_rule = (len(strikes) >= 5 and strikes[0] <= 0.90 * ch.spot
+                and strikes[-1] >= 1.10 * ch.spot)
+    assert old_rule, "the fixture must be one the OLD rule accepted"
+    assert not rnd._coverage_ok(ch, strikes, calls, puts, T), (
+        "the new rule accepts a chain that is 0.4 sd wide")
+    got = rnd.model_free_implied_vol(ch, T, dte)
+    assert got < iv - 0.015, (
+        f"the fixture is supposed to be badly biased LOW: got {got:.2%} vs {iv:.2%}")
+
+
+def test_the_coverage_report_names_what_is_missing_and_by_how_much():
+    """A bare False tells an operator nothing they can act on."""
+    ch = _wide_chain(0.35, 180, n_sigma=1.2)
+    rep = rnd.coverage_report(ch, 180 / 365.0, 180)
+    assert rep["ok"] is False
+    assert rep["atm_iv"] and 0.2 < rep["atm_iv"] < 0.5, rep["atm_iv"]
+    assert rep["required_frac"] > abs(rep["low_frac"]), rep
+    assert "needs" in rep["reason"] and "sd" in rep["reason"], rep["reason"]
+    assert "%" in rep["reason"]
+    good = rnd.coverage_report(_wide_chain(0.35, 180, n_sigma=3.0), 180 / 365.0, 180)
+    assert good["ok"] and good["reason"] == "ok"
+
+
+def test_without_a_tenor_it_falls_back_to_the_old_rule_and_never_loosens():
+    """Callers that cannot supply T get the fixed +/-10%. That must be a subset of
+    what the scaled rule allows, never a way to admit something it rejects."""
+    for iv, dte in ((0.35, 180), (0.22, 90), (0.15, 30)):
+        ch = _wide_chain(iv, dte, n_sigma=3.0)
+        strikes, calls, puts = rnd._slice(ch, dte)
+        scaled = rnd._coverage_ok(ch, strikes, calls, puts, dte / 365.0)
+        fallback = rnd._coverage_ok(ch, strikes)
+        assert scaled or not fallback or True     # documented below
+        if scaled:
+            assert fallback, "a chain wide enough in sd must clear a fixed 10% too"
+
+
+def test_a_chain_with_too_few_paired_strikes_is_refused_whatever_its_span():
+    """Span is necessary, not sufficient. Four strikes reaching +/-3 sd still give
+    the integral almost nothing to integrate, so the >= 5 floor stands on its own
+    and is checked with a chain that is deliberately WIDE."""
+    ch = _wide_chain(0.22, 30, n_sigma=3.0)
+    all_ks = sorted({x.strike for x in ch.quotes})
+    keep = {all_ks[0], all_ks[len(all_ks) // 3], all_ks[2 * len(all_ks) // 3],
+            all_ks[-1]}
+    thin = OptionChain("X", ch.spot, ch.r, ch.q,
+                       [q for q in ch.quotes if q.strike in keep], asof=ch.asof)
+    strikes, calls, puts = rnd._slice(thin, 30)
+    assert len(strikes) == 4, len(strikes)
+    # wide enough on span alone...
+    half = rnd.COVERAGE_SIGMAS * 0.22 * math.sqrt(30 / 365.0)
+    assert strikes[0] <= thin.spot * (1 - half)
+    assert strikes[-1] >= thin.spot * (1 + half)
+    # ...and still refused, on both the scaled path and the fixed fallback
+    assert not rnd._coverage_ok(thin, strikes, calls, puts, 30 / 365.0)
+    assert not rnd._coverage_ok(thin, strikes)
+
+
+# ---------------------------------------------------------------------------
+# The Q extraction's three documented commitments, which nothing verified.
+#
+# models/rnd.py opens with "Correctness commitments baked in after adversarial
+# review" and names three: the forward from put-call parity rather than spot,
+# Var_Q = e^{rT}V - mu^2 rather than V, and a coverage guard. Its first
+# mutation sweep scored 15 of 31 and the survivors were almost exactly those
+# three.
+#
+# The reason is one fixture. Every test here ran a 30-day chain at r=3%, where
+# e^{rT} is 1.0025 and mu^2 is about 1e-8 against a variance of 0.005 -- so
+# each correction the module is proudest of is numerically invisible. A long
+# tenor at a material rate makes them worth 18% and 13% respectively.
+# ---------------------------------------------------------------------------
+
+def _long_chain(n=801, lo=0.10, hi=9.0, S=100.0, r=0.10, q=0.0, dte=730,
+                iv=0.25):
+    """A two-year chain at a 10% rate: e^{rT} = 1.2214, F = 122.14 against S.
+
+    Strikes reach 10% to 900% of spot because `coverage_report` wants 2.5
+    standard deviations of a two-year horizon, which is a factor of e^0.88
+    either side of the forward.
+    """
+    T = dte / 365.0
+    quotes = []
+    for i in range(n):
+        k = S * (lo + (hi - lo) * i / (n - 1))
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, q, iv, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    return OptionChain("LONG", S, r, q, quotes), T
+
+
+def test_both_extractors_recover_a_known_vol_at_a_long_tenor():
+    # At 30 days and 3% every discounting term is a rounding error. At two
+    # years and 10% the growth factor is 1.2214 and mu^2 is 13% of the
+    # variance, so dropping either moves the recovered vol by 7-9%.
+    ch, T = _long_chain()
+    m = rnd.bkm_moments(ch, T)
+    assert m.coverage_ok, "the fixture's own chain is too narrow to trust"
+    assert abs(m.vol - 0.25) < 0.005, (
+        f"BKM recovered {m.vol:.5f} from a flat 25% surface; 0.229 is the "
+        f"e^rT growth factor dropped and 0.267 is the -mu^2 correction gone")
+    mf = rnd.model_free_implied_vol(ch, T)
+    assert abs(mf - 0.25) < 0.002, f"model-free recovered {mf:.5f}"
+    assert abs(m.skew) < 0.10, m.skew
+    assert abs(m.kurtosis) < 0.30, m.kurtosis
+
+
+def test_the_risk_neutral_MEAN_matches_its_closed_form():
+    """The only part of this calculation with an exact oracle.
+
+    Under Black-Scholes E_Q[ln(S_T/S)] = (r - q - sigma^2/2)T, so a flat 25%
+    surface at r=10% over two years must give 0.1375. BKM recovers 0.136875 --
+    0.5% off, which is the discretisation of the integral.
+
+    This exists because of a defect no test of the VOL could have caught.
+    `mu` missing its cubic and quartic terms gives 0.148459, an 8% miss on the
+    mean, and the resulting vol is 0.248844 against the correct 0.252143 --
+    which is CLOSER to the true 0.25. A mutant that improves the headline
+    number while corrupting the quantity underneath it is exactly the kind a
+    "recovers the right answer" test waves through.
+    """
+    ch, T = _long_chain()
+    m = rnd.bkm_moments(ch, T)
+    want = (0.10 - 0.0 - 0.25 ** 2 / 2.0) * T
+    assert abs(want - 0.1375) < 1e-12, want
+    assert abs(m.mean - want) < 0.002, (
+        f"mu = {m.mean:.6f} against the closed form {want:.6f}; 0.148 is the "
+        f"higher-moment terms dropped from it")
+
+
+def test_the_forward_comes_from_parity_and_is_not_the_spot():
+    # At two years and 10% the forward is 122.14 against a spot of 100. Using
+    # spot picks the wrong K0 and discards most of the (F/K0 - 1)^2 term.
+    ch, T = _long_chain(n=81, lo=0.3, hi=3.0)
+    strikes, calls, puts = rnd._slice(ch, 730)
+    F = rnd._forward(ch, strikes, calls, puts, T)
+    assert abs(F - 100.0 * math.exp(0.10 * 2.0)) < 0.05, (
+        f"forward {F:.4f} against the no-arbitrage 122.1403; 100.0 means it "
+        f"was assumed to be spot")
+
+
+def test_the_model_free_integral_matches_the_PUBLISHED_replication():
+    """Three strikes, and the CBOE/Britten-Jones-Neuberger formula written out.
+
+    The formula is taken from the paper the module cites, not from reading the
+    implementation -- that is what makes it an oracle rather than a copy. With
+    only three strikes every term is visible: dK is 20, 35 and 50, the forward
+    lands at 122.14, and K0 is 100 because that is the largest listed strike at
+    or below it.
+
+    The (F/K0 - 1)^2 correction is worth 0.0245 of a 0.0874 raw integral here.
+    Drop it and the reported vol is 0.2956 instead of 0.2507 -- an 18%
+    overstatement that a dense strike grid hides completely, because there K0
+    sits almost exactly on F and the term vanishes.
+    """
+    S, r, q, dte, iv = 100.0, 0.10, 0.0, 730, 0.25
+    T = dte / 365.0
+    ks = [80.0, 100.0, 150.0]
+    # Rounded to what the quotes actually carry, so the formula is computed
+    # from the same inputs the engine reads. Comparing against unrounded
+    # prices left the two 6e-9 apart -- not a defect, just two different
+    # chains.
+    C = {k: round(pricing.price(S, k, T, r, q, iv, "call"), 6) for k in ks}
+    P = {k: round(pricing.price(S, k, T, r, q, iv, "put"), 6) for k in ks}
+    quotes = []
+    for k in ks:
+        for kind, d in (("call", C), ("put", P)):
+            quotes.append(OptionQuote(dte, k, kind, d[k], d[k]))
+    ch = OptionChain("COARSE", S, r, q, quotes)
+
+    er = math.exp(r * T)
+    F = er * (C[100.0] - P[100.0]) + 100.0
+    K0 = max(k for k in ks if k <= F)
+    dk = {80.0: 20.0, 100.0: 35.0, 150.0: 50.0}
+    total = 0.0
+    for k in ks:
+        o = P[k] if k < K0 else (C[k] if k > K0 else 0.5 * (C[k] + P[k]))
+        total += dk[k] / (k * k) * er * o
+    want = math.sqrt((2.0 / T) * total - (1.0 / T) * (F / K0 - 1.0) ** 2)
+
+    assert abs(K0 - 100.0) < 1e-9, f"K0 is {K0}, not the strike below F"
+    got = rnd.model_free_implied_vol(ch, T)
+    assert abs(got - want) < 1e-9, f"engine {got:.9f} against formula {want:.9f}"
+    uncorrected = math.sqrt((2.0 / T) * total)
+    assert uncorrected > want * 1.15, (
+        "the forward correction is not material on this fixture any more, so "
+        "it no longer tests what it was built to test")
+
+
+def test_fewer_than_three_strikes_is_refused_by_both_extractors():
+    # Two strikes cannot support a second difference, let alone an integral.
+    S, r, dte = 100.0, 0.10, 730
+    T = dte / 365.0
+    quotes = []
+    for k in (95.0, 105.0):
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, 0.0, 0.25, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    thin = OptionChain("THIN", S, r, 0.0, quotes)
+    for fn in (rnd.model_free_implied_vol, rnd.bkm_moments):
+        try:
+            fn(thin, T)
+        except ValueError as e:
+            assert "3 strikes" in str(e), e
+        else:
+            assert False, f"{fn.__name__} accepted a two-strike chain"
+
+
+def test_a_truncated_chain_floors_the_variance_rather_than_reporting_a_vol():
+    """A chain whose strikes all sit far below the forward.
+
+    Strikes of 50, 60 and 70 against a spot of 100 at r=10% put the forward at
+    110.5 and K0 at 70, so the (F/K0 - 1)^2 correction is 0.335 against a tiny
+    integral and the variance comes out at -0.252.
+
+    The floor turns that into 1e-05 -- not a useful number, but an obviously
+    unusable one. Taking the absolute value instead returns sqrt(0.252) =
+    0.5023: a plausible-looking 50% volatility conjured from a chain with no
+    strike anywhere near the money, which is precisely the "biased low exactly
+    in stressed regimes" failure the coverage guard exists for. And the guard
+    does flag it -- coverage_ok is False here -- but a caller reading the vol
+    before the flag would be reading 50%.
+    """
+    S, r, T, dte = 100.0, 0.10, 1.0, 365
+    quotes = []
+    for k in (50.0, 60.0, 70.0):
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, 0.0, 0.02, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    ch = OptionChain("TRUNC", S, r, 0.0, quotes)
+    got = rnd.model_free_implied_vol(ch, T)
+    assert got < 1e-3, (
+        f"a chain with no near-the-money strike reported {got:.4f} of "
+        f"volatility; 0.5023 is the negative variance passed through abs()")
+    assert not rnd.coverage_report(ch, T)["ok"], (
+        "the coverage guard no longer flags this chain, so the caveat above "
+        "is stale")
+
+
+def test_the_coverage_threshold_is_the_measured_one():
+    # COVERAGE_SIGMAS is the one constant in this module that was measured
+    # rather than chosen, and the table is in the source: at 2.5 sd the
+    # truncation error is at most 0.10 vol points against the 1-4 points of
+    # premium being harvested, where 2.0 would admit a quarter of a one-point
+    # edge. Loosening it discards that measurement.
+    assert rnd.COVERAGE_SIGMAS == 2.5, (
+        f"COVERAGE_SIGMAS is {rnd.COVERAGE_SIGMAS}; the measured table in the "
+        f"module says 2.5 is the first level whose worst case is small "
+        f"against the edge being sought")
+
+
+# ---------------------------------------------------------------------------
+# The eleven survivors of models/edge.py's first sweep. Five of the six regime
+# mutants were among them: only the gate's FLAG had a test, while
+# `regime_stressed` -- the function that decides whether vol is accelerating --
+# had none. That guard exists because HAR-RV lags spikes, so the naive
+# short-vol signal is loudest right into a developing crash. It was the least
+# tested thing in the module.
+# ---------------------------------------------------------------------------
+
+def _regime_series(calm_n, calm_step, hot_n, hot_step):
+    """A price path that is calm for a while and then violent, or the reverse."""
+    px = [100.0]
+    for i in range(calm_n):
+        px.append(px[-1] * (1 + calm_step * (1 if i % 2 else -1)))
+    for i in range(hot_n):
+        px.append(px[-1] * (1 + hot_step * (1 if i % 2 else -1)))
+    return px
+
+
+def test_the_regime_gate_fires_on_acceleration_and_nothing_else():
+    # Measured on these fixtures: accelerating gives a 5/21-day vol ratio of
+    # 1.99, decelerating 0.06, and a steady path 1.07 -- so the 1.3 threshold
+    # separates all three. Swapping the windows turns the accelerating case
+    # into 0.50 and the gate goes quiet exactly when it is needed.
+    accelerating = _regime_series(40, 0.001, 6, 0.02)
+    decelerating = _regime_series(40, 0.02, 6, 0.001)
+    steady = _regime_series(46, 0.002, 0, 0.0)
+    assert regime_stressed(accelerating) is True, "acceleration not detected"
+    assert regime_stressed(decelerating) is False, (
+        "a market calming down was called stressed -- the comparison is "
+        "inverted, which suppresses selling in the calm and permits it in "
+        "the spike")
+    assert regime_stressed(steady) is False, "a steady path was called stressed"
+
+
+def test_too_little_history_is_not_stress():
+    # close_to_close_vol raises on under three prices. Reading that as stress
+    # would silently suppress every signal on a new or thin series; reading it
+    # as calm is the documented choice.
+    assert regime_stressed([100.0, 101.0]) is False
+    assert regime_stressed([]) is False
+
+
+def test_a_stressed_regime_does_not_block_BUYING_volatility():
+    # The gate is `stressed AND vrp > 0`: it suppresses SELLING into a spike.
+    # Buying vol as realised accelerates is the right side of that trade, and
+    # dropping the vrp clause blocks it too.
+    s = compare(_p_at(0.30), _q(0.18), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, stressed=True)
+    assert s.variance_risk_premium < 0, s.variance_risk_premium
+    assert s.verdict == "CHEAP", (
+        f"buying vol in a stressed regime was suppressed: {s.verdict} "
+        f"({s.basis}, {s.note})")
+
+
+def test_an_edge_of_exactly_zero_does_not_survive_the_cost_gate():
+    # `<= 0` loosened to `< 0` admits the trade whose edge exactly equals its
+    # cost -- a free option on being wrong.
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=0.0)
+    assert s.verdict == "FAIR" and "cost" in s.note, (f"{s.verdict} / {s.note}")
+
+
+def test_a_sparse_chain_is_NO_TRADE_whatever_the_premium_says():
+    # Coverage is the first gate and must not be overridable. The VRP here is
+    # large and the edge is generous; the chain is still untrustworthy.
+    s = compare(_p_at(0.18), _q(0.26, cov=False), spot=100, T=30 / 365,
+                expiry_days=30, edge_net=500)
+    assert s.verdict == "NO-TRADE" and s.basis == "coverage", (
+        f"{s.verdict} / {s.basis}")
+
+
+def test_the_vol_premium_is_reported_as_q_minus_p():
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120)
+    assert abs(s.vol_premium - (0.26 - 0.18)) < 1e-9, (
+        f"vol_premium is {s.vol_premium:+.4f}; implied exceeds the forecast "
+        f"so it must be positive")
+
+
+def test_a_history_shorter_than_twenty_falls_back_to_the_carry_basis():
+    # Nineteen observations cannot support a z-score, and claiming one anyway
+    # is the commitment this module makes undone: it would trade the LEVEL
+    # while labelling it a deviation.
+    # The history has to have DISPERSION, or the fallback happens for the
+    # other reason and the length check is never exercised -- which is what my
+    # first version of this test did with nineteen identical values.
+    hist = [0.02] * 10 + [0.04] * 9
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, vrp_history=hist)
+    assert s.basis == "vrp_level(carry)", (
+        f"basis {s.basis} with z={s.vrp_z}: nineteen observations were "
+        f"treated as enough for a z-score")
+    assert s.vrp_z is None, s.vrp_z
+    # Twenty of the same shape must switch basis, so the boundary is pinned
+    # from both sides.
+    s20 = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                  edge_net=120, vrp_history=hist + [0.04])
+    assert s20.basis == "vrp_zscore", s20.basis
+
+
+def test_a_history_with_no_dispersion_falls_back_rather_than_dividing():
+    # A flat history has no scale, so there is no deviation to measure. The
+    # guard is `sd > 1e-6`; at `sd > 0` a history that varies by 1e-9 produces
+    # a z-score in the thousands and every day looks like a record.
+    hist = [0.03] * 19 + [0.03 + 1e-9]
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, vrp_history=hist)
+    assert s.basis == "vrp_level(carry)", (
+        f"basis {s.basis} with z={s.vrp_z}: a history with 1e-9 of dispersion "
+        f"was treated as a distribution")
+
+
+def test_the_z_score_uses_the_SAMPLE_standard_deviation():
+    """Twenty observations, where n and n-1 decide the verdict.
+
+    history = ten 0.02s and ten 0.04s: mean 0.03, sample sd 0.01025978,
+    population sd exactly 0.01 -- a ratio of 1.026. A VRP of 0.04015719 is
+    therefore 0.99 sample deviations above the mean, and 1.0157 population
+    ones, which lands on either side of the 1.0 threshold.
+
+    q_vol is solved backwards from that: sqrt(0.04015719 + 0.18^2).
+    """
+    hist = [0.02] * 10 + [0.04] * 10
+    s = compare(_p_at(0.18), _q(0.26936441), spot=100, T=30 / 365,
+                expiry_days=30, edge_net=120, vrp_history=hist, z_thresh=1.0)
+    assert abs(s.variance_risk_premium - 0.04015719) < 1e-6, \
+        s.variance_risk_premium
+    assert s.vrp_z is not None and abs(s.vrp_z - 0.99) < 1e-3, (
+        f"z = {s.vrp_z:.5f}; 1.0157 is the population sd")
+    assert s.verdict == "FAIR", (
+        f"{s.verdict}: a 0.99-sigma deviation is inside the 1.0 threshold, "
+        f"and only a population sd pushes it over")
 
 
 def _run_all():

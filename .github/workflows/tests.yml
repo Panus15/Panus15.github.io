@@ -8,13 +8,41 @@ on:
   push:
     paths:
       - "options-alpha-engine/**"
+      - "fx-engine/**"
       - ".github/workflows/tests.yml"
   pull_request:
     paths:
       - "options-alpha-engine/**"
+      - "fx-engine/**"
       - ".github/workflows/tests.yml"
 
 jobs:
+  # The FX engine's quality claim is "242 deliberate defects introduced, 242
+  # caught". That claim was unverifiable for most of this project's life -- the
+  # sweeps lived outside the repository and a container rebuild deleted them.
+  # Running it here is what keeps the number true rather than historical: a
+  # survivor means the tests cannot tell the real code from a broken version,
+  # and a stale anchor means a defect was never tried. Separate job so it runs
+  # beside the suite instead of lengthening it.
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Mutation sweep (fx-engine)
+        working-directory: fx-engine
+        run: python3 mutation/run.py
+
+      # The options engine's sweep, for the same reason. It starts with one
+      # table (models/decision.py, where position size is decided) and grows;
+      # running it here is what stops that count becoming historical. The step
+      # is separate so a failure names which engine it came from.
+      - name: Mutation sweep (options-alpha-engine)
+        working-directory: options-alpha-engine
+        run: python3 mutation/run.py
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -43,6 +71,61 @@ jobs:
             exit 1
           fi
 
+      # This runner HAS outbound access, and that is exactly why this check
+      # belongs here. Three tests once passed only because the dev sandbox had
+      # none: one asserted a vendor was unreachable, one had its fixture CSV
+      # overwritten by a real download, one had live vendor entries appended to
+      # its ledger mid-test. The suite was making real API calls and nothing said
+      # so. This re-runs every file with EXTERNAL connections denied (loopback
+      # stays open, so local-server fixtures still work) and fails if any file
+      # needs a network it should not need.
+      - name: Prove the suite needs no network
+        working-directory: options-alpha-engine
+        run: python3 -m tools.check_offline
+
+      # The FX engine is a separate tree with its own suite. Without this it had
+      # no CI at all — a green check would have meant "the options engine passes"
+      # while saying nothing about the newer code.
+      - name: Run the FX engine test suite
+        working-directory: fx-engine
+        run: |
+          fail=0
+          for t in tests/test_*.py; do
+            echo "::group::$t"
+            python3 "$t" || fail=1
+            echo "::endgroup::"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::one or more fx-engine test files failed"
+            exit 1
+          fi
+
       - name: Smoke-test the demo (stdlib-only, no deps)
         working-directory: options-alpha-engine
         run: python3 demo.py
+
+      # Small sizes so CI stays fast; the point is that the whole FX loop runs
+      # end to end, not that the false-positive counts are precise at n=3.
+      - name: Smoke-test the FX demo (stdlib-only, no deps)
+        working-directory: fx-engine
+        run: python3 demo.py --bars 8000 --trials 3
+
+      # example/README.md quotes real output, so the commands it documents have
+      # to keep working. The peeking rule is expected to FAIL -- its whole job
+      # is to be refused -- so this asserts the exit code rather than ignoring
+      # it, which would let a broken look-ahead check pass unnoticed.
+      - name: Smoke-test the documented walkthrough
+        working-directory: fx-engine
+        run: |
+          set -e
+          python3 tools/make_example.py
+          A="example/EURUSD_H1_SYNTHETIC.csv --pair EURUSD --side bid"
+          A="$A --round-turn 1.3 --swap-markup 0.015 --costs-measured"
+          python3 tools/analyse.py $A > /dev/null
+          python3 tools/analyse.py $A --rule example/sample_rule.py > /dev/null
+          python3 tools/analyse.py $A --rule example/sample_rule.py --holdout > /dev/null
+          if python3 tools/analyse.py $A --rule example/peeking_rule.py > /dev/null 2>&1; then
+            echo "::error::the peeking rule was ACCEPTED — the look-ahead check is broken"
+            exit 1
+          fi
+          python3 tools/calibrate.py --trials 4 --bars 6000 > /dev/null

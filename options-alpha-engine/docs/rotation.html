@@ -1,0 +1,302 @@
+<title>Sector Rotation — 2024-12-22</title>
+<style>
+:root{
+  --ground:#fbfaf7; --panel:#ffffff; --edge:#e3e0d8; --ink:#1c2026; --ink-2:#5b6069;
+  --ink-3:#8b9099; --grid:#e8e5dd; --accent:#0e6b62;
+  --lead:#12776a; --weak:#a5761b; --lag:#a04236; --improve:#3a5f95;
+  --lead-bg:#12776a1f; --weak-bg:#a5761b1f; --lag-bg:#a042361f; --improve-bg:#3a5f951f;
+  --shadow:0 1px 2px #1c202610, 0 8px 24px #1c202608;
+}
+@media (prefers-color-scheme:dark){:root{
+  --ground:#101316; --panel:#171b20; --edge:#272c33; --ink:#eceef1; --ink-2:#a2a8b2;
+  --ink-3:#6d747e; --grid:#232830; --accent:#4fd0be;
+  --lead:#4fd0be; --weak:#e0aa4e; --lag:#e0705f; --improve:#7ba6e8;
+  --lead-bg:#4fd0be1c; --weak-bg:#e0aa4e1c; --lag-bg:#e0705f1c; --improve-bg:#7ba6e81c;
+  --shadow:0 1px 2px #0006, 0 12px 32px #0004;
+}}
+:root[data-theme="dark"]{
+  --ground:#101316; --panel:#171b20; --edge:#272c33; --ink:#eceef1; --ink-2:#a2a8b2;
+  --ink-3:#6d747e; --grid:#232830; --accent:#4fd0be;
+  --lead:#4fd0be; --weak:#e0aa4e; --lag:#e0705f; --improve:#7ba6e8;
+  --lead-bg:#4fd0be1c; --weak-bg:#e0aa4e1c; --lag-bg:#e0705f1c; --improve-bg:#7ba6e81c;
+  --shadow:0 1px 2px #0006, 0 12px 32px #0004;
+}
+:root[data-theme="light"]{
+  --ground:#fbfaf7; --panel:#ffffff; --edge:#e3e0d8; --ink:#1c2026; --ink-2:#5b6069;
+  --ink-3:#8b9099; --grid:#e8e5dd; --accent:#0e6b62;
+  --lead:#12776a; --weak:#a5761b; --lag:#a04236; --improve:#3a5f95;
+  --lead-bg:#12776a1f; --weak-bg:#a5761b1f; --lag-bg:#a042361f; --improve-bg:#3a5f951f;
+  --shadow:0 1px 2px #1c202610, 0 8px 24px #1c202608;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1240px;margin:0 auto;padding:32px 20px 72px}
+h1,h2,h3{font-family:ui-serif,Georgia,"Iowan Old Style","Times New Roman",serif;
+  font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:31px;letter-spacing:-.015em}
+h2{font-size:19px;letter-spacing:-.01em}
+.num{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  font-variant-numeric:tabular-nums}
+.eyebrow{font-size:11px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600}
+header{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;
+  justify-content:space-between;border-bottom:1px solid var(--edge);
+  padding-bottom:20px;margin-bottom:28px}
+header p{margin:6px 0 0;color:var(--ink-2);max-width:60ch;font-size:14px}
+.meta{display:flex;gap:26px}
+.meta div{text-align:right}
+.meta .k{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3)}
+.meta .v{font-size:21px;font-weight:600}
+.grid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:22px}
+@media(max-width:940px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--edge);border-radius:10px;
+  padding:18px 20px;box-shadow:var(--shadow)}
+.card>header{border:0;padding:0;margin:0 0 14px;display:flex;align-items:baseline;
+  justify-content:space-between;gap:12px}
+.hint{color:var(--ink-3);font-size:12.5px;margin:12px 0 0}
+svg{display:block;width:100%;height:auto;overflow:visible}
+.q-label{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+.dot{cursor:pointer}
+.dot:focus{outline:2px solid var(--accent);outline-offset:3px}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;padding:0 6px 8px;border-bottom:1px solid var(--edge);
+  white-space:nowrap}
+th.r,td.r{text-align:right}
+td{padding:8px 6px;border-bottom:1px solid var(--edge)}
+tr:last-child td{border-bottom:0}
+tbody tr{transition:background .12s}
+tbody tr:hover,tbody tr.on{background:var(--grid)}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:10.5px;
+  font-weight:700;letter-spacing:.05em;white-space:nowrap}
+.Leading{color:var(--lead);background:var(--lead-bg)}
+.Weakening{color:var(--weak);background:var(--weak-bg)}
+.Lagging{color:var(--lag);background:var(--lag-bg)}
+.Improving{color:var(--improve);background:var(--improve-bg)}
+.bar{height:7px;border-radius:2px;display:block}
+.barwrap{display:flex;align-items:center;gap:7px;justify-content:flex-end;
+  white-space:nowrap}
+td.excess{white-space:nowrap}
+.sector b{display:block;line-height:1.25}
+.sector span{display:block;font-size:11.5px;color:var(--ink-2);line-height:1.25}
+.sparks{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:14px}
+.spark{border:1px solid var(--edge);border-radius:8px;padding:10px 12px 6px;
+  background:var(--panel)}
+.spark .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.spark b{font-size:13px;letter-spacing:.02em}
+.verdict{border-left:3px solid var(--accent);padding:2px 0 2px 15px;margin:0 0 16px}
+.verdict p{margin:5px 0 0;color:var(--ink-2);font-size:14px}
+.verdict strong{color:var(--ink)}
+.tworow{display:grid;grid-template-columns:1fr 1fr;gap:22px}
+@media(max-width:760px){.tworow{grid-template-columns:1fr}}
+.note{margin-top:34px;padding:16px 20px;border:1px dashed var(--edge);border-radius:10px;
+  color:var(--ink-2);font-size:13px}
+.note b{color:var(--ink)}
+.section{margin-top:26px}
+.scroll{overflow-x:auto}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+<header>
+  <div>
+    <div class="eyebrow">Relative rotation &middot; 11 S&amp;P 500 sectors vs SPY</div>
+    <h1>Where the market is paying, and whether that tells you anything</h1>
+    <p>Both axes are z-scores against each sector&rsquo;s <em>own</em> recent history,
+       so 100 means &ldquo;in line with its norm&rdquo;, not &ldquo;in line with
+       SPY&rdquo;. This is a transform of relative price &mdash; not fund flow.</p>
+  </div>
+  <div class="meta">
+    <div><div class="k">As of</div><div class="v num">2024-12-22</div></div>
+    <div><div class="k">SPY</div><div class="v num">247.00</div></div>
+    <div><div class="k">Bars</div><div class="v num">1301</div></div>
+  </div>
+</header>
+
+<div class="grid">
+  <section class="card">
+    <header><h2>Rotation graph</h2>
+      <span class="eyebrow">63-bar window &middot; 12-bar tail</span></header>
+    <div id="rrg"></div>
+    <p class="hint">Rotation runs clockwise: Improving &rarr; Leading &rarr; Weakening
+      &rarr; Lagging. Tails show the last 12 bars. Hover a dot or a row to isolate it.</p>
+  </section>
+
+  <section class="card">
+    <header><h2>Leaderboard</h2><span class="eyebrow">strength + momentum</span></header>
+    <div class="scroll"><table id="board">
+      <thead><tr><th>#</th><th>Sector</th><th class="r">RS</th><th class="r">Mom</th>
+        <th>Quadrant</th><th class="r">Excess</th></tr></thead>
+      <tbody></tbody></table></div>
+    <p class="hint">Excess return is measured over the 12-bar tail window, not the year.
+       Magnitudes are easier to read in the sparklines below.</p>
+  </section>
+</div>
+
+<section class="card section" id="testcard"></section>
+
+<section class="section">
+  <header style="margin-bottom:14px"><h2>Relative strength vs SPY</h2></header>
+  <div class="sparks" id="sparks"></div>
+</section>
+
+<div class="note">
+  <b>Read this before acting on it.</b> A rotation chart describes where price has
+  already gone; it cannot see fund flows, creations, or anyone&rsquo;s order book.
+  The panel above is this dashboard&rsquo;s own out-of-sample test on the same data,
+  and it is shown whether or not the answer flatters the chart. Use it with
+  fundamentals, position sizing, and a stop &mdash; not instead of them.
+</div>
+</div>
+
+<script>
+const DATA = {"asof": "2024-12-22", "benchmark": "SPY", "benchLast": 247.0, "bars": 1301, "window": 63, "momLag": 5, "tail": 12, "horizon": 21, "points": [{"symbol": "XLC", "name": "Communication Services", "rs": 103.13, "mom": 100.06, "quadrant": "Leading", "excess": 0.0361, "rank": 2, "barsIn": 1, "counterClockwise": 7, "tail": [[100.57, 103.5], [100.96, 103.34], [101.36, 104.54], [101.46, 104.14], [101.08, 101.7], [102.25, 102.18], [103.0, 102.44], [103.4, 102.28], [103.63, 102.27], [102.93, 101.85], [102.19, 99.87], [103.13, 100.06]], "spark": [86.896, 86.937, 86.698, 85.579, 85.2, 84.986, 85.361, 85.212, 85.314, 85.401, 85.955, 85.266, 84.901, 84.76, 84.58, 85.227, 85.836, 85.562, 85.697, 85.83, 85.642, 86.019, 85.693, 86.456, 86.513, 86.772, 86.737, 87.412, 87.415, 87.713, 87.837, 87.037, 86.616, 86.275, 87.257, 87.232, 87.757, 87.667, 89.042, 89.274, 89.083, 88.863, 89.613, 89.994, 90.489, 90.464, 91.087, 91.405, 91.233, 92.121, 91.772, 91.881, 91.817, 92.682, 92.491, 93.027, 91.683, 91.737, 91.765, 92.0, 92.418, 91.741, 91.992, 91.875, 91.211, 91.473, 91.113, 91.181, 91.462, 92.134, 92.466, 92.513, 93.352, 92.82, 92.53, 91.808, 91.442, 91.615, 92.02, 92.291, 92.469, 91.632, 91.759, 91.91, 92.045, 91.397, 91.785, 91.996, 92.481, 92.808, 92.339, 91.824, 91.184, 91.976, 92.096, 92.331, 91.633, 90.972, 92.053, 91.468, 91.68, 91.956, 91.794, 91.078, 91.418, 90.995, 90.961, 91.785, 92.178, 92.396, 92.634, 92.713, 92.523, 93.223, 93.805, 94.313, 94.789, 94.461, 93.938, 95.003]}, {"symbol": "XLRE", "name": "Real Estate", "rs": 102.13, "mom": 100.99, "quadrant": "Leading", "excess": 0.0177, "rank": 3, "barsIn": 1, "counterClockwise": 7, "tail": [[101.15, 100.83], [101.6, 101.19], [101.82, 101.03], [101.74, 100.4], [101.46, 100.25], [101.49, 100.12], [101.07, 99.1], [100.92, 98.71], [100.57, 98.45], [101.42, 99.74], [101.32, 99.6], [102.13, 100.99]], "spark": [131.937, 131.979, 131.424, 131.528, 130.454, 131.089, 130.802, 130.001, 129.664, 130.005, 130.205, 130.738, 130.883, 130.131, 130.394, 131.067, 130.797, 130.799, 130.506, 130.816, 131.316, 131.447, 131.024, 130.931, 130.073, 128.652, 128.771, 128.446, 128.042, 128.43, 127.997, 127.892, 127.112, 126.947, 126.448, 127.494, 127.412, 126.481, 127.177, 127.45, 128.453, 128.352, 128.037, 129.285, 129.144, 128.015, 127.911, 127.017, 126.794, 127.225, 127.405, 126.849, 126.606, 126.591, 127.926, 127.601, 127.295, 126.918, 126.144, 125.893, 125.469, 125.201, 124.811, 124.269, 123.412, 124.216, 123.636, 123.606, 122.945, 122.879, 123.977, 125.443, 126.542, 126.851, 127.109, 128.131, 127.046, 127.16, 127.549, 127.088, 125.834, 125.098, 124.111, 124.073, 124.728, 124.222, 123.779, 123.962, 123.575, 123.249, 123.3, 123.288, 123.766, 122.855, 124.542, 124.204, 124.874, 124.137, 125.01, 125.802, 125.317, 125.061, 125.904, 126.145, 126.309, 126.827, 127.47, 127.129, 127.298, 128.01, 128.442, 128.385, 127.972, 128.042, 127.363, 127.144, 126.548, 127.978, 127.811, 129.317]}, {"symbol": "XLK", "name": "Technology", "rs": 102.11, "mom": 102.31, "quadrant": "Leading", "excess": 0.0099, "rank": 1, "barsIn": 4, "counterClockwise": 7, "tail": [[101.13, 102.65], [100.84, 100.42], [101.65, 101.27], [101.37, 101.12], [101.3, 99.29], [101.36, 100.36], [100.17, 99.24], [101.27, 99.63], [101.35, 100.06], [102.2, 101.18], [102.22, 101.1], [102.11, 102.31]], "spark": [135.151, 135.256, 135.065, 135.811, 136.686, 136.859, 135.88, 135.707, 135.675, 136.254, 135.931, 136.896, 137.657, 137.722, 136.561, 136.109, 136.79, 137.372, 137.631, 138.631, 139.446, 140.34, 140.431, 139.584, 140.096, 138.913, 140.108, 140.468, 140.268, 140.158, 140.15, 140.824, 141.707, 142.164, 142.222, 142.958, 142.461, 142.35, 142.168, 142.348, 142.966, 144.017, 145.142, 145.976, 144.647, 145.164, 145.777, 146.675, 147.236, 147.031, 147.143, 147.518, 147.317, 146.628, 148.131, 148.584, 148.214, 146.586, 145.267, 146.013, 145.255, 145.267, 144.91, 145.476, 145.861, 147.243, 147.554, 147.694, 147.422, 147.568, 147.035, 146.036, 146.314, 147.787, 147.054, 147.38, 147.536, 147.719, 147.866, 148.58, 150.65, 150.758, 151.118, 151.389, 150.031, 149.308, 148.596, 148.164, 147.324, 147.035, 147.72, 148.162, 148.043, 147.785, 148.169, 148.706, 147.46, 147.787, 146.785, 146.313, 147.01, 146.139, 145.413, 146.028, 148.216, 148.435, 148.192, 150.33, 149.199, 148.819, 150.076, 149.733, 149.701, 149.858, 148.044, 149.8, 149.996, 151.528, 151.758, 151.776]}, {"symbol": "XLI", "name": "Industrials", "rs": 101.71, "mom": 98.58, "quadrant": "Weakening", "excess": 0.0365, "rank": 5, "barsIn": 3, "counterClockwise": 6, "tail": [[100.07, 100.61], [100.53, 101.5], [101.29, 101.84], [102.22, 102.95], [102.77, 103.4], [102.63, 102.48], [102.94, 102.21], [102.9, 101.34], [102.67, 100.18], [102.16, 99.13], [101.92, 99.05], [101.71, 98.58]], "spark": [81.577, 81.384, 81.316, 81.647, 81.531, 81.566, 81.203, 81.324, 81.21, 80.612, 81.15, 81.511, 81.01, 80.972, 81.42, 81.216, 81.256, 80.661, 81.124, 81.294, 81.545, 81.087, 81.152, 80.45, 79.525, 79.046, 78.531, 78.55, 79.123, 78.351, 78.41, 79.003, 79.129, 78.883, 79.194, 79.645, 79.474, 78.604, 78.379, 78.626, 78.804, 79.087, 78.583, 78.547, 78.654, 78.91, 78.479, 78.952, 79.426, 79.526, 79.618, 79.773, 79.386, 79.397, 79.378, 78.856, 79.165, 78.503, 78.437, 77.598, 77.915, 78.363, 77.872, 77.74, 78.44, 77.896, 77.751, 78.084, 78.061, 77.39, 77.274, 77.357, 77.027, 76.96, 76.381, 76.934, 76.912, 76.789, 76.827, 77.281, 77.994, 78.48, 78.08, 77.454, 77.502, 76.966, 76.651, 75.891, 75.992, 76.46, 76.715, 76.984, 76.715, 76.713, 76.67, 76.509, 76.484, 76.878, 77.166, 77.13, 77.165, 76.762, 76.886, 77.259, 77.005, 77.445, 77.34, 77.193, 77.683, 78.124, 78.857, 79.789, 80.441, 80.387, 80.849, 81.006, 80.908, 80.364, 80.159, 79.932]}, {"symbol": "XLB", "name": "Materials", "rs": 100.78, "mom": 99.43, "quadrant": "Weakening", "excess": -0.0179, "rank": 6, "barsIn": 15, "counterClockwise": 5, "tail": [[101.26, 98.45], [101.07, 98.07], [101.07, 98.18], [101.02, 98.68], [100.91, 98.53], [100.84, 99.03], [100.99, 99.55], [101.04, 99.65], [100.82, 99.39], [100.72, 99.42], [100.68, 99.47], [100.78, 99.43]], "spark": [84.925, 84.923, 85.776, 84.625, 83.751, 83.87, 84.357, 83.767, 83.179, 83.811, 84.119, 83.263, 83.788, 83.683, 84.011, 84.517, 84.628, 83.596, 83.876, 83.078, 82.514, 82.592, 82.833, 82.29, 82.434, 82.472, 82.393, 82.132, 82.665, 82.829, 82.129, 81.745, 81.718, 81.556, 81.092, 81.152, 80.333, 80.38, 81.0, 80.641, 80.828, 80.613, 81.22, 80.584, 79.984, 79.93, 79.24, 80.118, 80.294, 80.472, 79.416, 79.828, 80.246, 79.85, 80.529, 79.808, 80.503, 80.312, 80.695, 80.818, 80.544, 81.004, 81.447, 80.986, 81.079, 81.644, 82.364, 82.204, 82.462, 81.607, 81.734, 81.83, 81.887, 81.764, 81.718, 82.246, 82.621, 83.068, 83.074, 83.134, 83.908, 84.321, 84.502, 84.845, 85.369, 85.313, 85.472, 85.966, 85.531, 84.985, 85.393, 85.619, 85.372, 85.745, 87.004, 87.004, 86.54, 87.448, 87.404, 86.535, 87.572, 88.23, 88.327, 88.256, 88.735, 88.902, 88.105, 88.367, 87.342, 86.876, 86.958, 86.921, 86.688, 86.567, 87.052, 87.289, 86.75, 86.547, 86.495, 86.825]}, {"symbol": "XLU", "name": "Utilities", "rs": 100.71, "mom": 100.23, "quadrant": "Leading", "excess": -0.0054, "rank": 4, "barsIn": 5, "counterClockwise": 8, "tail": [[101.21, 100.07], [100.55, 99.26], [100.41, 99.16], [100.39, 98.96], [100.33, 99.01], [100.3, 98.99], [100.32, 99.69], [100.61, 100.13], [100.98, 100.51], [101.14, 100.71], [101.12, 100.7], [100.71, 100.23]], "spark": [112.315, 111.839, 112.36, 112.076, 111.281, 111.472, 111.425, 110.337, 111.473, 110.84, 110.362, 109.625, 108.101, 108.043, 108.085, 107.908, 108.381, 108.107, 108.012, 107.48, 107.737, 108.21, 108.58, 108.642, 109.491, 109.666, 109.243, 109.34, 109.486, 110.045, 109.918, 110.177, 110.665, 110.343, 110.149, 110.928, 110.73, 109.935, 110.394, 109.677, 109.572, 109.089, 108.986, 109.539, 110.011, 109.718, 109.713, 109.165, 109.424, 110.357, 109.883, 109.615, 108.965, 107.78, 108.371, 107.554, 108.026, 107.264, 106.544, 106.178, 106.43, 106.17, 106.665, 106.812, 107.093, 106.111, 107.261, 106.825, 105.937, 106.796, 107.431, 108.28, 109.667, 109.741, 110.195, 110.87, 111.549, 111.878, 110.63, 110.432, 110.144, 110.879, 111.123, 111.864, 111.405, 109.829, 110.534, 110.663, 111.158, 112.007, 112.917, 112.263, 113.243, 113.37, 113.917, 113.079, 113.325, 112.688, 112.985, 112.823, 112.922, 112.204, 112.348, 112.145, 112.505, 112.529, 113.052, 112.955, 113.068, 111.503, 111.203, 111.172, 111.058, 110.984, 111.056, 111.819, 112.776, 113.271, 113.288, 112.358]}, {"symbol": "XLE", "name": "Energy", "rs": 100.02, "mom": 99.91, "quadrant": "Weakening", "excess": 0.0045, "rank": 7, "barsIn": 1, "counterClockwise": 10, "tail": [[99.25, 100.62], [99.23, 99.89], [99.3, 100.08], [99.34, 100.01], [100.07, 101.03], [100.09, 101.74], [99.9, 101.32], [100.23, 101.9], [100.02, 101.24], [99.71, 98.65], [99.95, 99.26], [100.02, 99.91]], "spark": [100.811, 100.694, 100.634, 101.093, 101.238, 101.799, 102.034, 102.091, 102.655, 102.969, 102.438, 103.475, 103.407, 103.527, 103.503, 103.301, 103.796, 103.454, 103.707, 103.591, 103.828, 103.033, 103.231, 103.461, 103.732, 103.497, 103.075, 102.473, 102.795, 102.894, 102.947, 102.291, 102.523, 101.407, 101.344, 101.03, 101.06, 101.375, 100.69, 101.173, 101.53, 101.244, 100.702, 100.767, 100.138, 100.305, 99.853, 99.579, 99.751, 98.801, 98.182, 97.949, 98.635, 99.111, 98.995, 98.642, 98.028, 98.201, 98.346, 97.943, 98.902, 98.852, 98.676, 98.754, 98.281, 97.818, 97.969, 98.785, 98.068, 97.551, 97.34, 97.224, 97.393, 97.23, 96.849, 96.064, 95.365, 95.069, 94.858, 94.272, 94.416, 94.404, 93.502, 94.177, 94.173, 93.678, 93.596, 93.575, 94.131, 94.722, 94.373, 94.335, 93.495, 92.859, 93.152, 93.267, 93.906, 94.411, 93.028, 93.154, 92.816, 92.978, 93.649, 93.721, 94.476, 94.338, 94.414, 95.001, 94.306, 94.208, 94.311, 94.336, 95.869, 95.858, 95.429, 96.057, 95.582, 94.908, 95.335, 95.412]}, {"symbol": "XLY", "name": "Consumer Discretionary", "rs": 99.08, "mom": 100.67, "quadrant": "Improving", "excess": 0.0081, "rank": 8, "barsIn": 14, "counterClockwise": 6, "tail": [[98.11, 100.68], [98.3, 100.9], [98.37, 100.73], [98.21, 100.37], [98.49, 100.48], [98.53, 100.49], [98.41, 100.24], [98.57, 100.31], [98.63, 100.49], [98.81, 100.4], [98.73, 100.31], [99.08, 100.67]], "spark": [90.011, 90.037, 90.292, 90.473, 90.267, 91.123, 91.67, 92.136, 92.837, 92.393, 92.335, 92.063, 92.305, 91.449, 91.542, 91.496, 91.792, 91.12, 91.429, 91.898, 91.666, 92.302, 91.848, 91.765, 91.951, 91.932, 91.445, 90.921, 90.786, 91.083, 91.333, 91.506, 91.863, 92.024, 91.948, 91.712, 92.02, 91.42, 91.444, 91.328, 91.705, 91.356, 90.88, 90.766, 91.247, 91.728, 91.907, 91.605, 91.776, 92.275, 92.555, 91.905, 92.196, 92.038, 92.601, 92.958, 91.875, 92.062, 92.38, 92.442, 92.279, 91.903, 91.818, 91.911, 92.837, 93.723, 93.224, 93.712, 94.131, 93.536, 93.841, 93.246, 92.106, 92.219, 92.109, 92.017, 90.772, 90.942, 90.029, 89.964, 90.346, 91.138, 91.221, 90.986, 91.051, 90.979, 90.338, 90.622, 89.788, 89.471, 89.73, 89.302, 89.581, 89.175, 89.527, 88.651, 88.785, 89.196, 89.94, 89.202, 88.779, 88.448, 87.482, 87.074, 86.602, 86.804, 87.14, 87.241, 87.132, 87.367, 87.36, 86.857, 87.326, 87.297, 86.908, 87.131, 87.157, 87.461, 87.206, 87.929]}, {"symbol": "XLV", "name": "Health Care", "rs": 98.61, "mom": 100.77, "quadrant": "Improving", "excess": -0.0014, "rank": 9, "barsIn": 12, "counterClockwise": 9, "tail": [[97.92, 100.02], [98.04, 100.15], [98.22, 100.33], [98.13, 100.35], [98.08, 100.43], [98.14, 100.54], [98.18, 100.44], [98.46, 100.58], [98.56, 100.8], [98.69, 101.02], [98.83, 101.11], [98.61, 100.77]], "spark": [82.109, 82.684, 82.901, 83.018, 83.516, 83.466, 82.768, 82.459, 82.197, 81.987, 82.271, 82.705, 82.824, 83.047, 83.394, 83.762, 83.235, 83.353, 83.304, 83.628, 83.695, 83.769, 83.395, 83.57, 83.083, 83.355, 84.144, 84.294, 84.331, 84.481, 84.717, 84.343, 84.518, 84.717, 84.882, 84.766, 84.615, 84.668, 84.947, 84.876, 84.075, 84.346, 84.179, 84.912, 84.288, 84.374, 84.532, 84.223, 84.29, 84.169, 84.193, 84.996, 84.739, 84.665, 84.788, 85.057, 84.552, 84.888, 83.207, 82.973, 82.782, 82.357, 82.22, 82.76, 82.584, 82.614, 82.492, 82.612, 82.532, 81.683, 81.112, 80.797, 80.24, 80.684, 81.37, 81.399, 80.816, 80.786, 80.701, 81.262, 81.27, 81.031, 80.546, 80.259, 80.269, 80.665, 79.898, 79.891, 79.566, 78.84, 79.0, 78.86, 78.793, 79.24, 79.621, 79.316, 79.171, 78.904, 78.331, 78.145, 77.623, 77.728, 77.651, 77.267, 77.127, 77.012, 76.563, 76.018, 75.7, 75.792, 76.055, 75.629, 75.266, 75.236, 75.188, 75.827, 75.975, 76.241, 76.548, 75.914]}, {"symbol": "XLF", "name": "Financials", "rs": 98.03, "mom": 99.98, "quadrant": "Lagging", "excess": -0.0412, "rank": 11, "barsIn": 1, "counterClockwise": 7, "tail": [[99.02, 100.68], [98.71, 100.41], [98.48, 100.18], [98.58, 99.9], [98.27, 99.31], [98.12, 98.96], [98.06, 99.25], [97.93, 99.33], [98.09, 99.41], [98.07, 99.8], [98.12, 100.03], [98.03, 99.98]], "spark": [108.509, 108.483, 108.706, 108.03, 107.548, 107.483, 107.639, 107.845, 107.763, 108.074, 108.864, 108.172, 108.333, 108.633, 109.536, 109.407, 109.474, 109.286, 109.034, 108.867, 108.461, 108.463, 108.089, 107.851, 108.486, 108.878, 109.411, 110.013, 109.955, 109.799, 109.923, 110.366, 111.148, 111.795, 111.437, 110.856, 110.679, 110.57, 110.297, 109.87, 109.563, 108.554, 109.464, 108.933, 108.226, 107.879, 109.267, 109.339, 108.464, 108.512, 109.394, 107.97, 107.436, 107.32, 107.418, 106.957, 107.045, 106.921, 106.863, 106.181, 106.549, 107.25, 107.005, 107.464, 108.014, 107.913, 107.869, 107.372, 107.578, 107.31, 107.078, 106.972, 105.611, 106.105, 105.843, 104.707, 103.828, 103.556, 103.596, 103.074, 103.5, 103.321, 104.698, 104.271, 104.784, 105.015, 104.338, 104.43, 104.076, 103.975, 103.185, 102.998, 102.92, 102.433, 102.84, 102.135, 101.99, 101.694, 101.282, 101.029, 101.886, 101.47, 101.576, 101.915, 101.526, 101.284, 101.948, 102.269, 102.563, 101.7, 101.043, 101.17, 100.255, 99.772, 99.407, 98.849, 99.033, 98.753, 98.676, 98.176]}, {"symbol": "XLP", "name": "Consumer Staples", "rs": 97.93, "mom": 100.31, "quadrant": "Improving", "excess": -0.0025, "rank": 10, "barsIn": 9, "counterClockwise": 5, "tail": [[97.03, 96.92], [97.48, 97.74], [96.91, 98.84], [97.01, 100.61], [97.51, 101.66], [97.83, 100.91], [97.67, 100.27], [98.26, 101.48], [98.39, 101.45], [98.05, 100.59], [98.18, 100.4], [97.93, 100.31]], "spark": [89.157, 88.875, 88.93, 88.679, 89.544, 89.369, 88.826, 89.11, 88.461, 88.791, 88.025, 88.106, 87.627, 87.809, 87.657, 87.143, 87.281, 86.75, 86.206, 86.104, 86.248, 85.065, 84.95, 84.62, 84.516, 83.991, 83.798, 83.25, 82.864, 82.08, 82.164, 82.003, 82.216, 82.166, 81.668, 81.523, 81.553, 81.244, 81.263, 81.145, 81.018, 80.761, 79.868, 79.808, 79.466, 78.779, 78.686, 78.983, 78.755, 78.728, 79.015, 79.225, 79.134, 79.066, 79.242, 79.563, 79.587, 79.664, 79.624, 79.58, 79.719, 79.912, 79.604, 79.572, 79.531, 78.742, 78.917, 78.536, 79.115, 78.978, 79.873, 79.444, 79.731, 79.747, 79.506, 79.983, 80.097, 80.362, 80.596, 79.612, 79.202, 79.104, 78.837, 78.592, 78.47, 79.031, 79.329, 79.419, 79.522, 79.305, 78.859, 78.574, 79.089, 78.775, 78.647, 78.622, 79.459, 79.967, 79.885, 79.726, 79.24, 79.307, 78.992, 79.245, 79.145, 78.357, 77.403, 76.75, 77.202, 77.39, 76.763, 76.626, 76.894, 77.063, 76.78, 77.275, 77.334, 76.895, 76.945, 76.563]}], "test": {"panelVerdict": "LEADING BEATS LAGGING by 1.25% per period (t=+3.67) \u2014 before costs, which the long/short book charges.", "dates": 55, "quadrants": {"Improving": {"n": 169, "mean": -0.00656, "t": -3.1}, "Leading": {"n": 135, "mean": 0.00601, "t": 2.48}, "Weakening": {"n": 168, "mean": 0.00697, "t": 3.58}, "Lagging": {"n": 133, "mean": -0.0065, "t": -2.71}}, "bookVerdict": "the rotation book returned +25.4% net of costs vs the label-shuffled placebo's -0.3% \u2014 worth a longer sample and a live forward test, not a position", "bookReturn": 0.2539, "bookSharpe": 6.09, "rebalances": 55, "placeboReturn": -0.0035}};
+const Q = ["Leading","Weakening","Lagging","Improving"];
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- rotation graph ---------- */
+function drawRRG(){
+  const pts = DATA.points, S = 560, pad = 46;
+  const all = pts.flatMap(p => p.tail.concat([[p.rs,p.mom]]));
+  let lo = 100, hi = 100;
+  all.forEach(([a,b]) => { lo = Math.min(lo,a,b); hi = Math.max(hi,a,b); });
+  const m = Math.max(hi-100, 100-lo) * 1.18 || 1;
+  const x = v => pad + (v-(100-m))/(2*m)*(S-2*pad);
+  const y = v => S-pad - (v-(100-m))/(2*m)*(S-2*pad);
+  const mid = x(100), midY = y(100);
+  const q = (a,b) => a>=100 ? (b>=100?"Leading":"Weakening") : (b>=100?"Improving":"Lagging");
+  const col = {Leading:"--lead",Weakening:"--weak",Lagging:"--lag",Improving:"--improve"};
+
+  let s = `<svg viewBox="0 0 ${S} ${S}" role="img" aria-label="Relative rotation graph">`;
+  s += `<rect x="${mid}" y="${pad}" width="${S-pad-mid}" height="${midY-pad}" fill="var(--lead-bg)"/>`;
+  s += `<rect x="${mid}" y="${midY}" width="${S-pad-mid}" height="${S-pad-midY}" fill="var(--weak-bg)"/>`;
+  s += `<rect x="${pad}" y="${midY}" width="${mid-pad}" height="${S-pad-midY}" fill="var(--lag-bg)"/>`;
+  s += `<rect x="${pad}" y="${pad}" width="${mid-pad}" height="${midY-pad}" fill="var(--improve-bg)"/>`;
+  for(let i=1;i<8;i++){const g=pad+i*(S-2*pad)/8;
+    s+=`<line x1="${g}" y1="${pad}" x2="${g}" y2="${S-pad}" stroke="var(--grid)"/>`;
+    s+=`<line x1="${pad}" y1="${g}" x2="${S-pad}" y2="${g}" stroke="var(--grid)"/>`;}
+  s += `<line x1="${mid}" y1="${pad}" x2="${mid}" y2="${S-pad}" stroke="var(--ink-3)" stroke-dasharray="3 4"/>`;
+  s += `<line x1="${pad}" y1="${midY}" x2="${S-pad}" y2="${midY}" stroke="var(--ink-3)" stroke-dasharray="3 4"/>`;
+  const lbl=[["Improving",pad+10,pad+18,"start","--improve"],["Leading",S-pad-10,pad+18,"end","--lead"],
+             ["Lagging",pad+10,S-pad-8,"start","--lag"],["Weakening",S-pad-10,S-pad-8,"end","--weak"]];
+  lbl.forEach(([t,px,py,an,c])=>{s+=`<text class="q-label" x="${px}" y="${py}" text-anchor="${an}" fill="var(${c})">${t}</text>`;});
+  s += `<text class="q-label" x="${S/2}" y="${S-10}" text-anchor="middle" fill="var(--ink-3)">RS-Ratio &#8594;</text>`;
+  s += `<text class="q-label" x="14" y="${S/2}" text-anchor="middle" fill="var(--ink-3)" transform="rotate(-90 14 ${S/2})">RS-Momentum &#8594;</text>`;
+
+  pts.forEach(p => {
+    const c = `var(${col[p.quadrant]})`;
+    const path = p.tail.map(([a,b],i)=>`${i?"L":"M"}${x(a).toFixed(1)},${y(b).toFixed(1)}`).join(" ");
+    s += `<g class="sym" data-sym="${p.symbol}">`;
+    s += `<path d="${path}" fill="none" stroke="${c}" stroke-width="1.6" opacity=".45"
+           stroke-linejoin="round"/>`;
+    p.tail.forEach(([a,b],i)=>{ if(i%3===0&&i<p.tail.length-1)
+      s+=`<circle cx="${x(a).toFixed(1)}" cy="${y(b).toFixed(1)}" r="1.9" fill="${c}" opacity=".5"/>`;});
+    s += `<circle class="dot" tabindex="0" cx="${x(p.rs).toFixed(1)}" cy="${y(p.mom).toFixed(1)}"
+           r="7" fill="${c}" stroke="var(--panel)" stroke-width="2"><title>${p.symbol} — ${p.name}
+RS ${p.rs}  Mom ${p.mom}  ${p.quadrant} for ${p.barsIn} bars</title></circle>`;
+    s += `<text x="${(x(p.rs)+11).toFixed(1)}" y="${(y(p.mom)+4).toFixed(1)}" font-size="11.5"
+           font-weight="700" fill="var(--ink)" paint-order="stroke"
+           stroke="var(--panel)" stroke-width="3" stroke-linejoin="round"
+           >${p.symbol}</text></g>`;
+  });
+  document.getElementById("rrg").innerHTML = s + "</svg>";
+}
+
+/* ---------- leaderboard ---------- */
+function drawBoard(){
+  const tb = document.querySelector("#board tbody");
+  const max = Math.max(...DATA.points.map(p=>Math.abs(p.excess))) || 1;
+  const col = {Leading:"--lead",Weakening:"--weak",Lagging:"--lag",Improving:"--improve"};
+  tb.innerHTML = DATA.points.slice().sort((a,b)=>a.rank-b.rank).map(p=>{
+    const c = p.excess>=0 ? "var(--lead)" : "var(--lag)";
+    return `<tr data-sym="${p.symbol}">
+      <td class="num" style="color:var(--ink-3)">${p.rank}</td>
+      <td class="sector"><b>${p.symbol}</b><span>${p.name}</span></td>
+      <td class="r num">${p.rs.toFixed(2)}</td>
+      <td class="r num">${p.mom.toFixed(2)}</td>
+      <td><span class="pill ${p.quadrant}">${p.quadrant}</span></td>
+      <td class="r excess num" style="color:${c}">${(p.excess*100).toFixed(2)}%</td></tr>`;
+  }).join("");
+}
+
+/* ---------- the test ---------- */
+function drawTest(){
+  const t = DATA.test, el = document.getElementById("testcard");
+  if(!t){ el.remove(); return; }
+  const good = /LEADING BEATS LAGGING/.test(t.panelVerdict);
+  const rows = Q.filter(q=>t.quadrants[q]).map(q=>{
+    const s = t.quadrants[q];
+    const c = s.mean>=0 ? "var(--lead)" : "var(--lag)";
+    return `<tr><td><span class="pill ${q}">${q}</span></td>
+      <td class="r num">${s.n}</td>
+      <td class="r num" style="color:${c}">${(s.mean*100).toFixed(2)}%</td>
+      <td class="r num" style="color:var(--ink-2)">${s.t>=0?"+":""}${s.t.toFixed(2)}</td></tr>`;
+  }).join("");
+  el.innerHTML = `<header><h2>Does the chart predict anything?</h2>
+      <span class="eyebrow">${t.dates} rebalance dates &middot; ${DATA.horizon}-bar horizon</span></header>
+    <div class="verdict"><div class="eyebrow">Quadrant panel &mdash; forward excess return, before costs</div>
+      <p><strong>${t.panelVerdict}</strong></p></div>
+    <div class="tworow">
+      <div class="scroll"><table>
+        <thead><tr><th>Quadrant</th><th class="r">n</th>
+          <th class="r">Mean forward</th><th class="r">t</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div>
+        <div class="eyebrow">Tradeable version &mdash; long top 3, short bottom 3, costs charged</div>
+        <p style="margin:8px 0 0;font-size:14px;color:var(--ink-2)">
+          Total <b class="num" style="color:var(--ink)">${(t.bookReturn*100).toFixed(1)}%</b>
+          over ${t.rebalances} rebalances &middot;
+          Sharpe <b class="num" style="color:var(--ink)">${t.bookSharpe}</b>${
+          t.placeboReturn===null?"":` &middot; label-shuffled placebo
+          <b class="num" style="color:var(--ink)">${(t.placeboReturn*100).toFixed(1)}%</b>`}</p>
+        <p class="hint">${t.bookVerdict}</p>
+      </div></div>
+    <p class="hint">${good
+      ? "The panel is the kindest possible test &mdash; no costs, no slippage. A signal that survives it still has to survive the long/short book beside it."
+      : "The panel ignores costs entirely, so a signal that fails here cannot be rescued by better execution."}</p>`;
+}
+
+/* ---------- sparklines ---------- */
+function drawSparks(){
+  const col = {Leading:"--lead",Weakening:"--weak",Lagging:"--lag",Improving:"--improve"};
+  document.getElementById("sparks").innerHTML = DATA.points.map(p=>{
+    const v=p.spark, lo=Math.min(...v), hi=Math.max(...v), r=(hi-lo)||1;
+    const W=150,H=38;
+    const pt=i=>[ (i/(v.length-1)*W).toFixed(1), (H-(v[i]-lo)/r*H).toFixed(1) ];
+    const d=v.map((_,i)=>{const[a,b]=pt(i);return `${i?"L":"M"}${a},${b}`}).join(" ");
+    const [lx,ly]=pt(v.length-1);
+    const c=`var(${col[p.quadrant]})`;
+    const chg=((v[v.length-1]/v[0]-1)*100);
+    return `<div class="spark" data-sym="${p.symbol}">
+      <div class="top"><b>${p.symbol}</b>
+        <span class="num" style="font-size:12px;color:${chg>=0?"var(--lead)":"var(--lag)"}">
+          ${chg>=0?"+":""}${chg.toFixed(1)}%</span></div>
+      <svg viewBox="0 0 ${W} ${H+4}" aria-label="${p.symbol} relative strength">
+        <path d="${d} L${W},${H} L0,${H} Z" fill="${c}" opacity=".10"/>
+        <path d="${d}" fill="none" stroke="${c}" stroke-width="1.5"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="${lx}" cy="${ly}" r="2.6" fill="${c}"/></svg>
+      <div style="font-size:11px;color:var(--ink-3);margin-top:2px">${p.name}</div></div>`;
+  }).join("");
+}
+
+function link(){
+  const set = (sym,on) => {
+    document.querySelectorAll("[data-sym]").forEach(e=>{
+      const me = e.getAttribute("data-sym")===sym;
+      if(e.tagName==="TR") e.classList.toggle("on", on&&me);
+      else e.style.opacity = (!on||me) ? "1" : ".22";
+    });
+  };
+  document.addEventListener("mouseover", e=>{
+    const h=e.target.closest("[data-sym]"); if(h) set(h.getAttribute("data-sym"), true);});
+  document.addEventListener("mouseout", e=>{
+    if(e.target.closest("[data-sym]")) set(null,false);});
+  document.addEventListener("focusin", e=>{
+    const h=e.target.closest("[data-sym]"); if(h) set(h.getAttribute("data-sym"), true);});
+}
+
+drawRRG(); drawBoard(); drawTest(); drawSparks(); link();
+</script>
