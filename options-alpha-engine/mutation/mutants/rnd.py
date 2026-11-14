@@ -16,6 +16,15 @@ traps:
     the coverage guard  truncated wings bias both extractors low "exactly in
                         stressed regimes" -- the regime the engine exists for.
 
+ONE EQUIVALENT MUTANT IS DELIBERATELY ABSENT. Which strike the forward is
+recovered from cannot change it: put-call parity holds at EVERY strike, so
+`k0 = strikes[0]` and `k0 = nearest-to-spot` agree to about 1e-6, which is the
+rounding in the quotes rather than a difference in the answer -- measured
+across a 3-strike, an 81-strike and an 801-strike chain. The nearest-to-spot
+choice is for numerical conditioning: there the call and the put are similar in
+size, so the relative error in C - P is smallest. It is kept for that reason,
+not because it changes a number.
+
 COVERAGE_SIGMAS is the one constant here that was measured rather than chosen,
 and its table is in the source: 2.5 sd keeps the truncation error at 0.10 vol
 points against the 1-4 points of premium being harvested, where 2.0 would admit
@@ -32,7 +41,6 @@ MUTANTS = [
  ("parity sign flipped",         "    return math.exp(chain.r * T) * (calls[k0] - puts[k0]) + k0", "    return math.exp(chain.r * T) * (puts[k0] - calls[k0]) + k0"),
  ("parity strike not added",     "    return math.exp(chain.r * T) * (calls[k0] - puts[k0]) + k0", "    return math.exp(chain.r * T) * (calls[k0] - puts[k0])"),
  ("parity not discounted",       "    return math.exp(chain.r * T) * (calls[k0] - puts[k0]) + k0", "    return (calls[k0] - puts[k0]) + k0"),
- ("forward strike far from spot", "    k0 = min(strikes, key=lambda k: abs(k - chain.spot))", "    k0 = strikes[0]"),
 
  # The model-free integral: the discretisation, the OTM selection, and the
  # (F/K0 - 1)^2 correction the forward exists to compute.

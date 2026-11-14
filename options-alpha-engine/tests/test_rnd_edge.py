@@ -263,6 +263,168 @@ def test_a_chain_with_too_few_paired_strikes_is_refused_whatever_its_span():
     assert not rnd._coverage_ok(thin, strikes)
 
 
+# ---------------------------------------------------------------------------
+# The Q extraction's three documented commitments, which nothing verified.
+#
+# models/rnd.py opens with "Correctness commitments baked in after adversarial
+# review" and names three: the forward from put-call parity rather than spot,
+# Var_Q = e^{rT}V - mu^2 rather than V, and a coverage guard. Its first
+# mutation sweep scored 15 of 31 and the survivors were almost exactly those
+# three.
+#
+# The reason is one fixture. Every test here ran a 30-day chain at r=3%, where
+# e^{rT} is 1.0025 and mu^2 is about 1e-8 against a variance of 0.005 -- so
+# each correction the module is proudest of is numerically invisible. A long
+# tenor at a material rate makes them worth 18% and 13% respectively.
+# ---------------------------------------------------------------------------
+
+def _long_chain(n=801, lo=0.10, hi=9.0, S=100.0, r=0.10, q=0.0, dte=730,
+                iv=0.25):
+    """A two-year chain at a 10% rate: e^{rT} = 1.2214, F = 122.14 against S.
+
+    Strikes reach 10% to 900% of spot because `coverage_report` wants 2.5
+    standard deviations of a two-year horizon, which is a factor of e^0.88
+    either side of the forward.
+    """
+    T = dte / 365.0
+    quotes = []
+    for i in range(n):
+        k = S * (lo + (hi - lo) * i / (n - 1))
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, q, iv, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    return OptionChain("LONG", S, r, q, quotes), T
+
+
+def test_both_extractors_recover_a_known_vol_at_a_long_tenor():
+    # At 30 days and 3% every discounting term is a rounding error. At two
+    # years and 10% the growth factor is 1.2214 and mu^2 is 13% of the
+    # variance, so dropping either moves the recovered vol by 7-9%.
+    ch, T = _long_chain()
+    m = rnd.bkm_moments(ch, T)
+    assert m.coverage_ok, "the fixture's own chain is too narrow to trust"
+    assert abs(m.vol - 0.25) < 0.005, (
+        f"BKM recovered {m.vol:.5f} from a flat 25% surface; 0.229 is the "
+        f"e^rT growth factor dropped and 0.267 is the -mu^2 correction gone")
+    mf = rnd.model_free_implied_vol(ch, T)
+    assert abs(mf - 0.25) < 0.002, f"model-free recovered {mf:.5f}"
+    assert abs(m.skew) < 0.10, m.skew
+    assert abs(m.kurtosis) < 0.30, m.kurtosis
+
+
+def test_the_risk_neutral_MEAN_matches_its_closed_form():
+    """The only part of this calculation with an exact oracle.
+
+    Under Black-Scholes E_Q[ln(S_T/S)] = (r - q - sigma^2/2)T, so a flat 25%
+    surface at r=10% over two years must give 0.1375. BKM recovers 0.136875 --
+    0.5% off, which is the discretisation of the integral.
+
+    This exists because of a defect no test of the VOL could have caught.
+    `mu` missing its cubic and quartic terms gives 0.148459, an 8% miss on the
+    mean, and the resulting vol is 0.248844 against the correct 0.252143 --
+    which is CLOSER to the true 0.25. A mutant that improves the headline
+    number while corrupting the quantity underneath it is exactly the kind a
+    "recovers the right answer" test waves through.
+    """
+    ch, T = _long_chain()
+    m = rnd.bkm_moments(ch, T)
+    want = (0.10 - 0.0 - 0.25 ** 2 / 2.0) * T
+    assert abs(want - 0.1375) < 1e-12, want
+    assert abs(m.mean - want) < 0.002, (
+        f"mu = {m.mean:.6f} against the closed form {want:.6f}; 0.148 is the "
+        f"higher-moment terms dropped from it")
+
+
+def test_the_forward_comes_from_parity_and_is_not_the_spot():
+    # At two years and 10% the forward is 122.14 against a spot of 100. Using
+    # spot picks the wrong K0 and discards most of the (F/K0 - 1)^2 term.
+    ch, T = _long_chain(n=81, lo=0.3, hi=3.0)
+    strikes, calls, puts = rnd._slice(ch, 730)
+    F = rnd._forward(ch, strikes, calls, puts, T)
+    assert abs(F - 100.0 * math.exp(0.10 * 2.0)) < 0.05, (
+        f"forward {F:.4f} against the no-arbitrage 122.1403; 100.0 means it "
+        f"was assumed to be spot")
+
+
+def test_the_model_free_integral_matches_the_PUBLISHED_replication():
+    """Three strikes, and the CBOE/Britten-Jones-Neuberger formula written out.
+
+    The formula is taken from the paper the module cites, not from reading the
+    implementation -- that is what makes it an oracle rather than a copy. With
+    only three strikes every term is visible: dK is 20, 35 and 50, the forward
+    lands at 122.14, and K0 is 100 because that is the largest listed strike at
+    or below it.
+
+    The (F/K0 - 1)^2 correction is worth 0.0245 of a 0.0874 raw integral here.
+    Drop it and the reported vol is 0.2956 instead of 0.2507 -- an 18%
+    overstatement that a dense strike grid hides completely, because there K0
+    sits almost exactly on F and the term vanishes.
+    """
+    S, r, q, dte, iv = 100.0, 0.10, 0.0, 730, 0.25
+    T = dte / 365.0
+    ks = [80.0, 100.0, 150.0]
+    # Rounded to what the quotes actually carry, so the formula is computed
+    # from the same inputs the engine reads. Comparing against unrounded
+    # prices left the two 6e-9 apart -- not a defect, just two different
+    # chains.
+    C = {k: round(pricing.price(S, k, T, r, q, iv, "call"), 6) for k in ks}
+    P = {k: round(pricing.price(S, k, T, r, q, iv, "put"), 6) for k in ks}
+    quotes = []
+    for k in ks:
+        for kind, d in (("call", C), ("put", P)):
+            quotes.append(OptionQuote(dte, k, kind, d[k], d[k]))
+    ch = OptionChain("COARSE", S, r, q, quotes)
+
+    er = math.exp(r * T)
+    F = er * (C[100.0] - P[100.0]) + 100.0
+    K0 = max(k for k in ks if k <= F)
+    dk = {80.0: 20.0, 100.0: 35.0, 150.0: 50.0}
+    total = 0.0
+    for k in ks:
+        o = P[k] if k < K0 else (C[k] if k > K0 else 0.5 * (C[k] + P[k]))
+        total += dk[k] / (k * k) * er * o
+    want = math.sqrt((2.0 / T) * total - (1.0 / T) * (F / K0 - 1.0) ** 2)
+
+    assert abs(K0 - 100.0) < 1e-9, f"K0 is {K0}, not the strike below F"
+    got = rnd.model_free_implied_vol(ch, T)
+    assert abs(got - want) < 1e-9, f"engine {got:.9f} against formula {want:.9f}"
+    uncorrected = math.sqrt((2.0 / T) * total)
+    assert uncorrected > want * 1.15, (
+        "the forward correction is not material on this fixture any more, so "
+        "it no longer tests what it was built to test")
+
+
+def test_fewer_than_three_strikes_is_refused_by_both_extractors():
+    # Two strikes cannot support a second difference, let alone an integral.
+    S, r, dte = 100.0, 0.10, 730
+    T = dte / 365.0
+    quotes = []
+    for k in (95.0, 105.0):
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, 0.0, 0.25, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    thin = OptionChain("THIN", S, r, 0.0, quotes)
+    for fn in (rnd.model_free_implied_vol, rnd.bkm_moments):
+        try:
+            fn(thin, T)
+        except ValueError as e:
+            assert "3 strikes" in str(e), e
+        else:
+            assert False, f"{fn.__name__} accepted a two-strike chain"
+
+
+def test_the_coverage_threshold_is_the_measured_one():
+    # COVERAGE_SIGMAS is the one constant in this module that was measured
+    # rather than chosen, and the table is in the source: at 2.5 sd the
+    # truncation error is at most 0.10 vol points against the 1-4 points of
+    # premium being harvested, where 2.0 would admit a quarter of a one-point
+    # edge. Loosening it discards that measurement.
+    assert rnd.COVERAGE_SIGMAS == 2.5, (
+        f"COVERAGE_SIGMAS is {rnd.COVERAGE_SIGMAS}; the measured table in the "
+        f"module says 2.5 is the first level whose worst case is small "
+        f"against the edge being sought")
+
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0

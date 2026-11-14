@@ -37,6 +37,14 @@ class RiskNeutralMoments:
     horizon_T: float
     n_strikes: int
     coverage_ok: bool   # False if too few strikes or wings too narrow to trust
+    #: E_Q[ln(S_T / S)] over the horizon. Reported because it is the term the
+    #: variance is corrected BY -- Var_Q = e^{rT}V - mu^2 -- and because it has
+    #: a closed form under Black-Scholes, (r - q - sigma^2/2)T, which makes it
+    #: the only part of this calculation with an exact oracle. It was computed
+    #: and discarded, and a version of `mu` missing its higher-moment terms
+    #: moved the recovered vol CLOSER to the truth on a flat surface, so no
+    #: test of the vol could ever have caught it.
+    mean: float = 0.0
 
 
 def _slice(chain: OptionChain, dte: int):
@@ -264,7 +272,8 @@ def bkm_moments(chain: OptionChain, T: float, dte: int | None = None) -> RiskNeu
     var_q = er * V - mu * mu
     if var_q <= 0:
         return RiskNeutralMoments(0.0, 0.0, 0.0, T, len(strikes),
-                                  _coverage_ok(chain, strikes, calls, puts, T))
+                                  _coverage_ok(chain, strikes, calls, puts, T),
+                                  mean=mu)
     skew = (er * W - 3.0 * mu * er * V + 2.0 * mu ** 3) / var_q ** 1.5
     kurt = (er * X - 4.0 * mu * er * W + 6.0 * mu * mu * er * V - 3.0 * mu ** 4) / var_q ** 2
     return RiskNeutralMoments(
@@ -274,6 +283,7 @@ def bkm_moments(chain: OptionChain, T: float, dte: int | None = None) -> RiskNeu
         horizon_T=T,
         n_strikes=len(strikes),
         coverage_ok=_coverage_ok(chain, strikes, calls, puts, T),
+        mean=mu,
     )
 
 
