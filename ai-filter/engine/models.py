@@ -29,6 +29,13 @@ class ClaimKind(str, Enum):
     #   "number"|"date"|"name"|"law"|"event"|"price"|"other", "volatile": bool}
     # `volatile` = changes over time (prices, office-holders, "current" anything), so an old source is stale.
     FACT = "fact"
+    # --- phase 3: topic-independent cues and computable checks ---
+    # a risk cue found in the text itself: data={"cue": <tag>}; ids "q1","q2",...
+    CUE = "cue"
+    # a statement checkable by calculation (calendar, units, ...): data={"type": str}; ids "m1","m2",...
+    COMPUTED = "computed"
+    # a package / module attribute named by code: data={"language","name","kind": "package"|"attribute"}; ids "k1",...
+    API_REF = "api_ref"
 
 
 class Status(str, Enum):
@@ -54,3 +61,6 @@ class Finding:
     module: str                     # "citations" | "recompute" | "sandbox" | "vague" | ...
     reason: str                     # one plain-language sentence a non-expert can act on
     evidence: tuple[str, ...] = ()  # URLs / API results / program output backing the reason
+    # Phase 3: for cue findings, which cue fired (e.g. "time_sensitive"). score.CUE_WEIGHTS maps tag -> weight
+    # so every heuristic weight lives in ONE place and can be calibrated later. "" for everything else.
+    tag: str = ""
