@@ -691,6 +691,73 @@ change a number that is then thrown away.
 
 ---
 
+### 2.7l A negative probability priced a put at 659,089
+
+`engine/american.py` removes a bias with a **known sign**: every Q extractor here
+integrates European prices, US single-name and ETF options are American, and
+their early-exercise premium looks to BKM like extra option value — so a raw
+American chain reads **HIGH**, the market looks richer than it is, and that
+invites selling.
+
+The tree itself was well tested — American call with no dividend equals European,
+American put strictly exceeds European, IV round-trips — and the first sweep
+scored **40/50**, the best opening score of any module here. What it missed was
+every *guard* around the numerics, and every *default*.
+
+**CRR's risk-neutral p leaves [0, 1]** when the carry outruns the vol over one
+step — `e^{(r−q)dt}` outside `[1/u, u]`, i.e. `vol < |r−q|·√dt`. That is not an
+exotic corner; it is **a high-dividend ETF quoted at a low vol**, the exact
+instrument this module names in its own docstring:
+
+| q | vol | raw p | clamped price | **unclamped** |
+|---|---|---|---|---|
+| 0.00 | 0.20 | +0.5047 | 4.65062 | 4.65062 |
+| 0.30 | 0.01 | **−0.2810** | **7.49854** | **659089.35109** |
+| 0.30 | 0.0005 | −15.1174 | 0.38934 | 0.00000 |
+
+A negative probability compounded through 128 backward-induction layers. The
+clamp was the only thing between that and a chain of quotes, and nothing tested it.
+
+Also untested, each a real path: `T ≤ 0` returning the payoff **with its floor**
+(without it an expired OTM option is worth *minus* its distance from the strike);
+a quote cheaper than the bracket's floor, where removing the sign test makes the
+bisection walk to the top and **return 5.0 — a 500% vol reported as a
+measurement**; parity implying a negative forward (−50.52 on a broken quote),
+whose `q_eff` is the log of a negative number; `use_implied_forward`'s **default**,
+which every existing caller passed explicitly; and the floor on the reflowed bid —
+the half-spread is laid around the *European* mid, so a deep ITM put quoted
+0.00/60.00 has a mid of 30, a half-spread of 30, and a European mid of 26.90,
+leaving **−3.10** unfloored.
+
+**The carry fallback was the subtle one.** With no put at an expiry, parity has
+nothing to anchor on. Falling back to `q = 0` instead of the chain's own metadata
+prices a dividend ETF as though it paid nothing — and **with q > r that is exactly
+where the CALL wing's early-exercise premium lives**, so the premium this module
+exists to strip would be left in place. Measured on a calls-only q = 8% chain, the
+real fallback takes K=90 from 10.1333 to **9.7901**, the true European value
+9.79003 to 7e-05.
+
+**Two details of `implied_carry` needed chains chosen for them.** Dropping the
+discount in `F = K + e^{rT}(C − P)` costs little at 45 days and **1.55×** the
+error at a year (0.01294 against 0.00833 at r = 8%). The anchor strike matters the
+other way: parity is exact for European options and only approximate for American
+ones, since the put's early-exercise premium is not the call's, and that bias grows
+away from the money. On a **q > r** chain, where both wings carry premium,
+anchoring on the furthest strike instead of the nearest takes the error from
+−0.00323 to **−0.03369**.
+
+**50/50 mutants killed.** Four equivalents are documented and removed from the
+table — two provable, two measured. `>=` versus `>` at the exercise boundary cannot
+change a value (they differ only where `cont == intrinsic`, and both then return
+the same number — it is `max()` either way). The bisection's final return is
+unreachable: the bracket halves 60 times to 4.3e-18 and the binomial price is
+continuous in vol, so the tolerance is met from inside the loop. And **the
+intrinsic guard is subsumed by the bracket check** — an American option is worth at
+least intrinsic at every vol, so a below-intrinsic quote already has `f(lo) > 0`
+and `f(hi) > 0` and is refused by the sign test first.
+
+---
+
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
