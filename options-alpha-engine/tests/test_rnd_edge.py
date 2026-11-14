@@ -413,6 +413,37 @@ def test_fewer_than_three_strikes_is_refused_by_both_extractors():
             assert False, f"{fn.__name__} accepted a two-strike chain"
 
 
+def test_a_truncated_chain_floors_the_variance_rather_than_reporting_a_vol():
+    """A chain whose strikes all sit far below the forward.
+
+    Strikes of 50, 60 and 70 against a spot of 100 at r=10% put the forward at
+    110.5 and K0 at 70, so the (F/K0 - 1)^2 correction is 0.335 against a tiny
+    integral and the variance comes out at -0.252.
+
+    The floor turns that into 1e-05 -- not a useful number, but an obviously
+    unusable one. Taking the absolute value instead returns sqrt(0.252) =
+    0.5023: a plausible-looking 50% volatility conjured from a chain with no
+    strike anywhere near the money, which is precisely the "biased low exactly
+    in stressed regimes" failure the coverage guard exists for. And the guard
+    does flag it -- coverage_ok is False here -- but a caller reading the vol
+    before the flag would be reading 50%.
+    """
+    S, r, T, dte = 100.0, 0.10, 1.0, 365
+    quotes = []
+    for k in (50.0, 60.0, 70.0):
+        for kind in ("call", "put"):
+            px = round(pricing.price(S, k, T, r, 0.0, 0.02, kind), 6)
+            quotes.append(OptionQuote(dte, k, kind, px, px))
+    ch = OptionChain("TRUNC", S, r, 0.0, quotes)
+    got = rnd.model_free_implied_vol(ch, T)
+    assert got < 1e-3, (
+        f"a chain with no near-the-money strike reported {got:.4f} of "
+        f"volatility; 0.5023 is the negative variance passed through abs()")
+    assert not rnd.coverage_report(ch, T)["ok"], (
+        "the coverage guard no longer flags this chain, so the caveat above "
+        "is stale")
+
+
 def test_the_coverage_threshold_is_the_measured_one():
     # COVERAGE_SIGMAS is the one constant in this module that was measured
     # rather than chosen, and the table is in the source: at 2.5 sd the

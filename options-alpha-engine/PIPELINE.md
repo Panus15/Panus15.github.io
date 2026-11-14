@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 47 test files · **623 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **630 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
 of PASS lines for work that did not happen, so a stdlib machine runs 562 and CI —
@@ -215,7 +215,7 @@ returned 2,443.31. "CVaR at 95% confidence" was the loss in one hand-written
 scenario. It now refuses a level its scenarios cannot resolve; on a four-point set
 alpha rises properly (1,944 / 3,363 / 8,286).
 
-`engine/sizing.py` had **no test file at all** — 623 tests passed around it.
+`engine/sizing.py` had **no test file at all** — 630 tests passed around it.
 
 **The intra-trade kill-switch has never protected anything.** At the shipped
 `max_drawdown=0.25` the CVaR-sized book tops out near 8% drawdown, so the switch is
@@ -449,7 +449,7 @@ Three things surfaced the moment it ran:
   SKIP rather than a row of PASS lines for work that did not happen — but nothing
   recorded it, so "all green" quietly meant 10 fewer results than the tree held.
   Those files now declare `OPTIONAL_DEPENDENCY` and the header states the 10.
-- The first regex flagged **two legitimate numbers**: a historical note (`623 tests
+- The first regex flagged **two legitimate numbers**: a historical note (`630 tests
   passed around it`, recording how many existed when `sizing.py` had none) and a
   per-file count (`7 correctness tests`). Only the canonical whole-suite phrasings
   are checked now.
@@ -900,7 +900,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 623 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done      # 630 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second
