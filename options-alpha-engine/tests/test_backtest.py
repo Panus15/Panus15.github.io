@@ -252,6 +252,25 @@ def test_fill_cost_counts_the_spread_the_slippage_and_the_commission():
     assert abs(free.cost_vs_mid(1) - 5.00) < 1e-12
 
 
+def test_the_shipped_commission_is_the_one_in_force():
+    """Every cost test above passes `commission` explicitly, so the default could
+    have been zero and nothing would have failed.
+
+    0.65 per contract is not a rounding detail: against a 0.10 spread on a single
+    contract it is 0.65 of 5.65 of total friction, 11.5%, and it is charged per
+    contract so it does not shrink with size. A backtest that drops it is the
+    "ignores commissions" lie this module's own docstring opens with.
+    """
+    from dataclasses import fields
+    default = next(f.default for f in fields(Fill) if f.name == "commission")
+    assert default == 0.65, default
+    f = Fill(intended_price=2.00, side="buy", spread=0.10)      # no commission given
+    assert abs(f.cost_vs_mid(1) - 5.65) < 1e-12
+    assert abs(f.cost_vs_mid(10) - 56.5) < 1e-12
+    spread_only = Fill(2.00, "buy", 0.10, commission=0.0).cost_vs_mid(1)
+    assert abs(f.cost_vs_mid(1) - spread_only - 0.65) < 1e-12
+
+
 def test_fill_cost_is_the_same_friction_whichever_way_you_trade():
     """The magnitude is symmetric even though the signed price is not -- which is
     why a wrong `side` cannot be caught through the cost."""
