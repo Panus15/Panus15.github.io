@@ -4,7 +4,7 @@ One page covering the whole system: the flow, every measured number, and how to
 operate it. `ARCHITECTURE.md` explains *why* each module is built the way it is;
 this explains *how the parts run together* and *what they have proven*.
 
-**Scale:** 47 test files · **669 tests, all green** · pure stdlib, no
+**Scale:** 47 test files · **678 tests, all green** · pure stdlib, no
 numpy/scipy/pandas · every load-bearing change mutation-verified. **10 more** require
 numpy (`test_gru.py`, `test_neural.py`): those two files print SKIP rather than a row
 of PASS lines for work that did not happen, so a stdlib machine runs 562 and CI —
@@ -975,7 +975,7 @@ print(bootstrap_summary(block_bootstrap(result.trade_pnl)))
 ### 3.6 Tests
 
 ```bash
-for t in tests/test_*.py; do python3 "$t"; done      # 669 tests, 47 files
+for t in tests/test_*.py; do python3 "$t"; done      # 678 tests, 47 files
 ```
 
 Run with `PYTHONDONTWRITEBYTECODE=1`. A same-length constant edit inside one second
