@@ -25,7 +25,7 @@ A trigger is backed when a backing signal lies inside its WINDOW:
   * the sentence containing the trigger, plus
   * the NEXT sentence,
   * additionally capped to 120 chars before the trigger start and 300 chars
-    after the trigger end (so an unpunctuated Thai paragraph, where words are
+    after the trigger end (Thai triggers: 40 and 200) (so an unpunctuated Thai paragraph, where words are
     not separated and spaces are not reliable clause boundaries, does not turn
     into one giant "sentence").
 Sentence boundaries: `.` `?` `!` (plus closing quotes/brackets) followed by
@@ -51,6 +51,8 @@ __all__ = ["scan"]
 MODULE = "vague"
 _PRE_WINDOW = 120   # chars before the trigger that may back it (same sentence only)
 _POST_WINDOW = 300  # chars after the trigger end (same + next sentence only)
+_PRE_WINDOW_TH = 40    # Thai: spaces are unreliable boundaries, so the caps are tighter
+_POST_WINDOW_TH = 200
 
 # ---------------------------------------------------------------------------
 # PHRASE TABLE  --  extend here.
@@ -220,7 +222,7 @@ _THAI_ORGS = (
     # "กรม" is also the tail of โปรแกรม etc.: only at a word start or after a particle
     r"(?:(?<![฀-๿])|(?<=จาก)|(?<=ของ)|(?<=โดย)|(?<=ว่า)|(?<=และ)|(?<=ใน)|(?<=ที่)|(?<=กับ)|(?<=ตาม))กรม" + _TH + r"{2,}"
 )
-_ORG_NOUN = (r"University|Institute|Journal|Organization|Organisation|Agency|Bureau|Foundation|Association|Society|"
+_ORG_NOUN = (r"Universit(?:y|ies)|Institutes?|Journal|Organization|Organisation|Agency|Bureau|Foundation|Association|Society|"
              r"Council|Commission|Laboratory|Laboratories|Hospital|Clinic|Academy|Ministry|Department|"
              r"Administration")
 _BDRY_L = r"(?<![A-Za-z0-9])"
@@ -251,6 +253,9 @@ _BACKING: list[tuple[str, str, bool]] = [
     ("org-generic", r"(?:" + _CAP + r"\s+){1,4}(?:" + _ORG_NOUN + r")\b", False),
     ("org-of", r"\b(?:University|Institute|College|Ministry|Department|Bureau|Office|Academy|Journal) of [A-Z][A-Za-z]+",
      False),
+    # "experts at Google", "researchers from Oxford" - an affiliation with a capitalised name
+    ("affiliation", r"\b(?i:experts?|scientists?|researchers?|doctors?|analysts?|economists?|professors?|engineers?|"
+                    r"specialists?|team|study|survey|report)\s+(?i:at|from|of|by|with)\s+(?i:the\s+)?[A-Z][A-Za-z]", False),
     # named person: Dr. Smith, Prof. Jane Doe, ดร.สมชาย, ศ.นพ.สมหมาย, รศ.ดร.สมศรี
     ("person", r"\b(?:Dr|Prof|Professor)\.?\s+[A-Z][A-Za-z'’\-]+", False),
     ("person-th",
@@ -283,7 +288,7 @@ _DET_BEFORE = re.compile(r"(?<![A-Za-z])(?:the|this|that|these|those|our|my|your
 _AUX_BEFORE = re.compile(
     r"(?<![A-Za-z])(?:do|does|did|can|could|would|should|will|may|might|if|whether|unless|what|which|how|why|"
     r"where|when)\s+\Z", re.I)
-_FIGURE = re.compile(r"[0-9๐-๙]")
+_FIGURE = re.compile(r"(?<![0-9])(?!(?:19|20|24|25)[0-9]{2}(?![0-9,.]))[0-9๐-๙]+")   # digits that are not a bare year
 _URL_MASK = re.compile(r"(?:https?://|ftp://|www\.)\S+")
 
 # precise percentages: 73.42%, 12.345 percent, ร้อยละ 73.42
@@ -305,6 +310,7 @@ _ILLUSTRATIVE = ("for example", "for instance", "e.g.", "example", "suppose", "a
 _TABLE_ROW = re.compile(r"^[ \t]*\|[^\n]*", re.M)
 _HAS_ALPHA = re.compile(r"[^\W_]")
 _LISTNUM = re.compile(r"(?:\A|(?<=\n))[ \t>*#\-]*[0-9]{1,3}\Z")
+_INITIAL_CTX = re.compile(r"(?:\b[A-Z][a-z]+ |\b[A-Z]\. ?)\Z")
 _ABBR_TOKEN = re.compile(r"([A-Za-z.]+)\Z")
 _ABBREVIATIONS = {
     "et al", "al", "e.g", "i.e", "vs", "dr", "prof", "mr", "mrs", "ms", "fig", "figs", "approx", "inc", "ltd", "co",
@@ -412,8 +418,11 @@ def _sentences(t: str) -> list[tuple[int, int]]:
             tok = _ABBR_TOKEN.search(t, max(0, a - 10), a)
             if tok:
                 raw = tok.group(1).strip(".")
-                if raw.lower() in _ABBREVIATIONS or (len(raw) == 1 and raw.isupper()):
+                if raw.lower() in _ABBREVIATIONS:
                     continue
+                if len(raw) == 1 and raw.isupper() and (
+                        tok.start() == 0 or _INITIAL_CTX.search(t, max(0, tok.start() - 20), tok.start())):
+                    continue                           # "John F. Kennedy", "J. K. Rowling"; not "vitamin C."
         cuts.append(e)
     cuts.append(len(t))
     sents: list[tuple[int, int]] = []
@@ -448,10 +457,11 @@ def scan(text: str) -> list[Finding]:
     def sent_index(pos: int) -> int:
         return max(0, bisect_right(s_starts, pos) - 1)
 
-    def backed(ts: int, te: int) -> bool:
+    def backed(ts: int, te: int, th: bool = False) -> bool:
         i, j = sent_index(ts), sent_index(max(ts, te - 1))
-        lo = max(s_starts[i], ts - _PRE_WINDOW)
-        hi = min(s_ends[min(j + 1, len(sents) - 1)], te + _POST_WINDOW)
+        pre, post = (_PRE_WINDOW_TH, _POST_WINDOW_TH) if th else (_PRE_WINDOW, _POST_WINDOW)
+        lo = max(s_starts[i], ts - pre)
+        hi = min(s_ends[min(j + 1, len(sents) - 1)], te + post)
         k = bisect_left(sig_starts, lo)
         while k < len(signals) and sig_starts[k] < hi:
             if signals[k][1] <= hi:
@@ -463,16 +473,16 @@ def scan(text: str) -> list[Finding]:
 
     # -- phrase triggers ----------------------------------------------------
     for m in _PHRASE_RE.finditer(scan_txt):
-        fam, _lang, _pat, opts = _PHRASES[m.lastindex - 1]
+        fam, lang, _pat, opts = _PHRASES[m.lastindex - 1]
         ts, te = m.start(), m.end()
         lo = max(0, ts - 16)
-        if _PHRASES[m.lastindex - 1][1] == "en" and _AUX_BEFORE.search(norm, lo, ts):
+        if lang == "en" and _AUX_BEFORE.search(norm, lo, ts):
             continue                                   # a question / condition, not an assertion
         if "det" in opts and _DET_BEFORE.search(norm, lo, ts):
             continue                                   # "the research shows": refers back to a named thing
-        if "nofig" in opts and _FIGURE.search(norm, te, min(s_ends[sent_index(te - 1)], te + 200)):
+        if "nofig" in opts and _FIGURE.search(norm, te, min(s_ends[sent_index(te - 1)], te + (80 if lang == "th" else 150))):
             continue                                   # carries its own figure
-        if backed(ts, te):
+        if backed(ts, te, lang == "th"):
             continue
         phrase = re.sub(r"\s+", " ", norm[ts:te])
         hits.append((ts, te, phrase, _REASONS[fam].format(p=phrase)))
@@ -481,7 +491,7 @@ def scan(text: str) -> list[Finding]:
     table_rows = [(m.start(), m.end()) for m in _TABLE_ROW.finditer(norm)]
     table_starts = [a for a, _ in table_rows]
 
-    def number_ok(ts: int, te: int) -> bool:
+    def number_ok(ts: int, te: int, th: bool = False) -> bool:
         k = bisect_right(table_starts, ts) - 1
         if k >= 0 and ts < table_rows[k][1]:
             return False                               # markdown table row
@@ -489,15 +499,15 @@ def scan(text: str) -> list[Finding]:
         sent = norm[max(s_starts[i], ts - 200):min(s_ends[i], te + 200)]
         if "=" in sent or any(w in sent.lower() for w in _ILLUSTRATIVE):
             return False                               # arithmetic / worked example
-        return not backed(ts, te)
+        return not backed(ts, te, th)
 
     for m in _PCT.finditer(scan_txt):
         num = m.group("th") or m.group("en")
-        if float(num) >= 99.9:
-            continue                                   # "99.99% uptime" style
+        if float(num) >= 99.9 or re.fullmatch(r"[0-9]+\.(?:00|25|50|75)", num):
+            continue                                   # "99.99% uptime" / quarter-point steps like 0.25%
         if _PCT_OF.match(scan_txt, m.end()):
             continue                                   # "12.50% of 80": a calculation
-        if number_ok(m.start(), m.end()):
+        if number_ok(m.start(), m.end(), bool(m.group("th"))):
             phrase = re.sub(r"\s+", " ", m.group(0))
             hits.append((m.start(), m.end(), phrase, _NUMBER_REASON.format(p=phrase)))
 

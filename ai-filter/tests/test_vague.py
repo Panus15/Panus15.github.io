@@ -211,6 +211,23 @@ def test_non_precise_things_not_flagged():
     assert run("| metric | value |\n|---|---|\n| churn | 73.42% |\n") == []   # table rows are left alone
 
 
+def test_affiliation_initials_and_quarter_points():
+    assert run("According to experts at Google, it works.") == []            # affiliation names the source
+    assert len(run("According to experts at a clinic, it works.")) == 1      # lowercase: no name
+    # "vitamin C." ends a sentence; "John F. Kennedy" does not
+    assert len(run("Take vitamin C. Studies show it helps. Then rest. Per the WHO.")) == 1
+    assert run("Studies show John F. Kennedy agreed (Smith, 2020).") == []
+    assert run("The bank raised rates by 0.25% and then 0.50%.") == []       # quarter-point steps are normal
+    assert len(run("The bank raised rates by 0.37%.")) == 1
+
+
+def test_thai_window_does_not_reach_back_far():
+    # a source far earlier in an unpunctuated Thai run does not back a later claim
+    t = "จากมหาวิทยาลัยฮาร์วาร์ด เราพบว่ากาแฟดีมากๆ และยังช่วยให้ตื่นตัวในตอนเช้าได้ดี นอกจากนี้ ผู้เชี่ยวชาญระบุว่าชาก็ดี"
+    fs = run(t)
+    assert [f.claim.text for f in fs] == ["ผู้เชี่ยวชาญระบุว่า"]
+
+
 # --- code is ignored ----------------------------------------------------------
 def test_code_fence_and_inline_code_ignored():
     assert run("```\nStudies show that 73.42% of users\n```\n") == []
