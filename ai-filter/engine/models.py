@@ -24,6 +24,11 @@ class ClaimKind(str, Enum):
     ARITHMETIC = "arithmetic"  # "a op b = c":           data={"expression": str, "claimed": str}  (claimed keeps a trailing "%" if written)
     CODE = "code"              # a fenced code block:    data={"language": str, "code": str, "expected_output": str|None}
     VAGUE = "vague"            # unsourced appeal:       data={"phrase": str}
+    # --- phase 2 (AI-extracted; ids "a1","a2",...) ---
+    # a checkable statement of fact: data={"statement": str, "category": one of
+    #   "number"|"date"|"name"|"law"|"event"|"price"|"other", "volatile": bool}
+    # `volatile` = changes over time (prices, office-holders, "current" anything), so an old source is stale.
+    FACT = "fact"
 
 
 class Status(str, Enum):

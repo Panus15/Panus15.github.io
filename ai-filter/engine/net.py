@@ -21,7 +21,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Mapping, Optional, Protocol
 
 USER_AGENT = "ai-filter/0.1 (fact-check tool; +https://github.com/panus15/panus15.github.io)"
@@ -41,6 +41,8 @@ class FetchResult:
     #   "timeout" | "ssl" | "network" | "other"                  -> our failure, says nothing about the link
     error: Optional[str] = None
     detail: str = ""
+    # Response headers, keys lower-cased (e.g. "last-modified"). Empty for fakes that don't set it.
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 class Fetcher(Protocol):
@@ -101,13 +103,15 @@ class UrllibFetcher:
         opener = urllib.request.build_opener(_GuardedRedirect)
         try:
             with opener.open(req, timeout=timeout) as resp:
-                return FetchResult(url, resp.geturl(), resp.status, resp.read(max_bytes))
+                hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                return FetchResult(url, resp.geturl(), resp.status, resp.read(max_bytes), headers=hdrs)
         except urllib.error.HTTPError as e:     # 4xx/5xx still carry a real status AND often a
             try:                                 # meaningful body (doi.org answers 404 + JSON for unregistered DOIs)
                 body = e.read(max_bytes)
             except Exception:
                 body = b""
-            return FetchResult(url, e.geturl() or url, e.code, body)
+            return FetchResult(url, e.geturl() or url, e.code, body,
+                               headers={k.lower(): v for k, v in (e.headers or {}).items()})
         except urllib.error.URLError as e:
             reason = e.reason
             if isinstance(reason, socket.gaierror):
