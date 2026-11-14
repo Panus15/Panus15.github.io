@@ -94,7 +94,7 @@ def _host_of(url: object) -> Optional[str]:
         if parts.scheme not in ("http", "https"):
             return None
         netloc = parts.netloc
-        if not netloc or "@" in netloc or "%" in netloc or "[" in netloc or "]" in netloc:
+        if not netloc or not netloc.isascii() or "@" in netloc or "%" in netloc or "[" in netloc or "]" in netloc:
             return None               # userinfo, percent-encoded or IPv6-literal hosts: refuse
         host_port = netloc
         host, sep, port = host_port.partition(":")
