@@ -513,6 +513,29 @@ def test_close_to_close_annualises_by_the_square_root_of_252():
         f"means it is not annualised; sqrt(365/252) means calendar days")
 
 
+def test_close_to_close_uses_the_SAMPLE_variance_not_the_population_one():
+    # The annualisation test above runs 4,000 returns, where n and n-1 differ
+    # by 0.01% and no tolerance can see it. Three returns differ by a factor
+    # of 1.5 in variance and 1.2247 in vol, which is unmistakable.
+    px = [100.0, 101.0, 100.0, 101.0]
+    got = volforecast.close_to_close_vol(px, window=3)
+    assert abs(got - 0.182393) < 1e-5, (
+        f"{got:.6f}: 0.182393 divides by n-1, 0.148923 divides by n")
+
+
+def test_close_to_close_measures_variance_ABOUT_THE_MEAN():
+    # A price rising exactly 1% a day has no volatility at all: every return
+    # is identical, so the variance about the mean is zero. Summing raw
+    # squares instead reports 1.03e-4 of daily variance -- a 16% annualised
+    # vol invented out of a perfectly smooth trend, which is the direction
+    # that makes options look rich.
+    drift = [100.0 * (1.01 ** i) for i in range(30)]
+    got = volforecast.close_to_close_vol(drift, window=30)
+    assert got < 1e-6, (
+        f"a constant 1%/day trend reported {got:.6f} of annualised vol; the "
+        f"mean is not being removed from the returns")
+
+
 def test_close_to_close_uses_only_the_window_it_was_given():
     # A calm recent window after a violent old one. Ignoring `window` mixes
     # the regime that is over into the forecast for the one that is not.

@@ -43,7 +43,7 @@ MUTANTS = [
  ("ewma decay inverted",         "        var = lam * var + (1 - lam) * x * x", "        var = (1 - lam) * var + lam * x * x"),
  ("ewma has no memory",          "        var = lam * var + (1 - lam) * x * x", "        var = x * x"),
  ("log return inverted",         "    return [math.log(prices[i] / prices[i - 1]) for i in range(1, len(prices))]", "    return [math.log(prices[i - 1] / prices[i]) for i in range(1, len(prices))]"),
- ("window not applied",          "    rets = log_returns(prices)[-window:]", "    rets = log_returns(prices)"),
+ ("window not applied",          "    \"\"\"Annualised close-to-close realised volatility over the last ``window`` days.\"\"\"\n    rets = log_returns(prices)[-window:]", "    \"\"\"Annualised close-to-close realised volatility over the last ``window`` days.\"\"\"\n    rets = log_returns(prices)"),
 
  # The range estimators. Each constant is the whole estimator.
  ("parkinson constant dropped",  "    return (math.log(h / l) ** 2) / (4.0 * math.log(2.0))", "    return math.log(h / l) ** 2"),
