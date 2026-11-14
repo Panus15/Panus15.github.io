@@ -66,7 +66,7 @@ def run(text: str, fetcher: Optional[Fetcher] = None, *, run_code: bool = False,
                                     f"could not check ({type(e).__name__})") for c in mine)
 
     guarded("citations", {ClaimKind.URL, ClaimKind.DOI, ClaimKind.REFERENCE},
-            lambda cs: citations.check(cs, fetcher, timeout=timeout))
+            lambda cs: citations.check(cs, fetcher, timeout=timeout, text=text))
     guarded("recompute", {ClaimKind.ARITHMETIC}, recompute.check)
     guarded("sandbox", {ClaimKind.CODE}, lambda cs: sandbox.check(cs, run=run_code))
 

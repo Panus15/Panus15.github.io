@@ -28,26 +28,60 @@ def test_fake_fetcher_unknown_route_is_a_failure_not_a_pass():
     assert f.calls == ["http://a/", "http://b/"]
 
 
-def _with_getaddrinfo(exc, fn):
-    import socket
-    real = socket.getaddrinfo
-    def boom(*a, **k): raise exc
-    socket.getaddrinfo = boom
-    try:
-        return fn()
-    finally:
-        socket.getaddrinfo = real
+class _Net:
+    """Patch DNS + proxy environment for one test; restores on exit."""
+    def __init__(self, resolve, proxies=None):
+        self.resolve, self.proxies = resolve, proxies or {}
+    def __enter__(self):
+        import socket, urllib.request, engine.net as net
+        self._saved = (socket.getaddrinfo, urllib.request.getproxies, net._resolver_ok_until)
+        socket.getaddrinfo = self.resolve
+        urllib.request.getproxies = lambda: self.proxies
+        net._resolver_ok_until = 0.0
+    def __exit__(self, *a):
+        import socket, urllib.request, engine.net as net
+        socket.getaddrinfo, urllib.request.getproxies, net._resolver_ok_until = self._saved
 
 
-def test_nxdomain_is_dns_but_resolver_failure_is_not():
+def _nx(host_ok=()):
+    """A resolver where only `host_ok` names (the canaries) exist and everything else is NXDOMAIN."""
     import socket
-    assert _with_getaddrinfo(socket.gaierror(socket.EAI_NONAME, "nx"),
-                             lambda: check_public_host("http://nope.invalid/")) == "dns"
-    assert _with_getaddrinfo(socket.gaierror(socket.EAI_AGAIN, "try again"),
-                             lambda: check_public_host("http://example.com/")) == "resolver"
-    r = _with_getaddrinfo(socket.gaierror(socket.EAI_AGAIN, "try again"),
-                          lambda: UrllibFetcher().fetch("http://example.com/"))
-    assert r.error == "network"   # NOT "dns": a down resolver must never read as a dead link
+    def f(host, *a, **k):
+        if host in host_ok:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        raise socket.gaierror(socket.EAI_NONAME, "nx")
+    return f
+
+
+def test_nxdomain_counts_only_when_the_resolver_is_healthy():
+    import socket
+    with _Net(_nx(host_ok=("example.com",))):
+        assert check_public_host("http://nope.example.org/") == "dns"        # canary resolves -> real NXDOMAIN
+    with _Net(_nx(host_ok=())):
+        assert check_public_host("http://nope.example.org/") == "resolver"   # nothing resolves -> OUR problem
+    def again(host, *a, **k): raise socket.gaierror(socket.EAI_AGAIN, "try again")
+    with _Net(again):
+        assert check_public_host("http://example.org/") == "resolver"
+        r = UrllibFetcher().fetch("http://example.org/")
+        assert r.error == "network"      # a down resolver must never read as a dead link
+
+
+def test_behind_a_proxy_local_dns_is_not_consulted():
+    import socket
+    def boom(*a, **k): raise AssertionError("local DNS must not be used when a proxy is configured")
+    with _Net(boom, proxies={"https": "http://proxy.invalid:3128", "http": "http://proxy.invalid:3128"}):
+        assert check_public_host("https://www.who.int/about") is None
+        # name-based and IP-literal refusals still apply behind a proxy
+        for u in ("https://localhost/", "https://printer.local/", "https://db.internal/", "https://intranet/",
+                  "http://169.254.169.254/latest/meta-data/", "http://10.0.0.5/", "http://[::1]/"):
+            assert check_public_host(u) not in (None, "dns", "resolver"), u
+
+
+def test_private_resolution_is_refused_without_a_proxy():
+    import socket
+    def priv(host, *a, **k): return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", 443))]
+    with _Net(priv):
+        assert "non-public" in check_public_host("https://totally-public-looking.example.org/")
 
 
 def test_http_error_body_is_kept():

@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.citations import check
 from engine.models import Claim, ClaimKind, Status
+from engine.citations import _Ctx, _link_dois_to_references
 from engine.net import FakeFetcher, FetchResult
 
 V, U, C = Status.VERIFIED, Status.UNVERIFIED, Status.CONTRADICTED
@@ -21,7 +22,8 @@ _n = [0]
 def claim(kind, **data):
     _n[0] += 1
     text = "x%d" % _n[0]
-    return Claim("c%d" % _n[0], kind, text, 0, len(text), data)
+    start = _n[0] * 1000            # disjoint spans, so no claim is "inside" another by accident
+    return Claim("c%d" % _n[0], kind, text, start, start + len(text), data)
 
 
 def url_claim(u):
@@ -498,6 +500,174 @@ def test_timeout_is_forwarded_to_fetcher():
             return R(url, 200, page("ok"))
     check([url_claim("https://example.org/a")], Spy(), timeout=3.5)
     assert seen == [3.5]
+
+
+def test_openalex_key_is_sent_but_never_reported():
+    import engine.citations as cit
+    KEY = "SECRETKEY-abc123"
+    title = ATTN
+    plain = oa_url(title)
+    keyed = plain + "&api_key=" + KEY
+    c = ref_claim(title, ["Vaswani"], 2017)
+    fd = FakeFetcher({keyed: R(keyed, 200, {"results": [oa_work(ATTN, 2017, ATTN_AUTHORS)]})})
+    out = cit.check([c], fd, openalex_key=KEY)
+    assert out[0].status == V
+    assert fd.calls == [keyed]                                     # key was sent on the wire...
+    blob = repr(out)
+    assert KEY not in blob and "api_key" not in blob              # ...and is nowhere in the findings
+
+
+def test_openalex_key_masked_if_a_fetcher_error_echoes_it():
+    import engine.citations as cit
+    KEY = "SECRETKEY-abc123"
+    class Boom:
+        def fetch(self, url, **k): raise RuntimeError("failed for " + url)
+    out = cit.check([ref_claim(ATTN, ["Vaswani"], 2017)], Boom(), openalex_key=KEY)
+    assert out[0].status == U and KEY not in repr(out)
+
+
+def test_openalex_key_read_from_env_and_no_key_means_no_param():
+    import os, engine.citations as cit
+    title = ATTN
+    plain = oa_url(title)
+    old = os.environ.pop("OPENALEX_API_KEY", None)
+    try:
+        fd = FakeFetcher({plain: R(plain, 200, {"results": [oa_work(ATTN, 2017, ATTN_AUTHORS)]})})
+        assert cit.check([ref_claim(title, [], 2017)], fd)[0].status == V and fd.calls == [plain]
+        os.environ["OPENALEX_API_KEY"] = "ENVKEY1"
+        fd = FakeFetcher({plain + "&api_key=ENVKEY1": R(plain, 200, {"results": [oa_work(ATTN, 2017, ATTN_AUTHORS)]})})
+        assert cit.check([ref_claim(title, [], 2017)], fd)[0].status == V
+    finally:
+        os.environ.pop("OPENALEX_API_KEY", None)
+        if old is not None: os.environ["OPENALEX_API_KEY"] = old
+
+
+def test_openalex_429_explains_the_shared_budget():
+    fd, _ = ref_one(ATTN, ["Vaswani"], 2017, [], status=429)
+    assert fd.status == U and "OPENALEX_API_KEY" in fd.reason
+
+
+# ------------------------------------------------- DOI inside a reference must be the same work
+
+def ref_with_doi(title, authors, year, doi):
+    """A REFERENCE claim whose span contains a DOI claim, as extract produces for one reference line."""
+    base = claim(ClaimKind.REFERENCE, title=title, authors=list(authors), year=year)
+    ref = Claim(base.id, base.kind, base.text, base.start, base.start + 200, base.data)
+    d = Claim("d" + ref.id, ClaimKind.DOI, "doi:" + doi, ref.start + 100, ref.start + 104 + len(doi), {"doi": doi})
+    return ref, d
+
+
+def cr_record(title, year, families):
+    return {"message": {"title": [title], "issued": {"date-parts": [[year]]},
+                        "author": [{"family": f, "given": "X"} for f in families]}}
+
+
+def test_real_doi_borrowed_by_a_fabricated_reference_is_contradicted():
+    doi = "10.1038/nature14539"
+    ref, d = ref_with_doi("Quantum gravity effects in green tea fermentation", ["Smith"], 2020, doi)
+    cu = CROSSREF + doi
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun", "Bengio", "Hinton"]))})
+    out = check([ref, d], f)
+    assert out[0].status == C and "different work" in out[0].reason and "Deep learning" in out[0].reason
+    assert out[1].status == V                      # the DOI itself does exist
+    assert f.calls == [cu]                         # one lookup serves both, no OpenAlex needed
+
+
+def test_doi_matching_reference_is_verified_without_openalex():
+    doi = "10.1038/nature14539"
+    ref, d = ref_with_doi("Deep learning", ["LeCun", "Hinton"], 2015, doi)
+    cu = CROSSREF + doi
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun", "Bengio", "Hinton"]))})
+    out = check([ref, d], f)
+    assert [x.status for x in out] == [V, V] and f.calls == [cu]
+
+
+def test_right_title_and_doi_but_wrong_authors_is_contradicted():
+    doi = "10.1038/nature14539"
+    ref, d = ref_with_doi("Deep learning", ["Smith", "Chen"], 2015, doi)
+    cu = CROSSREF + doi
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun", "Bengio", "Hinton"]))})
+    assert check([ref, d], f)[0].status == C
+
+
+def test_doi_cross_check_year_off_is_unverified_and_subtitle_tolerated():
+    doi = "10.1038/x"
+    ref, d = ref_with_doi("Deep learning: a review", [], 2019, doi)
+    cu = CROSSREF + doi
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun"]))})
+    out = check([ref, d], f)
+    assert out[0].status == U and "2015" in out[0].reason and "2019" in out[0].reason
+
+
+def test_cross_check_falls_through_when_unsure_or_unavailable():
+    doi = "10.1038/x"
+    # (a) partly similar titles -> neither same nor different: fall through to OpenAlex
+    ref, d = ref_with_doi("Deep learning methods for protein structure prediction", [], None, doi)
+    cu, ou = CROSSREF + doi, oa_url("Deep learning methods for protein structure prediction")
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning for protein structure", 2015, ["A"])),
+                     ou: R(ou, 200, {"results": []})})
+    out = check([ref, d], f)
+    assert ou in f.calls and out[0].status == U
+    # (b) Crossref has no record (e.g. a DataCite DOI) -> fall through, never contradicted
+    ref, d = ref_with_doi("Attention Is All You Need", ["Vaswani"], 2017, "10.48550/arxiv.1706.03762")
+    cu = CROSSREF + "10.48550/arxiv.1706.03762"; ru = oa_url(ATTN)
+    f = FakeFetcher({cu: R(cu, 404, b""), HANDLES + "10.48550/arxiv.1706.03762": R("", 200, {"responseCode": 1}),
+                     ru: R(ru, 200, {"results": [oa_work(ATTN, 2017, ATTN_AUTHORS)]})})
+    out = check([ref, d], f)
+    assert out[0].status == V
+    # (c) Crossref lookup fails -> our failure, not a contradiction
+    ref, d = ref_with_doi("Quantum gravity effects in green tea fermentation", [], None, "10.1038/y")
+    f = FakeFetcher({})
+    assert check([ref, d], f)[0].status == U
+
+
+def test_reference_without_a_doi_in_it_is_unaffected():
+    ref = ref_claim(ATTN, ["Vaswani"], 2017)
+    other_doi = claim(ClaimKind.DOI, doi="10.1038/nature14539")     # elsewhere in the answer
+    ru = oa_url(ATTN)
+    f = FakeFetcher({ru: R(ru, 200, {"results": [oa_work(ATTN, 2017, ATTN_AUTHORS)]}),
+                     CROSSREF + "10.1038/nature14539": R("", 200, crossref_ok("10.1038/nature14539"))})
+    out = check([ref, other_doi], f)
+    assert out[0].status == V and (CROSSREF + "10.1038/nature14539") in f.calls
+
+
+def test_doi_on_the_same_line_but_outside_the_reference_span_is_linked():
+    # extract ends a REFERENCE span after the title, so the DOI is usually just OUTSIDE it
+    text = "Smith, J. (2020). *Quantum gravity effects in green tea fermentation*. Imaginary Sci. doi:10.1038/nature14539\n"
+    doi = "10.1038/nature14539"
+    ref = Claim("r1", ClaimKind.REFERENCE, text[:80], 0, 80,
+                {"title": "Quantum gravity effects in green tea fermentation", "authors": ["Smith"], "year": 2020})
+    at = text.index("doi:")
+    d = Claim("d1", ClaimKind.DOI, "doi:" + doi, at, at + 4 + len(doi), {"doi": doi})
+    cu = CROSSREF + doi
+    f = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun"]))})
+    assert check([ref, d], f, text=text)[0].status == C
+    # without the text it cannot know they belong together and falls back to the title search
+    f2 = FakeFetcher({cu: R(cu, 200, cr_record("Deep learning", 2015, ["LeCun"]))})
+    assert check([ref, d], f2)[0].status == U
+
+
+def test_doi_on_another_line_is_not_linked():
+    t1 = "Smith, J. (2020). *Quantum gravity effects in green tea fermentation*.\ndoi:10.1038/nature14539\n"
+    ref = Claim("r1", ClaimKind.REFERENCE, "x", 0, 70,
+                {"title": "Quantum gravity effects in green tea fermentation", "authors": [], "year": 2020})
+    at = t1.index("doi:")
+    d = Claim("d1", ClaimKind.DOI, "doi", at, at + 23, {"doi": "10.1038/nature14539"})
+    ctx = _Ctx(None, 1.0, 5)
+    _link_dois_to_references([ref, d], ctx, t1)
+    assert ctx.doi_for_ref == {}
+
+
+def test_doi_goes_to_the_nearer_of_two_references_on_one_line():
+    t2 = "A (2020). *First title that is long enough*. B (2021). *Second title that is long enough*. doi:10.1/x\n"
+    s2 = t2.index("B (2021)")
+    at = t2.index("doi:")
+    r1 = Claim("r1", ClaimKind.REFERENCE, "x", 0, s2 - 1, {"title": "First title that is long enough", "authors": [], "year": 2020})
+    r2 = Claim("r2", ClaimKind.REFERENCE, "x", s2, at - 1, {"title": "Second title that is long enough", "authors": [], "year": 2021})
+    dd = Claim("d1", ClaimKind.DOI, "doi", at, at + 11, {"doi": "10.1/x"})
+    ctx = _Ctx(None, 1.0, 5)
+    _link_dois_to_references([r1, r2, dd], ctx, t2)
+    assert ctx.doi_for_ref == {"r2": "10.1/x"}
 
 
 if __name__ == "__main__":

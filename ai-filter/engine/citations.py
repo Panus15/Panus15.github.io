@@ -20,6 +20,7 @@ from __future__ import annotations
 import difflib
 import html
 import json
+import os
 import re
 import unicodedata
 from typing import Any, Optional, Sequence
@@ -112,16 +113,24 @@ class _LimitReached(Exception):
 
 
 class _Ctx:
-    def __init__(self, fetcher: Optional[Fetcher], timeout: float, max_lookups: int):
+    def __init__(self, fetcher: Optional[Fetcher], timeout: float, max_lookups: int,
+                 openalex_key: Optional[str] = None):
+        self.openalex_key = openalex_key
+        self.doi_for_ref: dict[str, str] = {}      # REFERENCE claim id -> DOI written inside the same reference
         self.fetcher = fetcher
         self.timeout = timeout
         self.max_lookups = max_lookups
         self.used = 0
         self.cache: dict[str, FetchResult] = {}
 
-    def fetch(self, url: str, *, api: bool = False, max_bytes: Optional[int] = None) -> FetchResult:
+    def fetch(self, url: str, *, api: bool = False, max_bytes: Optional[int] = None,
+              secret_param: Optional[tuple[str, str]] = None) -> FetchResult:
         """Cached fetch. Never raises except _LimitReached. A fetcher that raises
-        or returns junk becomes error='other' (our failure => UNVERIFIED)."""
+        or returns junk becomes error='other' (our failure => UNVERIFIED).
+
+        `secret_param` (name, value) is appended to the REQUEST url only. The caller keeps
+        using the plain `url` for cache keys and for Finding.evidence, so an API key never
+        ends up in a report; any echo of it in an error detail is masked."""
         if url in self.cache:
             return self.cache[url]
         if self.used >= self.max_lookups:
@@ -135,11 +144,17 @@ class _Ctx:
         try:
             if self.fetcher is None:
                 raise RuntimeError("no fetcher available")
-            r = self.fetcher.fetch(url, **kwargs)
+            request_url = url
+            if secret_param and secret_param[1]:
+                request_url += ("&" if "?" in url else "?") + secret_param[0] + "=" + _quote(secret_param[1])
+            r = self.fetcher.fetch(request_url, **kwargs)
             if not isinstance(r, FetchResult):
                 raise TypeError("fetcher returned %r" % type(r).__name__)
         except Exception as e:
-            r = FetchResult(url, url, None, error="other", detail="fetcher failed: %r" % (e,))
+            detail = "fetcher failed: %r" % (e,)
+            if secret_param and secret_param[1]:
+                detail = detail.replace(secret_param[1], "***")
+            r = FetchResult(url, url, None, error="other", detail=detail)
         self.cache[url] = r
         return r
 
@@ -349,6 +364,73 @@ def _authors_consistent(surnames: list[str], names: list[str], truncated: bool) 
     return any(s in tokens for s in surnames)
 
 
+# A reference line often carries a DOI. A fabricated reference with a BORROWED real DOI is the
+# most convincing fake there is, and "the DOI exists" alone would stamp it verified. So when the
+# DOI sits inside the reference, the registered record has to be the same work.
+_DOI_SAME_WORK = 0.85
+_DOI_DIFFERENT_WORK = 0.45
+
+
+def _crossref_family_names(msg: dict) -> list[str]:
+    names: list[str] = []
+    auths = msg.get("author")
+    if isinstance(auths, list):
+        for a in auths:
+            if isinstance(a, dict):
+                for key in ("family", "name"):
+                    v = a.get(key)
+                    if isinstance(v, str) and v.strip():
+                        names.append(v.strip())
+    return names
+
+
+def _doi_crosscheck(claim: Claim, ctx: _Ctx, title: str, surnames: list[str],
+                    year: Optional[int]) -> Optional[Finding]:
+    """Compare the reference's title with what its own DOI is registered to. None = can't tell
+    (no DOI, not in Crossref, lookup failed, titles only partly alike): fall through to the
+    title search."""
+    doi = ctx.doi_for_ref.get(claim.id)
+    if not doi:
+        return None
+    cr_url = CROSSREF + _quote(doi, safe="/")
+    r = ctx.fetch(cr_url, api=True)
+    if r.error or r.status != 200:
+        return None
+    data = _json_body(r)
+    msg = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(msg, dict):
+        return None
+    titles = msg.get("title")
+    rec = titles[0] if isinstance(titles, list) and titles and isinstance(titles[0], str) else ""
+    want, have = _norm_title(title), _norm_title(rec)
+    if not want or not have:
+        return None
+    ratio = difflib.SequenceMatcher(None, want, have).ratio()
+    if min(len(want), len(have)) >= MIN_TITLE_CHARS and (want in have or have in want):
+        ratio = max(ratio, 0.95)            # subtitle present on one side only
+    if ratio < _DOI_DIFFERENT_WORK:
+        return _finding(claim, Status.CONTRADICTED,
+                        'The DOI in this reference is registered to a different work, "%s"; the reference looks fabricated or mismatched.'
+                        % _short(rec, 100), cr_url)
+    if ratio < _DOI_SAME_WORK:
+        return None
+    names = _crossref_family_names(msg)
+    if surnames and names:
+        tokens = set()
+        for n in names:
+            tokens.update(t for t in re.split(r"[^\w]+", _fold(n)) if t)
+        if not any(sn in tokens for sn in surnames):
+            return _finding(claim, Status.CONTRADICTED,
+                            'A work with this title and DOI exists, but its registered authors (%s) do not include the ones cited.'
+                            % _short(", ".join(names[:4]), 80), cr_url)
+    ry = _crossref_year(msg)
+    if year and ry and abs(year - ry) > 1:
+        return _unverified(claim, "The DOI's record matches the title but is dated %d, not %d; check the year." % (ry, year), cr_url)
+    return _finding(claim, Status.VERIFIED,
+                    'The DOI is registered to "%s" (%s), matching the title; this shows the work exists, not that it says what the AI claims.'
+                    % (_short(rec, 80), ry or "year n/a"), cr_url)
+
+
 def _check_reference(claim: Claim, ctx: _Ctx) -> Finding:
     d = claim.data
     title = d.get("title")
@@ -359,8 +441,16 @@ def _check_reference(claim: Claim, ctx: _Ctx) -> Finding:
     claimed_authors = [a for a in (d.get("authors") or []) if isinstance(a, str)] if isinstance(d.get("authors"), (list, tuple)) else []
     year = _as_year(d.get("year"))
 
+    via_doi = _doi_crosscheck(claim, ctx, title, surnames, year)
+    if via_doi is not None:
+        return via_doi
+
     url = OPENALEX + _quote(title[:300]) + "&per-page=5"
-    r = ctx.fetch(url, api=True)
+    r = ctx.fetch(url, api=True,
+                  secret_param=("api_key", ctx.openalex_key) if ctx.openalex_key else None)
+    if r.status == 429:
+        return _unverified(claim, "OpenAlex's free request budget is used up, so this reference could not be looked up; "
+                                  "set OPENALEX_API_KEY (free) or search for it manually.", url)
     if r.error or r.status != 200:
         why = r.error or ("HTTP %s" % r.status)
         return _unverified(claim, "We could not check this reference (OpenAlex lookup failed: %s); search for it manually." % why, url)
@@ -443,9 +533,37 @@ def _check_one(claim: Claim, ctx: _Ctx) -> Finding:
         return _unverified(claim, "We could not check this citation (internal error: %s); verify it manually." % type(e).__name__)
 
 
+def _link_dois_to_references(relevant: Sequence[Claim], ctx: _Ctx, text: Optional[str]) -> None:
+    """Tie each DOI to the reference it was written with: inside the reference's span, or (given
+    the text) later on the same line with no other reference starting in between."""
+    refs = sorted((c for c in relevant if c.kind == ClaimKind.REFERENCE), key=lambda c: c.start)
+    dois = sorted((c for c in relevant if c.kind == ClaimKind.DOI), key=lambda c: c.start)
+    for i, ref in enumerate(refs):
+        next_ref_start = refs[i + 1].start if i + 1 < len(refs) else None
+        line_end = None
+        if text is not None:
+            nl = text.find("\n", ref.start)
+            line_end = len(text) if nl < 0 else nl
+        for dc in dois:
+            val = dc.data.get("doi") if isinstance(dc.data, dict) else None
+            if not isinstance(val, str):
+                continue
+            inside = ref.start <= dc.start and dc.end <= ref.end
+            same_line = (line_end is not None and ref.end <= dc.start < line_end
+                         and (next_ref_start is None or dc.start < next_ref_start))
+            if inside or same_line:
+                ctx.doi_for_ref[ref.id] = val.strip().lower()
+                break
+
+
 def check(claims: Sequence[Claim], fetcher: Optional[Fetcher] = None, *,
-          timeout: float = 10.0, max_lookups: int = 40) -> list[Finding]:
-    """Check URL / DOI / REFERENCE claims. One Finding each, input order; other kinds ignored."""
+          timeout: float = 10.0, max_lookups: int = 40,
+          openalex_key: Optional[str] = None, text: Optional[str] = None) -> list[Finding]:
+    """Check URL / DOI / REFERENCE claims. One Finding each, input order; other kinds ignored.
+
+    `openalex_key` (default: env OPENALEX_API_KEY) lifts OpenAlex's shared per-IP free budget.
+    `text` is the original answer; with it a DOI is tied to the reference written on its line,
+    without it only a DOI inside the reference's own span is."""
     relevant = [c for c in claims if getattr(c, "kind", None) in _KINDS]
     if not relevant:
         return []
@@ -454,5 +572,8 @@ def check(claims: Sequence[Claim], fetcher: Optional[Fetcher] = None, *,
             fetcher = UrllibFetcher()
         except Exception:
             fetcher = None
-    ctx = _Ctx(fetcher, timeout, max_lookups)
+    if openalex_key is None:
+        openalex_key = os.environ.get("OPENALEX_API_KEY") or None
+    ctx = _Ctx(fetcher, timeout, max_lookups, openalex_key)
+    _link_dois_to_references(relevant, ctx, text)
     return [_check_one(c, ctx) for c in relevant]
