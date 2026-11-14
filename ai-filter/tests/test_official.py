@@ -484,6 +484,298 @@ def test_evidence_is_urls_only_no_page_text():
     assert "SECRET PAGE TEXT" not in f.reason
 
 
+# ------------------------------------------------------------------ general-reference fallback
+
+W1 = "https://en.wikipedia.org/wiki/Alpha"
+W2 = "https://th.wikipedia.org/wiki/Beta"
+W3 = "https://www.britannica.com/topic/gamma"
+
+
+class TierRegistry(StubRegistry):
+    """Two tiers: official (rd.go.th, bot.or.th) and reference (wikipedia.org, britannica.com)."""
+    REF = ("wikipedia.org", "britannica.com")
+
+    def __init__(self):
+        super().__init__(names={"www.rd.go.th": "Revenue Department", "en.wikipedia.org": "Wikipedia",
+                                "th.wikipedia.org": "Wikipedia", "www.britannica.com": "Encyclopaedia Britannica"})
+        self.tier_calls = []
+
+    def domains_for(self, category, topics=(), tiers=("official",)):
+        self.tier_calls.append(tuple(tiers))
+        out = []
+        if "official" in tiers:
+            out += list(self.trusted)
+        if "reference" in tiers:
+            out += list(self.REF)
+        return out
+
+    def _in(self, url, ds):
+        import urllib.parse
+        h = (urllib.parse.urlsplit(url).hostname or "").lower()
+        return any(h == d or h.endswith("." + d) for d in ds)
+
+    def tier_of(self, url):
+        if self._in(url, self.trusted):
+            return "official"
+        if self._in(url, self.REF):
+            return "reference"
+        return None
+
+
+class TierSearch:
+    """Honours `domains` like the real search: returns only results inside the requested domains."""
+    def __init__(self, results):
+        self.results, self.calls = list(results), []
+
+    def search(self, query, *, count=5, domains=None):
+        self.calls.append((query, tuple(domains or ())))
+        import urllib.parse
+        def inside(u):
+            h = (urllib.parse.urlsplit(u).hostname or "").lower()
+            return any(h == d or h.endswith("." + d) for d in domains or ())
+        return [r for r in self.results if inside(r.url)]
+
+
+def run_tiers(results, verdicts, *, claims=None, pages=None, registry=None, search=None, **kw):
+    urls = list(verdicts)
+    pages = pages if pages is not None else {u: page(u, dt.date(2026, 5, 1)) for u in urls}
+    search = search or TierSearch(res(*results))
+    judge = StubJudge(verdicts)
+    fetcher = fetcher_for(*urls)
+    reg = registry or TierRegistry()
+    out = official.check(claims or [fact(statement="Alpha was founded in 1850.", category="event")],
+                         llm=StubLLM(), search=search, fetcher=fetcher, registry=reg, today=TODAY,
+                         parse_page_fn=make_parse(pages), judge_fn=judge, **kw)
+    run_tiers.ctx = dict(search=search, fetcher=fetcher, judge=judge, registry=reg)
+    return out
+
+
+def test_fallback_not_used_when_official_decisive():
+    for v, st in ((S(), Status.VERIFIED), (C(), Status.CONTRADICTED)):
+        [f] = run_tiers([U1, W1], {U1: v, W1: S()})
+        assert f.status == st and f.evidence == (U1,)
+        assert run_tiers.ctx["judge"].calls == [("Alpha was founded in 1850.", U1)]
+        assert run_tiers.ctx["search"].calls and all(
+            d == ("rd.go.th", "bot.or.th") for _, d in run_tiers.ctx["search"].calls)   # references never searched
+
+
+def test_fallback_when_official_found_nothing():
+    [f] = run_tiers([W1], {W1: S("Alpha was founded in 1850.")})
+    assert f.status == Status.VERIFIED and f.module == "official"
+    assert f.reason.startswith("Wikipedia (a general reference, not an official source) says: “Alpha was founded in 1850.”")
+    assert f.evidence == (W1,)
+    qs = run_tiers.ctx["search"].calls
+    assert qs[0][1] == ("rd.go.th", "bot.or.th") and qs[-1][1] == ("wikipedia.org", "britannica.com")
+
+
+def test_fallback_when_official_judged_not_stated_or_stale_or_error():
+    for off in (N, E):
+        [f] = run_tiers([U1, W1], {U1: off, W1: S()})
+        assert f.status == Status.VERIFIED and "general reference" in f.reason and f.evidence == (W1,)
+    # official support but too old for a volatile claim -> not decisive -> fallback (and the same rule applies there)
+    pages = {U1: page(U1, dt.date(2020, 1, 1)), W1: page(W1, dt.date(2026, 5, 1))}
+    [f] = run_tiers([U1, W1], {U1: S(), W1: S()}, pages=pages,
+                    claims=[fact(statement="Alpha currently has 5 members.", volatile=True)])
+    assert f.status == Status.VERIFIED and f.evidence == (W1,) and "general reference" in f.reason
+
+
+def test_reference_contradiction_is_unverified_with_primary_source_hint():
+    [f] = run_tiers([W1], {W1: C("Alpha was founded in 1860.")})
+    assert f.status == Status.UNVERIFIED
+    assert f.reason.startswith("Wikipedia (general reference) says “Alpha was founded in 1860.”")
+    assert "differs from the statement" in f.reason and "check a primary source" in f.reason
+    assert f.evidence == (W1,)
+
+
+def test_reference_pages_disagree_is_unverified():
+    [f] = run_tiers([W1, W3], {W1: S(), W3: C()})
+    assert f.status == Status.UNVERIFIED and "disagree" in f.reason and set(f.evidence) == {W1, W3}
+
+
+def test_reference_two_supports_verified_both_urls():
+    [f] = run_tiers([W1, W3], {W1: S(), W3: S()})
+    assert f.status == Status.VERIFIED and f.evidence == (W1, W3)
+
+
+def test_official_vs_reference_disagreement_is_unverified():
+    # check() only consults references when official is not decisive, so exercise the combiner directly.
+    reg = TierRegistry()
+    def tr(tier, sup=(), con=()):
+        r = official._TierResult(tier)
+        r.candidates = r.judged = 1
+        r.supports = [(u, page(u), S()) for u in sup]
+        r.contradicts = [(u, page(u), C()) for u in con]
+        return r
+    claim = fact()
+    for off, ref in ((tr("official", sup=[U1]), tr("reference", con=[W1])),
+                     (tr("official", con=[U1]), tr("reference", sup=[W1]))):
+        f = official._combine(claim, reg, off, ref)
+        assert f.status == Status.UNVERIFIED and "sources disagree" in f.reason
+        assert set(f.evidence) == {U1, W1}
+    f = official._combine(claim, reg, tr("official", sup=[U1]), tr("reference", sup=[W1]))      # agree -> official wins
+    assert f.status == Status.VERIFIED and f.evidence == (U1,) and "general reference" not in f.reason
+    f = official._combine(claim, reg, tr("official", con=[U1]), tr("reference", con=[W1]))
+    assert f.status == Status.CONTRADICTED and f.evidence == (U1,)
+    f = official._combine(claim, reg, tr("official", con=[U1]), tr("reference"))
+    assert f.status == Status.CONTRADICTED
+
+
+def test_fallback_disabled():
+    [f] = run_tiers([W1], {W1: S()}, general_fallback=False)
+    assert f.status == Status.UNVERIFIED and f.reason == "no official source found stating this"
+    assert run_tiers.ctx["fetcher"].calls == [] and run_tiers.ctx["judge"].calls == []
+    assert all(d == ("rd.go.th", "bot.or.th") for _, d in run_tiers.ctx["search"].calls)
+    assert ("reference",) not in run_tiers.ctx["registry"].tier_calls
+
+
+def test_nothing_anywhere_message_and_no_fetch():
+    [f] = run_tiers([], {})
+    assert f.status == Status.UNVERIFIED and f.reason == "no official source or general reference found stating this"
+    assert run_tiers.ctx["fetcher"].calls == []
+
+
+def test_reference_found_but_not_stated():
+    [f] = run_tiers([W1], {W1: N})
+    assert f.status == Status.UNVERIFIED and "none state this" in f.reason and f.evidence == (W1,)
+
+
+def test_volatile_reference_page_without_date_is_unverified():
+    for v in (S(), C()):
+        [f] = run_tiers([W1], {W1: v}, pages={W1: page(W1, None)},
+                        claims=[fact(statement="Alpha currently has 5 members.", volatile=True)])
+        assert f.status == Status.UNVERIFIED and "no date" in f.reason
+    [f] = run_tiers([W1], {W1: S()}, pages={W1: page(W1, TODAY - dt.timedelta(days=400))},
+                    claims=[fact(statement="Alpha currently has 5 members.", volatile=True)])
+    assert f.status == Status.UNVERIFIED and "reference page is dated" in f.reason and "too old" in f.reason
+    [f] = run_tiers([W1], {W1: S()}, pages={W1: page(W1, TODAY - dt.timedelta(days=5))},
+                    claims=[fact(statement="Alpha currently has 5 members.", volatile=True)])
+    assert f.status == Status.VERIFIED
+
+
+def test_reference_domain_restriction_enforced():
+    evil = ["https://wikipedia.org.evil.example/wiki/Alpha", "https://evil.example/wikipedia.org",
+            "http://en.wikipedia.org/wiki/Alpha", "https://notwikipedia.org/x"]
+
+    class Leaky(TierSearch):                       # a search engine that ignores the domain filter
+        def search(self, query, *, count=5, domains=None):
+            self.calls.append((query, tuple(domains or ())))
+            return list(self.results)
+
+    [f] = run_tiers(evil, {u: S() for u in evil}, search=Leaky(res(*evil)))
+    assert f.status == Status.UNVERIFIED
+    assert run_tiers.ctx["fetcher"].calls == [] and run_tiers.ctx["judge"].calls == []
+    # an official-tier result must not be accepted by the reference pass either, nor vice versa
+    [f] = run_tiers([U1, W1], {U1: N, W1: S()}, search=Leaky(res(U1, W1)))
+    assert f.status == Status.VERIFIED and f.evidence == (W1,)
+    assert run_tiers.ctx["fetcher"].calls.count(U1) == 1          # fetched once, in the official pass only
+    # reference url returned for the OFFICIAL pass is dropped (it is not tier official)
+    [f] = run_tiers([W1], {W1: S()}, search=Leaky(res(W1)), general_fallback=False)
+    assert f.status == Status.UNVERIFIED and run_tiers.ctx["fetcher"].calls == []
+
+
+def test_reference_redirect_off_tier_dropped():
+    pg = {W1: page("https://evil.example/x", dt.date(2026, 5, 1))}
+    [f] = run_tiers([W1], {W1: S(), "https://evil.example/x": S()}, pages=pg)
+    assert f.status == Status.UNVERIFIED and run_tiers.ctx["judge"].calls == []
+    pg = {W1: page("https://www.rd.go.th/a", dt.date(2026, 5, 1))}     # redirect to an OFFICIAL page: wrong tier here
+    [f] = run_tiers([W1], {W1: S(), "https://www.rd.go.th/a": S()}, pages=pg)
+    assert f.status == Status.UNVERIFIED and run_tiers.ctx["judge"].calls == []
+
+
+def test_registry_without_tier_support_is_official_only():
+    # StubRegistry has neither tier_of nor a `tiers` argument: no fallback, no crash, default flag on.
+    [f] = run([fact()], search=StubSearch(default=[]))
+    assert f.status == Status.UNVERIFIED and f.reason == "no official source found stating this"
+    assert len(run.ctx["search"].calls) == 1
+
+
+def test_reference_stale_reason_when_official_found_nothing_keeps_reference_reason():
+    pages = {W1: page(W1, dt.date(2019, 1, 1))}
+    [f] = run_tiers([W1], {W1: S()}, pages=pages,
+                    claims=[fact(statement="Alpha currently has 5 members.", volatile=True)])
+    assert f.status == Status.UNVERIFIED and f.evidence == (W1,)
+
+
+def test_reference_never_contradicts_sweep():
+    """Safety invariant: nothing a general reference says (any judge output, any date, volatile or not,
+    one page or several) may produce CONTRADICTED when no official page is decisive."""
+    import itertools
+    verdicts = [S(), C(), N, E, Judgement("contradicts", "", "")]
+    dates = [None, TODAY, TODAY - dt.timedelta(days=500), TODAY + dt.timedelta(days=30)]
+    seen = set()
+    for v1, v2, vol, d, off in itertools.product(verdicts, verdicts, (False, True), dates, (N, E, None)):
+        results = [W1, W3] + ([U1] if off is not None else [])
+        vd = {W1: v1, W3: v2}
+        if off is not None:
+            vd[U1] = off
+        pages = {u: page(u, d) for u in vd}
+        [f] = run_tiers(results, vd, pages=pages, claims=[fact(statement="Alpha was founded in 1850.", volatile=vol)])
+        assert f.status != Status.CONTRADICTED, (v1, v2, vol, d, off, f)
+        seen.add(f.status)
+        if v1.verdict == "contradicts" and v2.verdict != "supports" and not (vol and d != TODAY):
+            assert f.status == Status.UNVERIFIED, (v1, v2, vol, d, f)
+        if f.status == Status.VERIFIED:
+            assert "general reference, not an official source" in f.reason
+            assert all(e in (W1, W3) for e in f.evidence)
+    assert seen == {Status.VERIFIED, Status.UNVERIFIED}
+
+
+def test_two_claims_each_use_own_tier():
+    claims = [fact(1, "Official claim here"), fact(2, "Reference claim here")]
+    class PerClaimSearch(TierSearch):
+        def search(self, query, *, count=5, domains=None):
+            self.calls.append((query, tuple(domains or ())))
+            return [r for r in self.results if "rd.go.th" in (domains or ()) and r.url == U1
+                    or "wikipedia.org" in (domains or ()) and r.url == W1]
+    class J:
+        def __call__(self, statement, pg, llm):
+            return S() if pg.url == U1 and statement.startswith("Official") else \
+                (N if pg.url == U1 else S())
+    out = official.check(claims, llm=StubLLM(), search=PerClaimSearch(res(U1, W1)),
+                         fetcher=fetcher_for(U1, W1), registry=TierRegistry(), today=TODAY,
+                         parse_page_fn=make_parse({U1: page(U1, dt.date(2026, 5, 1)), W1: page(W1, dt.date(2026, 5, 1))}),
+                         judge_fn=J())
+    assert out[0].evidence == (U1,) and "general reference" not in out[0].reason
+    assert out[1].evidence == (W1,) and "general reference" in out[1].reason
+
+
+def test_integration_real_registry_reference_fallback():
+    try:
+        from engine import sources, pagetext, judge  # noqa: F401
+    except ImportError:
+        print("skip test_integration_real_registry_reference_fallback")
+        return
+    reg = sources.load_registry()
+    url = "https://en.wikipedia.org/wiki/Alpha"
+    html = ("<html><head><title>Alpha</title></head><body><p>Alpha was founded in 1850 by settlers.</p>"
+            "</body></html>").encode()
+    fetcher = FakeFetcher({url: FetchResult(url, url, 200, html, headers={"content-type": "text/html; charset=utf-8"})})
+
+    class AnyLLM:
+        def complete_json(self, *, system, user, schema, max_tokens=2000):
+            if "queries" in schema.get("properties", {}):
+                return {"queries": ["Alpha founded 1850"]}
+            return {"verdict": "supports", "quote": "Alpha was founded in 1850", "reason": "stated"}
+
+    class RegSearch:
+        calls = []
+        def search(self, query, *, count=5, domains=None):
+            self.calls.append(tuple(domains or ()))
+            from engine.search import host_matches
+            return [r for r in res(url) if host_matches(r.url, domains or [])]
+
+    s = RegSearch()
+    out = official.check([fact(statement="Alpha was founded in 1850.", category="event")], llm=AnyLLM(),
+                         search=s, fetcher=fetcher, registry=reg, today=TODAY)
+    assert out[0].status in (Status.VERIFIED, Status.UNVERIFIED) and out[0].status != Status.CONTRADICTED
+    assert out[0].status == Status.VERIFIED and "general reference, not an official source" in out[0].reason
+    assert out[0].evidence == (url,) and "wikipedia.org" in s.calls[-1]
+    assert "wikipedia.org" not in s.calls[0]                       # official pass never searches references
+    off = official.check([fact(statement="Alpha was founded in 1850.", category="event")], llm=AnyLLM(),
+                         search=RegSearch(), fetcher=fetcher, registry=reg, today=TODAY, general_fallback=False)
+    assert off[0].status == Status.UNVERIFIED
+
+
 # ------------------------------------------------------------------ integration (real siblings, if merged)
 
 def test_integration_real_siblings():

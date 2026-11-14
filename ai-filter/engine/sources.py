@@ -1,9 +1,18 @@
-"""Registry of TRUSTED official sources (engine/sources.json).
+"""Registry of TRUSTED sources (engine/sources.json), in two tiers.
 
-A wrong domain here grants "official" status to someone else's site, so the
-file is validated strictly on load and any problem raises ValueError naming
-the offending entry. Matching is done by `engine.search.host_matches`, never
-by substring tests.
+* "official": governments, regulators, central banks, statistics offices,
+  intergovernmental bodies, and the wire/broadcast news outlets already listed.
+* "reference": a deliberately SHORT list of broad general references that are
+  NOT official but are widely used and edited under policy (Wikipedia,
+  Britannica). They exist so facts no official site covers (history, sport,
+  culture, ...) can still be checked. engine.official treats them with extra
+  caution (they can support, never contradict).
+
+A wrong domain here grants trust to someone else's site, so the file is
+validated strictly on load and any problem raises ValueError naming the
+offending entry. Matching is done by `engine.search.host_matches`, never by
+substring tests. Every lookup defaults to the "official" tier only, so adding a
+reference entry never widens what an existing caller trusts.
 """
 
 from __future__ import annotations
@@ -16,12 +25,13 @@ from typing import Optional, Sequence
 
 from engine.search import host_matches
 
-KINDS = ("government", "intergovernmental", "statistics", "central_bank", "regulator", "news", "academic")
+KINDS = ("government", "intergovernmental", "statistics", "central_bank", "regulator", "news", "academic", "reference")
+TIERS = ("official", "reference")
 TOPICS = ("law", "finance", "economy", "statistics", "health", "science", "climate", "energy",
-          "government", "elections", "trade", "news", "technology", "education")
+          "government", "elections", "trade", "news", "technology", "education", "general")
 _COUNTRY = re.compile(r"^[A-Z]{2,3}$")
 _LABEL = re.compile(r"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$")
-_ENTRY_KEYS = {"domain", "name", "kind", "country", "topics"}
+_ENTRY_KEYS = {"domain", "name", "kind", "tier", "country", "topics"}
 
 _IMPLIED = {
     "law": ("law", "government"),
@@ -38,6 +48,20 @@ class Source:
     kind: str
     country: str
     topics: tuple[str, ...]
+    tier: str = "official"
+
+
+def _check_tiers(tiers: object) -> tuple[str, ...]:
+    if isinstance(tiers, str):
+        tiers = (tiers,)
+    try:
+        out = tuple(tiers)  # type: ignore[arg-type]
+    except TypeError:
+        raise ValueError("tiers must be a sequence of tier names") from None
+    for t in out:
+        if t not in TIERS:
+            raise ValueError(f"unknown tier {t!r}; must be one of {list(TIERS)}")
+    return out
 
 
 def _order_key(index: int, s: Source):
@@ -50,12 +74,18 @@ def _order_key(index: int, s: Source):
 class Registry:
     sources: tuple[Source, ...]
 
-    def all_domains(self) -> list[str]:
-        return [s.domain for s in self.sources]
+    def all_domains(self, tiers: Sequence[str] = ("official",)) -> list[str]:
+        ts = _check_tiers(tiers)
+        return [s.domain for s in self.sources if s.tier in ts]
 
-    def domains_for(self, category: str, topics: Sequence[str] = ()) -> list[str]:
+    def domains_for(self, category: str, topics: Sequence[str] = (),
+                    tiers: Sequence[str] = ("official",)) -> list[str]:
+        """Domains for a kind of fact, restricted to `tiers` (default official only).
+        When no topic matches, falls back to every non-news domain WITHIN those tiers."""
+        ts = _check_tiers(tiers)
         wanted = set(_IMPLIED.get(str(category).lower(), ())) | {str(t).lower() for t in topics}
-        ranked = sorted(enumerate(self.sources), key=lambda p: _order_key(*p))
+        ranked = [(i, s) for i, s in sorted(enumerate(self.sources), key=lambda p: _order_key(*p))
+                  if s.tier in ts]
         hits = [s.domain for _, s in ranked if wanted & set(s.topics)]
         if hits:
             return hits
@@ -68,8 +98,15 @@ class Registry:
                 best = s
         return best
 
-    def is_trusted(self, url: str) -> bool:
-        return host_matches(url, self.all_domains())
+    def tier_of(self, url: str) -> Optional[str]:
+        """The tier of the registry entry whose domain `url` belongs to (longest
+        match), or None if the URL is not on a registered domain."""
+        s = self._match(url)
+        return s.tier if s else None
+
+    def is_trusted(self, url: str, tiers: Sequence[str] = ("official",)) -> bool:
+        ts = _check_tiers(tiers)
+        return host_matches(url, self.all_domains(ts))
 
     def describe(self, url: str) -> Optional[str]:
         s = self._match(url)
@@ -99,6 +136,7 @@ def _parse(data: object) -> Registry:
         if set(e) != _ENTRY_KEYS:
             bad(f"keys must be exactly {sorted(_ENTRY_KEYS)}")
         d, name, kind, country, topics = e["domain"], e["name"], e["kind"], e["country"], e["topics"]
+        tier = e["tier"]
         if not isinstance(d, str) or not _valid_domain(d):
             bad("domain must be a lower-case hostname with a dot (no scheme, path, wildcard, port or IP)")
         if d in seen:
@@ -108,6 +146,10 @@ def _parse(data: object) -> Registry:
             bad("name must be a non-empty string")
         if kind not in KINDS:
             bad(f"kind must be one of {list(KINDS)}")
+        if tier not in TIERS:
+            bad(f"tier must be one of {list(TIERS)}")
+        if (kind == "reference") != (tier == "reference"):
+            bad('kind "reference" and tier "reference" must go together')
         if not isinstance(country, str) or not _COUNTRY.match(country):
             bad("country must be a 2-3 letter upper-case code")
         if not isinstance(topics, list) or not topics:
@@ -117,7 +159,7 @@ def _parse(data: object) -> Registry:
                 bad(f"unknown topic {t!r}")
         if len(set(topics)) != len(topics):
             bad("duplicate topics")
-        out.append(Source(d, name, kind, country, tuple(topics)))
+        out.append(Source(d, name, kind, country, tuple(topics), tier))
     return Registry(tuple(out))
 
 

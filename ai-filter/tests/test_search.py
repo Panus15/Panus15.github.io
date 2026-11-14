@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from engine.net import FakeFetcher, FetchResult
 from engine.search import BraveSearch, FakeSearch, SearchError, SearchResult, host_matches
-from engine.sources import KINDS, TOPICS, load_registry
+from engine.sources import KINDS, TIERS, TOPICS, load_registry
 
 KEY = "SECRETKEY123"
 
@@ -259,7 +259,8 @@ def test_fake_search():
 
 def test_real_registry_invariants():
     reg = load_registry()
-    ds = reg.all_domains()
+    ds = reg.all_domains()                                           # default: official tier only
+    everything = reg.all_domains(TIERS)
     assert len(ds) >= 70 and len(set(ds)) == len(ds)
     for s in reg.sources:
         assert s.domain == s.domain.lower() and "." in s.domain and s.domain.isascii()
@@ -268,12 +269,53 @@ def test_real_registry_invariants():
         assert s.name.strip() and s.country.isupper()
         assert host_matches(f"https://{s.domain}/", [s.domain])      # round-trips
         assert host_matches(f"https://www.{s.domain}/x", [s.domain])
-        assert reg.is_trusted(f"https://{s.domain}/")
+        assert s.tier in TIERS and (s.kind == "reference") == (s.tier == "reference")
+        assert reg.is_trusted(f"https://{s.domain}/", TIERS)
+        assert reg.is_trusted(f"https://{s.domain}/") == (s.tier == "official")   # default never widens
+        assert reg.tier_of(f"https://www.{s.domain}/x") == s.tier
         assert not host_matches(f"https://{s.domain}.evil.com/", [s.domain])
+        assert reg.tier_of(f"https://{s.domain}.evil.com/") is None
     for must in ("krisdika.go.th", "ratchakitcha.soc.go.th", "bot.or.th", "who.int", "worldbank.org", "reuters.com"):
         assert must in ds
     assert not reg.is_trusted("https://who.int.evil.com/") and not reg.is_trusted("https://evil.com/who.int")
     assert not reg.is_trusted("https://example.com/")
+    assert everything == ds + [d for d in everything if d not in ds]
+    refs = reg.all_domains(("reference",))
+    assert 1 <= len(refs) <= 8 and "wikipedia.org" in refs and not set(refs) & set(ds)
+    assert not reg.is_trusted("https://en.wikipedia.org/wiki/X")          # reference is not "official"
+    assert reg.is_trusted("https://th.wikipedia.org/wiki/X", ("reference",))
+    assert reg.tier_of("https://th.wikipedia.org/wiki/X") == "reference"
+    assert reg.tier_of("https://who.int/x") == "official"
+    assert reg.tier_of("https://wikipedia.org.evil.example/x") is None
+    assert reg.tier_of("not a url") is None
+
+
+def test_domains_for_tiers():
+    reg = load_registry()
+    official = reg.domains_for("other")
+    assert reg.domains_for("other", (), ("official",)) == official
+    assert reg.domains_for("law") == reg.domains_for("law", tiers=("official",))
+    refs = reg.domains_for("other", tiers=("reference",))
+    assert set(refs) == set(reg.all_domains(("reference",))) and "wikipedia.org" in refs
+    assert not set(refs) & set(official) and not set(official) & set(refs)
+    # topic hits in the official tier never leak reference domains, and vice versa
+    law_ref = reg.domains_for("law", ["health"], tiers=("reference",))
+    assert set(law_ref) == set(refs)                    # no reference matched the topics -> fallback stays in tier
+    both = reg.domains_for("other", tiers=("official", "reference"))
+    assert set(both) == set(official) | set(refs)
+    assert reg.domains_for("other", tiers=()) == []
+    assert reg.domains_for("other", tiers="reference") == refs
+    for bad in (("bogus",), ("official", "news"), "Official"):
+        try:
+            reg.domains_for("other", tiers=bad); assert False, bad
+        except ValueError as e:
+            assert "tier" in str(e)
+    for call in (lambda: reg.all_domains(("x",)), lambda: reg.is_trusted("https://who.int/", ("x",)),
+                 lambda: reg.domains_for("other", tiers=5)):
+        try:
+            call(); assert False
+        except ValueError:
+            pass
 
 
 def test_domains_for_ordering_and_fallbacks():
@@ -329,7 +371,8 @@ def _write(obj, raw=None):
 
 
 def _entry(**kw):
-    e = {"domain": "example.gov", "name": "Example", "kind": "government", "country": "US", "topics": ["law"]}
+    e = {"domain": "example.gov", "name": "Example", "kind": "government", "tier": "official",
+         "country": "US", "topics": ["law"]}
     e.update(kw)
     return e
 
@@ -339,6 +382,14 @@ def test_bad_registry_files_raise_valueerror():
     p = _write(good)
     assert load_registry(p).all_domains() == ["example.gov"]
     os.unlink(p)
+    p = _write({"sources": [_entry(), _entry(domain="wiki.example", kind="reference", tier="reference",
+                                             topics=["general"])]})
+    r = load_registry(p)
+    os.unlink(p)
+    assert r.all_domains() == ["example.gov"] and r.all_domains(("reference",)) == ["wiki.example"]
+    assert r.domains_for("law") == ["example.gov"] and r.domains_for("law", tiers=("reference",)) == ["wiki.example"]
+    assert r.tier_of("https://wiki.example/x") == "reference" and r.tier_of("https://example.gov/") == "official"
+    assert not r.is_trusted("https://wiki.example/x")
     bads = [
         ({"sources": [_entry(domain="Example.gov")]}, "Example.gov"),
         ({"sources": [_entry(domain="example")]}, "example"),
@@ -351,6 +402,12 @@ def test_bad_registry_files_raise_valueerror():
         ({"sources": [_entry(domain=5)]}, "entry #0"),
         ({"sources": [_entry(), _entry()]}, "duplicate"),
         ({"sources": [_entry(kind="blog")]}, "kind"),
+        ({"sources": [_entry(tier="gold")]}, "tier"),
+        ({"sources": [_entry(tier=None)]}, "tier"),
+        ({"sources": [_entry(tier="news")]}, "tier"),
+        ({"sources": [_entry(kind="reference")]}, "reference"),       # reference kind needs reference tier
+        ({"sources": [_entry(tier="reference")]}, "reference"),       # and vice versa
+        ({"sources": [{k: v for k, v in _entry().items() if k != "tier"}]}, "keys"),
         ({"sources": [_entry(country="us")]}, "country"),
         ({"sources": [_entry(country=5)]}, "country"),
         ({"sources": [_entry(topics=["gossip"])]}, "gossip"),

@@ -5,6 +5,7 @@
       "domain": "ratchakitcha.soc.go.th",
       "name": "Royal Gazette (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -15,6 +16,7 @@
       "domain": "krisdika.go.th",
       "name": "Office of the Council of State (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -25,6 +27,7 @@
       "domain": "bot.or.th",
       "name": "Bank of Thailand",
       "kind": "central_bank",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -36,6 +39,7 @@
       "domain": "nso.go.th",
       "name": "National Statistical Office (Thailand)",
       "kind": "statistics",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "statistics",
@@ -46,6 +50,7 @@
       "domain": "data.go.th",
       "name": "Open Government Data of Thailand",
       "kind": "statistics",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "statistics",
@@ -56,6 +61,7 @@
       "domain": "rd.go.th",
       "name": "Revenue Department (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -67,6 +73,7 @@
       "domain": "sec.or.th",
       "name": "Securities and Exchange Commission (Thailand)",
       "kind": "regulator",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -77,6 +84,7 @@
       "domain": "set.or.th",
       "name": "Stock Exchange of Thailand",
       "kind": "regulator",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -87,6 +95,7 @@
       "domain": "moph.go.th",
       "name": "Ministry of Public Health (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "health",
@@ -97,6 +106,7 @@
       "domain": "ddc.moph.go.th",
       "name": "Department of Disease Control (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "health",
@@ -107,6 +117,7 @@
       "domain": "nhso.go.th",
       "name": "National Health Security Office (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "health",
@@ -117,6 +128,7 @@
       "domain": "tmd.go.th",
       "name": "Thai Meteorological Department",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "climate",
@@ -127,6 +139,7 @@
       "domain": "mof.go.th",
       "name": "Ministry of Finance (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -138,6 +151,7 @@
       "domain": "fpo.go.th",
       "name": "Fiscal Policy Office (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -149,6 +163,7 @@
       "domain": "moc.go.th",
       "name": "Ministry of Commerce (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "trade",
@@ -160,6 +175,7 @@
       "domain": "dft.go.th",
       "name": "Department of Foreign Trade (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "trade",
@@ -170,6 +186,7 @@
       "domain": "customs.go.th",
       "name": "Customs Department (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "trade",
@@ -181,6 +198,7 @@
       "domain": "dbd.go.th",
       "name": "Department of Business Development (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "economy",
@@ -192,6 +210,7 @@
       "domain": "parliament.go.th",
       "name": "Parliament of Thailand",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -203,6 +222,7 @@
       "domain": "senate.go.th",
       "name": "Senate of Thailand",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -213,6 +233,7 @@
       "domain": "ect.go.th",
       "name": "Election Commission of Thailand",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "elections",
@@ -224,6 +245,7 @@
       "domain": "thaigov.go.th",
       "name": "Royal Thai Government",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "government"
@@ -233,6 +255,7 @@
       "domain": "nesdc.go.th",
       "name": "National Economic and Social Development Council (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "economy",
@@ -244,6 +267,7 @@
       "domain": "boi.go.th",
       "name": "Thailand Board of Investment",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "economy",
@@ -255,6 +279,7 @@
       "domain": "oic.or.th",
       "name": "Office of Insurance Commission (Thailand)",
       "kind": "regulator",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "finance",
@@ -265,6 +290,7 @@
       "domain": "mfa.go.th",
       "name": "Ministry of Foreign Affairs (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "government",
@@ -275,6 +301,7 @@
       "domain": "moe.go.th",
       "name": "Ministry of Education (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "education",
@@ -285,6 +312,7 @@
       "domain": "mhesi.go.th",
       "name": "Ministry of Higher Education, Science, Research and Innovation (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "education",
@@ -296,6 +324,7 @@
       "domain": "mnre.go.th",
       "name": "Ministry of Natural Resources and Environment (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "climate",
@@ -306,6 +335,7 @@
       "domain": "pcd.go.th",
       "name": "Pollution Control Department (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "climate",
@@ -316,6 +346,7 @@
       "domain": "energy.go.th",
       "name": "Ministry of Energy (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "energy",
@@ -326,6 +357,7 @@
       "domain": "eppo.go.th",
       "name": "Energy Policy and Planning Office (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "energy",
@@ -337,6 +369,7 @@
       "domain": "dede.go.th",
       "name": "Department of Alternative Energy Development and Efficiency (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "energy"
@@ -346,6 +379,7 @@
       "domain": "mdes.go.th",
       "name": "Ministry of Digital Economy and Society (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "technology",
@@ -357,6 +391,7 @@
       "domain": "nbtc.go.th",
       "name": "National Broadcasting and Telecommunications Commission (Thailand)",
       "kind": "regulator",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "technology",
@@ -367,6 +402,7 @@
       "domain": "mol.go.th",
       "name": "Ministry of Labour (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -378,6 +414,7 @@
       "domain": "sso.go.th",
       "name": "Social Security Office (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -389,6 +426,7 @@
       "domain": "dol.go.th",
       "name": "Department of Lands (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -399,6 +437,7 @@
       "domain": "oae.go.th",
       "name": "Office of Agricultural Economics (Thailand)",
       "kind": "statistics",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "statistics",
@@ -410,6 +449,7 @@
       "domain": "ocsc.go.th",
       "name": "Office of the Civil Service Commission (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "government",
@@ -420,6 +460,7 @@
       "domain": "nacc.go.th",
       "name": "National Anti-Corruption Commission (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "law",
@@ -430,6 +471,7 @@
       "domain": "mots.go.th",
       "name": "Ministry of Tourism and Sports (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "statistics",
@@ -441,6 +483,7 @@
       "domain": "bangkok.go.th",
       "name": "Bangkok Metropolitan Administration",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "government"
@@ -450,6 +493,7 @@
       "domain": "nstda.or.th",
       "name": "National Science and Technology Development Agency (Thailand)",
       "kind": "government",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "science",
@@ -460,6 +504,7 @@
       "domain": "who.int",
       "name": "World Health Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "health",
@@ -470,6 +515,7 @@
       "domain": "worldbank.org",
       "name": "World Bank",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -481,6 +527,7 @@
       "domain": "imf.org",
       "name": "International Monetary Fund",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -492,6 +539,7 @@
       "domain": "oecd.org",
       "name": "OECD",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -503,6 +551,7 @@
       "domain": "un.org",
       "name": "United Nations",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "government",
@@ -514,6 +563,7 @@
       "domain": "unesco.org",
       "name": "UNESCO",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "education",
@@ -525,6 +575,7 @@
       "domain": "fao.org",
       "name": "Food and Agriculture Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "statistics",
@@ -536,6 +587,7 @@
       "domain": "ilo.org",
       "name": "International Labour Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -547,6 +599,7 @@
       "domain": "wto.org",
       "name": "World Trade Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "trade",
@@ -558,6 +611,7 @@
       "domain": "bis.org",
       "name": "Bank for International Settlements",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "finance",
@@ -569,6 +623,7 @@
       "domain": "unicef.org",
       "name": "UNICEF",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "health",
@@ -580,6 +635,7 @@
       "domain": "undp.org",
       "name": "United Nations Development Programme",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -590,6 +646,7 @@
       "domain": "unctad.org",
       "name": "UN Trade and Development",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "trade",
@@ -601,6 +658,7 @@
       "domain": "wfp.org",
       "name": "World Food Programme",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "statistics",
@@ -611,6 +669,7 @@
       "domain": "ohchr.org",
       "name": "UN Office of the High Commissioner for Human Rights",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "law"
@@ -620,6 +679,7 @@
       "domain": "wipo.int",
       "name": "World Intellectual Property Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "law",
@@ -631,6 +691,7 @@
       "domain": "itu.int",
       "name": "International Telecommunication Union",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "technology",
@@ -641,6 +702,7 @@
       "domain": "wmo.int",
       "name": "World Meteorological Organization",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "climate",
@@ -651,6 +713,7 @@
       "domain": "ipcc.ch",
       "name": "Intergovernmental Panel on Climate Change",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "climate",
@@ -661,6 +724,7 @@
       "domain": "unfccc.int",
       "name": "UN Framework Convention on Climate Change",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "climate",
@@ -671,6 +735,7 @@
       "domain": "iaea.org",
       "name": "International Atomic Energy Agency",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "energy",
@@ -681,6 +746,7 @@
       "domain": "iea.org",
       "name": "International Energy Agency",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "energy",
@@ -692,6 +758,7 @@
       "domain": "irena.org",
       "name": "International Renewable Energy Agency",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "energy",
@@ -702,6 +769,7 @@
       "domain": "adb.org",
       "name": "Asian Development Bank",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "economy",
@@ -713,6 +781,7 @@
       "domain": "asean.org",
       "name": "ASEAN Secretariat",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "government",
@@ -724,6 +793,7 @@
       "domain": "europa.eu",
       "name": "European Union",
       "kind": "intergovernmental",
+      "tier": "official",
       "country": "EU",
       "topics": [
         "government",
@@ -736,6 +806,7 @@
       "domain": "ecb.europa.eu",
       "name": "European Central Bank",
       "kind": "central_bank",
+      "tier": "official",
       "country": "EU",
       "topics": [
         "finance",
@@ -747,6 +818,7 @@
       "domain": "cdc.gov",
       "name": "US Centers for Disease Control and Prevention",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "health",
@@ -757,6 +829,7 @@
       "domain": "nih.gov",
       "name": "US National Institutes of Health",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "health",
@@ -767,6 +840,7 @@
       "domain": "fda.gov",
       "name": "US Food and Drug Administration",
       "kind": "regulator",
+      "tier": "official",
       "country": "US",
       "topics": [
         "health",
@@ -777,6 +851,7 @@
       "domain": "nasa.gov",
       "name": "NASA",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "science",
@@ -787,6 +862,7 @@
       "domain": "noaa.gov",
       "name": "US National Oceanic and Atmospheric Administration",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "climate",
@@ -797,6 +873,7 @@
       "domain": "usgs.gov",
       "name": "US Geological Survey",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "science",
@@ -807,6 +884,7 @@
       "domain": "epa.gov",
       "name": "US Environmental Protection Agency",
       "kind": "regulator",
+      "tier": "official",
       "country": "US",
       "topics": [
         "climate",
@@ -818,6 +896,7 @@
       "domain": "census.gov",
       "name": "US Census Bureau",
       "kind": "statistics",
+      "tier": "official",
       "country": "US",
       "topics": [
         "statistics",
@@ -828,6 +907,7 @@
       "domain": "bls.gov",
       "name": "US Bureau of Labor Statistics",
       "kind": "statistics",
+      "tier": "official",
       "country": "US",
       "topics": [
         "statistics",
@@ -838,6 +918,7 @@
       "domain": "bea.gov",
       "name": "US Bureau of Economic Analysis",
       "kind": "statistics",
+      "tier": "official",
       "country": "US",
       "topics": [
         "statistics",
@@ -849,6 +930,7 @@
       "domain": "eia.gov",
       "name": "US Energy Information Administration",
       "kind": "statistics",
+      "tier": "official",
       "country": "US",
       "topics": [
         "energy",
@@ -859,6 +941,7 @@
       "domain": "energy.gov",
       "name": "US Department of Energy",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "energy",
@@ -869,6 +952,7 @@
       "domain": "federalreserve.gov",
       "name": "US Federal Reserve",
       "kind": "central_bank",
+      "tier": "official",
       "country": "US",
       "topics": [
         "finance",
@@ -880,6 +964,7 @@
       "domain": "treasury.gov",
       "name": "US Department of the Treasury",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "finance",
@@ -890,6 +975,7 @@
       "domain": "sec.gov",
       "name": "US Securities and Exchange Commission",
       "kind": "regulator",
+      "tier": "official",
       "country": "US",
       "topics": [
         "finance",
@@ -900,6 +986,7 @@
       "domain": "ftc.gov",
       "name": "US Federal Trade Commission",
       "kind": "regulator",
+      "tier": "official",
       "country": "US",
       "topics": [
         "law",
@@ -910,6 +997,7 @@
       "domain": "congress.gov",
       "name": "US Congress",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "law",
@@ -920,6 +1008,7 @@
       "domain": "whitehouse.gov",
       "name": "The White House",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "government"
@@ -929,6 +1018,7 @@
       "domain": "supremecourt.gov",
       "name": "Supreme Court of the United States",
       "kind": "government",
+      "tier": "official",
       "country": "US",
       "topics": [
         "law"
@@ -938,6 +1028,7 @@
       "domain": "gov.uk",
       "name": "UK Government",
       "kind": "government",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "government",
@@ -950,6 +1041,7 @@
       "domain": "legislation.gov.uk",
       "name": "UK legislation (The National Archives)",
       "kind": "government",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "law"
@@ -959,6 +1051,7 @@
       "domain": "ons.gov.uk",
       "name": "UK Office for National Statistics",
       "kind": "statistics",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "statistics",
@@ -970,6 +1063,7 @@
       "domain": "bankofengland.co.uk",
       "name": "Bank of England",
       "kind": "central_bank",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "finance",
@@ -981,6 +1075,7 @@
       "domain": "fca.org.uk",
       "name": "UK Financial Conduct Authority",
       "kind": "regulator",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "finance",
@@ -991,6 +1086,7 @@
       "domain": "parliament.uk",
       "name": "UK Parliament",
       "kind": "government",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "law",
@@ -1001,6 +1097,7 @@
       "domain": "nhs.uk",
       "name": "UK National Health Service",
       "kind": "government",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "health"
@@ -1010,6 +1107,7 @@
       "domain": "boj.or.jp",
       "name": "Bank of Japan",
       "kind": "central_bank",
+      "tier": "official",
       "country": "JP",
       "topics": [
         "finance",
@@ -1021,6 +1119,7 @@
       "domain": "stat.go.jp",
       "name": "Statistics Bureau of Japan",
       "kind": "statistics",
+      "tier": "official",
       "country": "JP",
       "topics": [
         "statistics",
@@ -1031,6 +1130,7 @@
       "domain": "mas.gov.sg",
       "name": "Monetary Authority of Singapore",
       "kind": "central_bank",
+      "tier": "official",
       "country": "SG",
       "topics": [
         "finance",
@@ -1042,6 +1142,7 @@
       "domain": "singstat.gov.sg",
       "name": "Singapore Department of Statistics",
       "kind": "statistics",
+      "tier": "official",
       "country": "SG",
       "topics": [
         "statistics",
@@ -1052,6 +1153,7 @@
       "domain": "rbi.org.in",
       "name": "Reserve Bank of India",
       "kind": "central_bank",
+      "tier": "official",
       "country": "IN",
       "topics": [
         "finance",
@@ -1063,6 +1165,7 @@
       "domain": "mospi.gov.in",
       "name": "Ministry of Statistics and Programme Implementation (India)",
       "kind": "statistics",
+      "tier": "official",
       "country": "IN",
       "topics": [
         "statistics",
@@ -1073,6 +1176,7 @@
       "domain": "stats.gov.cn",
       "name": "National Bureau of Statistics of China",
       "kind": "statistics",
+      "tier": "official",
       "country": "CN",
       "topics": [
         "statistics",
@@ -1083,6 +1187,7 @@
       "domain": "pbc.gov.cn",
       "name": "People's Bank of China",
       "kind": "central_bank",
+      "tier": "official",
       "country": "CN",
       "topics": [
         "finance",
@@ -1093,6 +1198,7 @@
       "domain": "bok.or.kr",
       "name": "Bank of Korea",
       "kind": "central_bank",
+      "tier": "official",
       "country": "KR",
       "topics": [
         "finance",
@@ -1104,6 +1210,7 @@
       "domain": "bundesbank.de",
       "name": "Deutsche Bundesbank",
       "kind": "central_bank",
+      "tier": "official",
       "country": "DE",
       "topics": [
         "finance",
@@ -1115,6 +1222,7 @@
       "domain": "destatis.de",
       "name": "Federal Statistical Office of Germany",
       "kind": "statistics",
+      "tier": "official",
       "country": "DE",
       "topics": [
         "statistics",
@@ -1125,6 +1233,7 @@
       "domain": "insee.fr",
       "name": "INSEE (France)",
       "kind": "statistics",
+      "tier": "official",
       "country": "FR",
       "topics": [
         "statistics",
@@ -1135,6 +1244,7 @@
       "domain": "statcan.gc.ca",
       "name": "Statistics Canada",
       "kind": "statistics",
+      "tier": "official",
       "country": "CA",
       "topics": [
         "statistics",
@@ -1145,6 +1255,7 @@
       "domain": "bankofcanada.ca",
       "name": "Bank of Canada",
       "kind": "central_bank",
+      "tier": "official",
       "country": "CA",
       "topics": [
         "finance",
@@ -1156,6 +1267,7 @@
       "domain": "abs.gov.au",
       "name": "Australian Bureau of Statistics",
       "kind": "statistics",
+      "tier": "official",
       "country": "AU",
       "topics": [
         "statistics",
@@ -1166,6 +1278,7 @@
       "domain": "rba.gov.au",
       "name": "Reserve Bank of Australia",
       "kind": "central_bank",
+      "tier": "official",
       "country": "AU",
       "topics": [
         "finance",
@@ -1177,6 +1290,7 @@
       "domain": "reuters.com",
       "name": "Reuters",
       "kind": "news",
+      "tier": "official",
       "country": "INT",
       "topics": [
         "news"
@@ -1186,6 +1300,7 @@
       "domain": "apnews.com",
       "name": "Associated Press",
       "kind": "news",
+      "tier": "official",
       "country": "US",
       "topics": [
         "news"
@@ -1195,6 +1310,7 @@
       "domain": "bbc.com",
       "name": "BBC",
       "kind": "news",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "news"
@@ -1204,6 +1320,7 @@
       "domain": "bbc.co.uk",
       "name": "BBC",
       "kind": "news",
+      "tier": "official",
       "country": "GB",
       "topics": [
         "news"
@@ -1213,6 +1330,7 @@
       "domain": "bangkokpost.com",
       "name": "Bangkok Post",
       "kind": "news",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "news"
@@ -1222,6 +1340,7 @@
       "domain": "nationthailand.com",
       "name": "Nation Thailand",
       "kind": "news",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "news"
@@ -1231,9 +1350,30 @@
       "domain": "thaipbs.or.th",
       "name": "Thai PBS",
       "kind": "news",
+      "tier": "official",
       "country": "TH",
       "topics": [
         "news"
+      ]
+    },
+    {
+      "domain": "wikipedia.org",
+      "name": "Wikipedia",
+      "kind": "reference",
+      "tier": "reference",
+      "country": "US",
+      "topics": [
+        "general"
+      ]
+    },
+    {
+      "domain": "britannica.com",
+      "name": "Encyclopaedia Britannica",
+      "kind": "reference",
+      "tier": "reference",
+      "country": "US",
+      "topics": [
+        "general"
       ]
     }
   ]
