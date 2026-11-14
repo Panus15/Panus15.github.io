@@ -14,6 +14,19 @@ SVI raw total-variance slice (Gatheral, 2004):
 with k = ln(K / F) the log-moneyness, w = sigma_BS^2 * T the total variance.
 Fitted by a pure-stdlib Nelder-Mead with penalties enforcing the no-arbitrage
 parameter region (b>=0, |rho|<1, sigma>0, min-variance >= 0).
+
+FIT QUALITY IS A GATE, NOT A DIAGNOSTIC. `rmse` was computed and discarded, and
+`robust_q_moments` claimed to "fall back to raw rnd if the fit is too poor" with
+no such code anywhere -- so a smile SVI cannot represent was densified into 81
+confident quotes and read as a measurement. MAX_VOL_RMSE below is the gate, and
+its threshold was measured rather than chosen; the table is on the constant.
+
+A SILENT FALLBACK WAS REJECTED, deliberately. Returning raw rnd moments when the
+fit fails hands back the number this module exists to replace -- biased LOW in
+exactly the truncated-wing regimes it was built for -- wearing the SVI label,
+with nothing for the caller to check. This module refuses instead, which is the
+convention in `engine.iv` (returns None rather than its seed) and in
+`rnd._coverage_ok` (reports False rather than a narrow integral).
 """
 
 from __future__ import annotations
@@ -24,6 +37,28 @@ from dataclasses import dataclass
 from engine import pricing
 from engine.data import OptionChain, OptionQuote
 from engine.iv import implied_vol
+
+
+#: Largest fit error, in VOL points, that may still be read as a measurement.
+#: Measured on a 21-strike 30-day crash-skew smile, averaging 12 noise seeds and
+#: comparing the Q vol recovered through the fit against the dense-chain truth:
+#:
+#:     quote noise   vol_rmse   error in recovered Q vol
+#:     none          0.00006    0.0023   <- SVI-vs-true-smile model error floor
+#:     0.5 vol pt    0.00295    0.0021
+#:     1 vol pt      0.00591    0.0022
+#:     2 vol pt      0.01180    0.0031
+#:     3 vol pt      0.01764    0.0044
+#:     5 vol pt      0.02912    0.0072
+#:     8 vol pt      0.04377    0.0481   <- breaks down, 7x the previous row
+#:
+#: The fit absorbs quote noise well because it averages over strikes, so the
+#: error stays under one vol point until the shape itself stops being SVI. The
+#: knee is between 0.029 and 0.044, and 0.02 keeps a 7x margin in the recovered
+#: vol while still admitting ~3.5 vol points of ordinary quote noise. Note the
+#: 0.0023 FLOOR: a perfect fit is not an exact answer, and no threshold here can
+#: make the densified chain better than the parameterisation.
+MAX_VOL_RMSE = 0.02
 
 
 def svi_total_variance(k, a, b, rho, m, sigma):
@@ -101,6 +136,17 @@ class SVISurface:
     def iv(self, K: float) -> float:
         return math.sqrt(self.total_variance(K) / self.T)
 
+    def vol_rmse(self) -> float:
+        """`rmse` converted from total-variance units into VOL points.
+
+        Raw `rmse` is in w = sigma^2 * T, so its scale moves with both the vol
+        level and the tenor and no fixed tolerance can be read against it.
+        Differentiating sigma = sqrt(w / T) gives d_sigma = dw / (2 * sigma * T),
+        evaluated at the ATM vol.
+        """
+        atm_vol = math.sqrt(self.total_variance(self.F) / self.T)
+        return self.rmse / (2.0 * atm_vol * self.T)
+
     def no_arb_ok(self, kmin=-1.5, kmax=1.5, n=60) -> bool:
         """Necessary check: total variance stays non-negative across the slice."""
         for i in range(n + 1):
@@ -111,7 +157,15 @@ class SVISurface:
 
     def dense_chain(self, symbol="SVI", *, dte=None, n=81, lo=0.6, hi=1.6) -> OptionChain:
         """Emit a smooth, wide, zero-spread BSM chain from the fitted smile, for
-        rnd to extract robust Q moments off (calls above F, puts below F)."""
+        rnd to extract robust Q moments off.
+
+        BOTH kinds are written at every strike whose price survives the `px <= 0`
+        filter, not calls above the forward and puts below it: the consumers pick
+        their own OTM leg (`rnd` by K0, `bkm_moments` by spot), and handing them a
+        one-sided chain would silently halve the integral on one wing. The filter
+        is what thins the far wings, so 81 strikes over 0.6-1.6 of spot yield both
+        kinds on about 60 of them.
+        """
         spot = self.F * math.exp(-(self.r - self.q) * self.T)
         dte = dte if dte is not None else max(1, round(self.T * 365))
         quotes = []
@@ -183,12 +237,26 @@ def fit_chain(chain: OptionChain, T: float, dte: int | None = None) -> SVISurfac
     return SVISurface(a, b, rho, m, abs(s), F, T, chain.r, chain.q, rmse=resid)
 
 
-def robust_q_moments(chain: OptionChain, T: float, dte: int | None = None):
+def robust_q_moments(chain: OptionChain, T: float, dte: int | None = None,
+                     max_vol_rmse: float = MAX_VOL_RMSE):
     """Fit SVI, densify, then run rnd on the smooth chain -> robust Q moments.
 
-    Falls back to raw rnd if the fit is too poor / too few strikes."""
+    REFUSES rather than falling back. `fit_chain` raises when the expiry has
+    fewer than five usable strikes, and this raises when the fitted smile misses
+    the quotes by more than `max_vol_rmse` vol points. Both are the sparse and
+    stressed chains the module was built for, so a number returned from them
+    would be read as the robust one and is the single most expensive thing this
+    module could get wrong -- see the note in the module docstring on why no
+    silent fallback to raw rnd exists.
+    """
     from . import rnd
     dte = dte if dte is not None else round(T * 365)
     surf = fit_chain(chain, T, dte)
+    err = surf.vol_rmse()
+    if err > max_vol_rmse:
+        raise ValueError(
+            "SVI fit misses the quotes by %.4f vol points (limit %.4f); the smile "
+            "is not representable, so the densified chain is not a measurement"
+            % (err, max_vol_rmse))
     dense = surf.dense_chain(dte=dte)
     return rnd.bkm_moments(dense, T, dte), surf
