@@ -21,8 +21,8 @@ class ClaimKind(str, Enum):
     DOI = "doi"                # a DOI:                  data={"doi": str}   (bare, no prefix, lower-case)
     REFERENCE = "reference"    # a cited work:           data={"title": str, "authors": [str], "year": int|None}
     QUOTE = "quote"            # a quoted statement:     data={"quote": str, "attribution": str|None}
-    ARITHMETIC = "arithmetic"  # "a op b = c":           data={"expression": str, "claimed": str}
-    CODE = "code"              # a fenced code block:    data={"language": str, "code": str}
+    ARITHMETIC = "arithmetic"  # "a op b = c":           data={"expression": str, "claimed": str}  (claimed keeps a trailing "%" if written)
+    CODE = "code"              # a fenced code block:    data={"language": str, "code": str, "expected_output": str|None}
     VAGUE = "vague"            # unsourced appeal:       data={"phrase": str}
 
 

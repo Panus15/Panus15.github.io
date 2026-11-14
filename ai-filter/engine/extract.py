@@ -456,7 +456,7 @@ _TITLE_PAT = (
     r"|(?<![\w_])_(?P<t4>[^_\r\n]{3,200}?)_(?![\w_]))"
 )
 _TITLE_RE = re.compile(_TITLE_PAT)
-_NAME = r"[A-Z][\w'’\-]+"
+_NAME = r"[A-Z][\w'’\-]{1,40}"
 _AUTHS = (
     rf"{_NAME}(?:(?:[ \t]*,[ \t]*|[ \t]+(?:&|and)[ \t]+|[ \t]*,[ \t]*(?:&|and)[ \t]+){_NAME})*"
     r"(?:[ \t]+et[ \t]+al\.?)?"
@@ -478,9 +478,9 @@ _APA_RE = re.compile(
     rf"\([ \t]*(?P<year>{_YEAR})(?P<suf>[a-z])?(?:[ \t]*,[ \t]*[A-Za-z]{{3,9}}\.?(?:[ \t]+\d{{1,2}})?)?[ \t]*\)"
     r"(?P<dot>[ \t]*[.,:])?[ \t]*(?P<rest>\S.*)$"
 )
-_STRONG_AUTH = re.compile(r"[A-Z][\w'’\-]+,[ \t]*[A-Z]\.|\bet[ \t]+al\b")
+_STRONG_AUTH = re.compile(r"[A-Z][\w'’\-]{1,40},[ \t]*[A-Z]\.|\bet[ \t]+al\b")
 _SURNAME_INIT = re.compile(
-    r"((?:[a-z]{2,4}[ \t]+)?[A-Z][\w'’\-]+(?:[ \t]+[A-Z][\w'’\-]+)*)[ \t]*,[ \t]*[A-Z]\."
+    r"((?:[a-z]{2,4}[ \t]+)?[A-Z][\w'’\-]{1,40}(?:[ \t]+[A-Z][\w'’\-]{1,40}){0,5})[ \t]*,[ \t]*[A-Z]\."
 )
 _TITLE_END = re.compile(r"(?<!\b[A-Z])(?<!\bet al)(?<!\bvs)(?<!\bNo)(?<!\bpp)(?<!\bVol)[.?!](?=\s|$)")
 
@@ -619,7 +619,11 @@ def _extract_refs(line_src: str, r: str, line_ranges):
                 )
                 bare_ok = strong or ((has_marker or in_refs or fancy) and has_dot)
                 if title_ok and bare_ok:
-                    out.append((span_start, end, ClaimKind.REFERENCE,
+                    ref_end = end
+                    if fancy and not (has_marker or in_refs):
+                        # inline prose cite: stop at the end of the title
+                        ref_end = min(end, ls + rest_off + tm.end())
+                    out.append((span_start, ref_end, ClaimKind.REFERENCE,
                                 {"title": title, "authors": _surnames(auth),
                                  "year": _year_ce(am.group("year"))}))
                     continue

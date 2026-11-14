@@ -9,11 +9,13 @@ on:
     paths:
       - "options-alpha-engine/**"
       - "fx-engine/**"
+      - "ai-filter/**"
       - ".github/workflows/tests.yml"
   pull_request:
     paths:
       - "options-alpha-engine/**"
       - "fx-engine/**"
+      - "ai-filter/**"
       - ".github/workflows/tests.yml"
 
 jobs:
@@ -97,6 +99,24 @@ jobs:
           done
           if [ "$fail" -ne 0 ]; then
             echo "::error::one or more fx-engine test files failed"
+            exit 1
+          fi
+
+      # ai-filter fetches URLs taken from untrusted AI text, so its tests must
+      # never depend on (or be able to reach) the real network: every checker
+      # takes an injected fetcher and the tests hand it a fake. Loopback stays
+      # open for the one local-server fixture.
+      - name: Run the ai-filter test suite
+        working-directory: ai-filter
+        run: |
+          fail=0
+          for t in tests/test_*.py; do
+            echo "::group::$t"
+            python3 "$t" || fail=1
+            echo "::endgroup::"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::one or more ai-filter test files failed"
             exit 1
           fi
 

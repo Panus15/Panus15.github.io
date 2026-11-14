@@ -218,7 +218,7 @@ _THAI_ORGS = (
     r"องค์การ" + _TH + r"{2,}|"
     r"สำนักงาน(?!ใหญ่|สาขา|ทนายความ|บัญชี|ให้เช่า)" + _TH + r"{2,}|"
     # "กรม" is also the tail of โปรแกรม etc.: only at a word start or after a particle
-    r"(?:(?<![฀-๿])|(?<=จาก)|(?<=ของ)|(?<=โดย)|(?<=ว่า)|(?<=และ)|(?<=ใน))กรม" + _TH + r"{2,}"
+    r"(?:(?<![฀-๿])|(?<=จาก)|(?<=ของ)|(?<=โดย)|(?<=ว่า)|(?<=และ)|(?<=ใน)|(?<=ที่)|(?<=กับ)|(?<=ตาม))กรม" + _TH + r"{2,}"
 )
 _ORG_NOUN = (r"University|Institute|Journal|Organization|Organisation|Agency|Bureau|Foundation|Association|Society|"
              r"Council|Commission|Laboratory|Laboratories|Hospital|Clinic|Academy|Ministry|Department|"
@@ -300,15 +300,16 @@ _COUNT = re.compile(
     r"(?P<num>(?:[0-9]{1,3}(?:,[0-9]{3}){2,}|[0-9]{7,}))(?![0-9,]|\.[0-9])"
     r"(?P<unit>\s+(?:" + _COUNT_NOUNS_EN + r")\b|\s*(?:" + _COUNT_NOUNS_TH + r"))", re.I)
 _PCT_OF = re.compile(r"\s*(?:of|ของ)\s*[0-9$€£฿]", re.I)
-_ILLUSTRATIVE = re.compile(
-    r"for example|for instance|e\.g\.|\bexample\b|suppose|assum(?:e|ing)|hypothetic|imagine|let's say|"
-    r"ตัวอย่าง|สมมติ|สมมุติ", re.I)
-_HAS_ALPHA = re.compile(r"[^\W\d_]")
+_ILLUSTRATIVE = ("for example", "for instance", "e.g.", "example", "suppose", "assum", "hypothetic", "imagine",
+                 "let's say", "ตัวอย่าง", "สมมติ", "สมมุติ")      # worked examples: numbers are made up on purpose
+_TABLE_ROW = re.compile(r"^[ \t]*\|[^\n]*", re.M)
+_HAS_ALPHA = re.compile(r"[^\W_]")
 _LISTNUM = re.compile(r"(?:\A|(?<=\n))[ \t>*#\-]*[0-9]{1,3}\Z")
 _ABBR_TOKEN = re.compile(r"([A-Za-z.]+)\Z")
 _ABBREVIATIONS = {
     "et al", "al", "e.g", "i.e", "vs", "dr", "prof", "mr", "mrs", "ms", "fig", "figs", "approx", "inc", "ltd", "co",
-    "jr", "sr", "st", "cf", "ca", "vol", "pp", "ed", "eds", "no", "u.s", "u.k", "etc", "est",
+    "jr", "sr", "st", "cf", "ca", "vol", "pp", "ed", "eds", "u.s", "u.k", "etc", "est", "ref", "refs",
+    "sec", "eq", "ch", "p",
 }
 _CAND = re.compile(r"[.!?]+[\"'”’)\]]*(?=\s|\Z)|[。！？]+|\n")
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -477,13 +478,16 @@ def scan(text: str) -> list[Finding]:
         hits.append((ts, te, phrase, _REASONS[fam].format(p=phrase)))
 
     # -- suspiciously precise numbers --------------------------------------------
+    table_rows = [(m.start(), m.end()) for m in _TABLE_ROW.finditer(norm)]
+    table_starts = [a for a, _ in table_rows]
+
     def number_ok(ts: int, te: int) -> bool:
-        ls = norm.rfind("\n", 0, ts) + 1
-        if norm[ls:ts].lstrip(" \t").startswith("|"):
+        k = bisect_right(table_starts, ts) - 1
+        if k >= 0 and ts < table_rows[k][1]:
             return False                               # markdown table row
         i = sent_index(ts)
-        sent = norm[s_starts[i]:s_ends[i]]
-        if "=" in sent or _ILLUSTRATIVE.search(sent):
+        sent = norm[max(s_starts[i], ts - 200):min(s_ends[i], te + 200)]
+        if "=" in sent or any(w in sent.lower() for w in _ILLUSTRATIVE):
             return False                               # arithmetic / worked example
         return not backed(ts, te)
 
@@ -494,7 +498,7 @@ def scan(text: str) -> list[Finding]:
         if _PCT_OF.match(scan_txt, m.end()):
             continue                                   # "12.50% of 80": a calculation
         if number_ok(m.start(), m.end()):
-            phrase = num + "%"
+            phrase = re.sub(r"\s+", " ", m.group(0))
             hits.append((m.start(), m.end(), phrase, _NUMBER_REASON.format(p=phrase)))
 
     for m in _COUNT.finditer(scan_txt):
