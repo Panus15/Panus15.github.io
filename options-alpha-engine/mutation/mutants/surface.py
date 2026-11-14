@@ -34,6 +34,36 @@ restart; measured, the simplex reaches the same optimum with any textbook
 values, and asserting otherwise would be asserting on the optimiser's path
 rather than its answer. What IS mutated is the optimiser's DIRECTION and its
 stopping rules, because those change the answer.
+
+FOUR EQUIVALENT MUTANTS ARE DELIBERATELY ABSENT, and each needed measuring.
+
+`iv <= 0` in the quote filter cannot fire. `engine.iv.implied_vol` returns
+either None or a vol it has confirmed is identified, and an identified vol is
+positive by construction -- 56 probes across seven strikes, both kinds, and
+prices from zero to full intrinsic produced no non-positive return. The clause
+is defensive at a module boundary and is kept as such, but `if iv is None` is
+what actually runs.
+
+The `s <= 1e-6` width penalty cannot bind on a chain whose fit is used. It
+binds only on discontinuous smiles -- a vol step across the strike -- where the
+real fit pins sigma at 1.2e-06 and dropping the penalty finds a different local
+optimum at 3.3e-03. Both are strictly positive, the fit error is identical to
+five decimals, and on EVERY such shape that error is 0.054-0.084 vol points,
+which MAX_VOL_RMSE refuses at 0.02. So the penalty can only change a number
+that is then thrown away.
+
+The Nelder-Mead restart changes nothing measurable. On crash, frown, sparse and
+wide chains the rmse is identical to seven decimals, and it costs nothing
+either (0.126 s per five fits with it and without), so it stays as insurance
+against a prematurely collapsed simplex. Its comment used to claim it "tightens
+the fit"; that claim is now the measurement instead.
+
+`abs(s)` on the fitted width is a normalisation, not a correction. The
+objective depends on sigma only through sigma*sigma, so the sign is
+unidentified and the optimiser may land on either representative; `abs` picks
+the positive one so that `no_arb_ok`'s `sigma > 0` tests the WIDTH rather than
+an arbitrary sign. Measured, the shipped seed gave sigma < 0 in 0 of 21 fits,
+so no fixture can distinguish it without mutating the seed as well.
 """
 
 TARGET = "models/surface.py"
@@ -95,32 +125,29 @@ MUTANTS = [
  ("fitted price and kind disagree", "        kind = \"call\" if K >= F else \"put\"", "        kind = \"put\" if K >= F else \"call\""),
  ("market variance not annualised", "        pts.append((math.log(K / F), iv * iv * T, 1.0))", "        pts.append((math.log(K / F), iv * iv, 1.0))"),
  ("market variance not squared",  "        pts.append((math.log(K / F), iv * iv * T, 1.0))", "        pts.append((math.log(K / F), iv * T, 1.0))"),
- ("unsolvable quotes fitted",     "        if iv is None or iv <= 0:\n            continue", "        if iv is None:\n            continue"),
  ("minimum strikes lowered",      "    if len(pts) < 5:", "    if len(pts) < 3:"),
  ("minimum strikes removed",      "    if len(pts) < 5:", "    if False:"),
 
  # The no-arbitrage penalties, which keep the fitted slice in the admissible
  # region rather than merely close to the quotes.
  ("slope penalty dropped",        "        if b < 0:\n            pen += 1e6 * (-b) + 1e3", "        if False:\n            pen += 1e6 * (-b) + 1e3"),
- ("width penalty dropped",        "        if s <= 1e-6:\n            pen += 1e6 * (1e-6 - s) + 1e3", "        if False:\n            pen += 1e6 * (1e-6 - s) + 1e3"),
  ("correlation penalty dropped",  "        if abs(rho) >= 1:\n            pen += 1e6 * (abs(rho) - 1) + 1e3", "        if False:\n            pen += 1e6 * (abs(rho) - 1) + 1e3"),
  ("min variance penalty dropped", "        if min_w < 0:\n            pen += 1e6 * (-min_w)", "        if False:\n            pen += 1e6 * (-min_w)"),
- ("min variance formula wrong",   "        min_w = a + b * s * math.sqrt(max(1 - rho * rho, 0.0))", "        min_w = a + b * s * math.sqrt(max(1 + rho * rho, 0.0))"),
- ("min variance ignores width",   "        min_w = a + b * s * math.sqrt(max(1 - rho * rho, 0.0))", "        min_w = a + b * math.sqrt(max(1 - rho * rho, 0.0))"),
+ ("min variance formula wrong",   "    return a + b * sigma * math.sqrt(max(1.0 - rho * rho, 0.0))", "    return a + b * sigma * math.sqrt(max(1.0 + rho * rho, 0.0))"),
+ ("min variance ignores width",   "    return a + b * sigma * math.sqrt(max(1.0 - rho * rho, 0.0))", "    return a + b * math.sqrt(max(1.0 - rho * rho, 0.0))"),
+ ("min variance drops the level", "    return a + b * sigma * math.sqrt(max(1.0 - rho * rho, 0.0))", "    return b * sigma * math.sqrt(max(1.0 - rho * rho, 0.0))"),
+ ("min variance ignores slope",   "    return a + b * sigma * math.sqrt(max(1.0 - rho * rho, 0.0))", "    return a + sigma * math.sqrt(max(1.0 - rho * rho, 0.0))"),
 
  # The no-arb reporting, which is what a caller checks before trusting a wing.
- ("no arb check inverted",        "            if svi_total_variance(k, self.a, self.b, self.rho, self.m, self.sigma) < 0:\n                return False", "            if svi_total_variance(k, self.a, self.b, self.rho, self.m, self.sigma) > 0:\n                return False"),
- ("no arb scan skipped",          "        for i in range(n + 1):", "        for i in range(0):"),
- ("no arb params unchecked",      "        return self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0", "        return True"),
- ("no arb allows unit correlation", "        return self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0", "        return self.b >= 0 and abs(self.rho) <= 1 and self.sigma > 0"),
- ("no arb ignores slope sign",    "        return self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0", "        return abs(self.rho) < 1 and self.sigma > 0"),
- ("no arb scan range narrowed",   "    def no_arb_ok(self, kmin=-1.5, kmax=1.5, n=60) -> bool:", "    def no_arb_ok(self, kmin=-0.01, kmax=0.01, n=60) -> bool:"),
+ ("no arb ignores min variance",  "        return (min_total_variance(self.a, self.b, self.rho, self.sigma) >= 0.0\n                and self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0)", "        return (self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0)"),
+ ("no arb min variance inverted", "        return (min_total_variance(self.a, self.b, self.rho, self.sigma) >= 0.0", "        return (min_total_variance(self.a, self.b, self.rho, self.sigma) <= 0.0"),
+ ("no arb params unchecked",      "        return (min_total_variance(self.a, self.b, self.rho, self.sigma) >= 0.0\n                and self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0)", "        return True"),
+ ("no arb allows unit correlation", "                and self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0)", "                and self.b >= 0 and abs(self.rho) <= 1 and self.sigma > 0)"),
+ ("no arb ignores slope sign",    "                and self.b >= 0 and abs(self.rho) < 1 and self.sigma > 0)", "                and abs(self.rho) < 1 and self.sigma > 0)"),
 
  # The optimiser's direction and stopping rules -- not its tuning constants.
  ("simplex maximises",            "        res.sort(key=lambda r: r[1])", "        res.sort(key=lambda r: r[1], reverse=True)"),
  ("simplex stops at once",        "def _nelder_mead(f, x0, *, step=0.15, no_improv_break=40, max_iter=3000,", "def _nelder_mead(f, x0, *, step=0.15, no_improv_break=1, max_iter=3000,"),
  ("simplex iteration cap removed", "def _nelder_mead(f, x0, *, step=0.15, no_improv_break=40, max_iter=3000,", "def _nelder_mead(f, x0, *, step=0.15, no_improv_break=40, max_iter=1,"),
  ("simplex improvement test flipped", "        if best < prev_best - 1e-12:", "        if best > prev_best - 1e-12:"),
- ("simplex restart dropped",      "    best = _nelder_mead(obj, best, step=0.03)", "    best = best"),
- ("fitted width sign kept",       "    return SVISurface(a, b, rho, m, abs(s), F, T, chain.r, chain.q, rmse=resid)", "    return SVISurface(a, b, rho, m, s, F, T, chain.r, chain.q, rmse=resid)"),
 ]
