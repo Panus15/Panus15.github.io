@@ -7,6 +7,7 @@ the math the whole engine rests on.
 
 import math
 import os
+import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -472,6 +473,222 @@ def test_an_identifiable_quote_is_still_solved():
             got = implied_vol(px, 100.0, K, T, 0.04, 0.0, "call")
             assert got is not None and abs(got - 0.25) < 1e-4, (
                 f"K={K} T={T}: {got}")
+
+
+# ---------------------------------------------------------------------------
+# engine/volforecast.py -- the P side of the engine's only claim.
+#
+# Its first sweep scored 4 of 26, and all four kills were term_vol's. The
+# three range estimators, the annualisation, EWMA, log returns and the
+# overnight gap had no test at all: the machinery that produces the forecast
+# every signal is measured against.
+#
+# The direction matters. The edge is Q - P, so a forecast biased LOW makes
+# every option look rich -- a defect here is not one wrong answer, it is a
+# sell signal everywhere.
+# ---------------------------------------------------------------------------
+
+def test_log_returns_run_forward_in_time():
+    # Inverted, every return flips sign. Variance is unchanged, so no
+    # volatility test can see it -- but realized_skew and anything directional
+    # reads backwards.
+    r = volforecast.log_returns([100.0, 110.0])
+    assert len(r) == 1 and r[0] > 0, r
+    assert abs(r[0] - math.log(1.1)) < 1e-12, r[0]
+
+
+def test_close_to_close_annualises_by_the_square_root_of_252():
+    # The 252 multiplies VARIANCE, so dropping it or using 365 moves the
+    # answer by a square root -- a vol missing its annualisation is sixteen
+    # times too small and still reads as a plausible decimal.
+    rnd = random.Random(3)
+    daily = 0.01
+    px = [100.0]
+    for _ in range(4000):
+        px.append(px[-1] * math.exp(rnd.gauss(0.0, daily)))
+    got = volforecast.close_to_close_vol(px, window=4000)
+    want = daily * math.sqrt(252)
+    assert abs(got - want) / want < 0.05, (
+        f"{got:.4f} against {want:.4f}: a ratio of {got/want:.3f}. 1/sqrt(252) "
+        f"means it is not annualised; sqrt(365/252) means calendar days")
+
+
+def test_close_to_close_uses_only_the_window_it_was_given():
+    # A calm recent window after a violent old one. Ignoring `window` mixes
+    # the regime that is over into the forecast for the one that is not.
+    calm = [100.0 * (1.0 + 0.0001 * i) for i in range(60)]
+    violent = [100.0 * (1.5 if i % 2 else 0.7) for i in range(60)]
+    got = volforecast.close_to_close_vol(violent + calm, window=30)
+    calm_only = volforecast.close_to_close_vol(calm, window=30)
+    assert abs(got - calm_only) < 1e-9, (
+        f"{got:.4f} against {calm_only:.4f}: the window is not being applied")
+
+
+def _flat_with_shock(n, at, jump=1.10):
+    """`n` flat days with a single `jump` return at index `at`."""
+    px = [100.0]
+    for i in range(n):
+        px.append(px[-1] * (jump if i == at else 1.0))
+    return px
+
+
+def test_ewma_weights_a_recent_shock_far_above_an_old_one():
+    # The shock goes in the MIDDLE of a long series, never at index 0. The
+    # implementation seeds `var = rets[0] ** 2`, so the first return carries
+    # weight lam^(n-1) rather than (1 - lam) -- and at lam=0.94 those two are
+    # 0.0482 and 0.06, which cross over at a gap of about 49 days. My first
+    # fixture used exactly 50 and the two answers came out within 10% of each
+    # other, which is the fixture landing on the crossover rather than the
+    # decay failing.
+    recent = volforecast.ewma_vol(_flat_with_shock(200, at=199))
+    old = volforecast.ewma_vol(_flat_with_shock(200, at=100))
+    assert recent > old * 10, (
+        f"a shock on the last day gives {recent:.4f} and one 99 days earlier "
+        f"{old:.4f}; at lam=0.94 the weights differ by 0.06 against "
+        f"0.06*0.94^99, so the gap should be a factor of hundreds")
+
+
+def test_the_ewma_seed_makes_a_SHORT_history_hostage_to_its_first_return():
+    """A property worth knowing rather than a defect, so it is pinned.
+
+    `var = rets[0] ** 2` seeds the recursion, which gives the first return
+    weight lam^(n-1) instead of the (1 - lam) every later one gets. On a short
+    history that is the largest weight in the series: over 10 days a shock on
+    day one counts 0.94^10 = 0.54 against a shock today at 0.06, so the
+    estimate is dominated by the oldest observation it has.
+
+    Anyone forecasting off a few weeks of data should know that. The fix is
+    more history, not a different lambda.
+    """
+    first = volforecast.ewma_vol(_flat_with_shock(10, at=0))
+    last = volforecast.ewma_vol(_flat_with_shock(10, at=9))
+    assert first > last, (
+        f"over 10 days a shock on day one gives {first:.4f} and one today "
+        f"{last:.4f}; the seeding artefact this documents is gone, so the "
+        f"docstring above is stale")
+
+
+def test_each_range_estimator_matches_its_own_closed_form():
+    # Literal values on one hand-built session, because every constant here
+    # looks like magic whether it is right or wrong.
+    o, h, l, c = 100.0, 104.0, 98.0, 102.0
+    hl, co = math.log(h / l), math.log(c / o)
+    assert abs(volforecast.parkinson_var((o, h, l, c))
+               - hl * hl / (4.0 * math.log(2.0))) < 1e-15
+    assert abs(volforecast.garman_klass_var((o, h, l, c))
+               - (0.5 * hl * hl - (2.0 * math.log(2.0) - 1.0) * co * co)) < 1e-15
+    assert abs(volforecast.rogers_satchell_var((o, h, l, c))
+               - (math.log(h / c) * math.log(h / o)
+                  + math.log(l / c) * math.log(l / o))) < 1e-15
+
+
+def test_the_range_estimators_recover_a_KNOWN_variance():
+    """The oracle the closed forms cannot be: simulated sessions.
+
+    Each estimator is unbiased for the session variance under its own
+    assumptions, so sampling a geometric walk at 250 intraday points and
+    averaging over 1,200 sessions has to come back near the variance that
+    generated it. Measured here: 0.89 to 0.92 of it, the shortfall being the
+    high and low of a discretely sampled path never quite reaching the
+    continuous ones.
+
+    That band is wide enough to accept the real code and narrow enough to
+    reject the errors that matter -- dropping Parkinson's 4*ln(2) multiplies
+    the answer by 2.77, halving Rogers-Satchell or Garman-Klass takes it to
+    roughly half, and losing a sign sends it elsewhere entirely.
+    """
+    rnd = random.Random(11)
+    sigma, steps, days = 0.02, 250, 1200
+    totals = {"parkinson": 0.0, "garman_klass": 0.0, "rogers_satchell": 0.0}
+    fns = {"parkinson": volforecast.parkinson_var,
+           "garman_klass": volforecast.garman_klass_var,
+           "rogers_satchell": volforecast.rogers_satchell_var}
+    prev = 100.0
+    for _ in range(days):
+        o = px = hi = lo = prev
+        for _ in range(steps):
+            px *= math.exp(rnd.gauss(0.0, sigma / math.sqrt(steps)))
+            hi, lo = max(hi, px), min(lo, px)
+        bar = (o, hi, lo, px)
+        for name, fn in fns.items():
+            totals[name] += fn(bar)
+        prev = px
+    truth = sigma * sigma
+    for name, total in sorted(totals.items()):
+        ratio = total / days / truth
+        assert 0.80 <= ratio <= 1.10, (
+            f"{name} recovers {ratio:.3f} of the variance that generated the "
+            f"sessions; 2.77 is Parkinson without its 4*ln(2), ~0.5 is a "
+            f"halved estimator")
+
+
+def test_the_overnight_gap_is_counted_and_squared():
+    # A 2% gap up carries 0.0004 of variance into the session. Dropped, the
+    # forecast understates vol on every gapping market, which is every equity
+    # index. Unsquared, a gap DOWN would subtract variance.
+    bar = (102.0, 103.0, 101.0, 102.5)
+    got = volforecast._gap_var(bar, 100.0)
+    assert abs(got - math.log(1.02) ** 2) < 1e-15, got
+    down = volforecast._gap_var((98.0, 99.0, 97.0, 98.5), 100.0)
+    assert down > 0, f"a gap down contributed {down} of variance"
+    assert volforecast._gap_var(bar, None) == 0.0, "the first bar has no gap"
+    assert volforecast._gap_var(bar, 0.0) == 0.0
+
+
+def test_a_non_positive_price_gives_zero_variance_rather_than_a_crash():
+    # A halted or mis-ticked session arrives as a zero. The documented
+    # behaviour is to contribute nothing, not to raise inside a forecast.
+    #
+    # Parkinson is deliberately held to a weaker claim: it is a HIGH-LOW
+    # estimator and never reads the open or the close, so a zero open is
+    # harmless to it and guarding on it would be guarding against nothing.
+    # Asserting otherwise is what my first version of this test did.
+    for fn in (volforecast.parkinson_var, volforecast.garman_klass_var,
+               volforecast.rogers_satchell_var):
+        assert fn((100.0, 0.0, 98.0, 99.0)) == 0.0, f"{fn.__name__}: h=0"
+        assert fn((100.0, 104.0, 0.0, 99.0)) == 0.0, f"{fn.__name__}: l=0"
+    for fn in (volforecast.garman_klass_var, volforecast.rogers_satchell_var):
+        assert fn((0.0, 104.0, 98.0, 99.0)) == 0.0, f"{fn.__name__}: o=0"
+        assert fn((100.0, 104.0, 98.0, 0.0)) == 0.0, f"{fn.__name__}: c=0"
+    assert volforecast.parkinson_var((0.0, 104.0, 98.0, 0.0)) > 0.0, (
+        "parkinson is a high-low estimator and must not start depending on "
+        "the open or the close")
+
+
+def test_a_flat_history_forecasts_a_positive_floor_not_zero():
+    # term_vol floors the variance at 1e-12. On a perfectly flat series both
+    # the spot and long-run estimates are zero, so without the floor the
+    # forecast is exactly 0.0 -- and a zero forecast makes every option
+    # infinitely rich to anything downstream that divides by it.
+    got = volforecast.term_vol([100.0] * 300, 30.0 / 365)
+    assert got > 0.0, "a flat history forecast exactly zero volatility"
+    assert got < 1e-3, f"the floor should be negligible, not {got}"
+
+
+def test_long_run_vol_and_close_to_close_agree_because_one_calls_the_other():
+    # They were byte-identical copies. The delegation is asserted so the copy
+    # cannot come back: two homes for one formula is what left the sample
+    # variance and the mean removal untested in both.
+    rnd = random.Random(5)
+    px = [100.0]
+    for _ in range(400):
+        px.append(px[-1] * math.exp(rnd.gauss(0.0, 0.012)))
+    for w in (21, 63, 252):
+        assert volforecast.long_run_vol(px, w) == \
+            volforecast.close_to_close_vol(px, w), w
+
+
+def test_the_mean_reversion_half_life_is_about_three_months():
+    # kappa = 2.77 is ln(2)/0.25: a quarter. At kappa = 0.1 the half-life is
+    # about seven years and the term structure is flat over anything a
+    # 30-day option cares about, which is the regression term_vol exists to
+    # prevent.
+    import inspect
+    kappa = inspect.signature(volforecast.term_vol).parameters["kappa"].default
+    half_life_years = math.log(2.0) / kappa
+    assert 0.15 < half_life_years < 0.40, (
+        f"kappa={kappa} is a half-life of {half_life_years:.2f} years; the "
+        f"documented choice is about a quarter")
 
 
 def _bisect_iv(px, S, K, T, r, q, kind, lo=1e-4, hi=5.0):

@@ -21,6 +21,11 @@ Three families:
                         market's own curve does not. Collapse the weight and
                         that regression is back.
 
+`long_run_vol` used to carry a byte-identical copy of `close_to_close_vol`'s
+body, which meant the sample-variance and mean-removal defects below had two
+homes and no anchor could name either. It delegates now. Duplication is not a
+style question when a mutation table has to point at exactly one line.
+
 `_gap_var` deserves its own note. The overnight move is a real part of a
 session's variance and the engine's GKYZ estimator includes it; a version that
 drops it understates vol on every gapping market, which is every equity index.

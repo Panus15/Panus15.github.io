@@ -239,13 +239,14 @@ def long_run_vol(prices: Sequence[float], window: int = 252) -> float:
 
     Uses the whole available history up to ``window`` bars, so it is deliberately
     slow-moving: it is the anchor, not the signal.
+
+    This was a byte-identical copy of `close_to_close_vol`'s body -- same
+    answer for every window, checked -- so it delegates. The duplication was
+    not harmless: a mutation of the shared formula had two places to live and
+    neither anchor could name one, so defects in the sample variance and the
+    mean removal went untried in both.
     """
-    rets = log_returns(prices)[-window:]
-    if len(rets) < 2:
-        raise ValueError("need at least 3 prices")
-    mean = sum(rets) / len(rets)
-    var = sum((x - mean) ** 2 for x in rets) / (len(rets) - 1)
-    return math.sqrt(var * TRADING_DAYS)
+    return close_to_close_vol(prices, window=window)
 
 
 def term_vol(prices: Sequence[float], T: float, *, kappa: float = 2.77,
