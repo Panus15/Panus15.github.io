@@ -79,8 +79,12 @@ def run(text: str, fetcher: Optional[Fetcher] = None, *, run_code: bool = False,
             findings.append(Finding(c, Status.UNVERIFIED, "pipeline",
                                     f"no checker handled this {c.kind.value} claim"))
 
+    # A citation proven fake must not count as "a source" for a nearby unsourced claim.
+    fake = [(f.claim.start, f.claim.end) for f in findings
+            if f.status is Status.CONTRADICTED
+            and f.claim.kind in (ClaimKind.URL, ClaimKind.DOI, ClaimKind.REFERENCE)]
     try:
-        findings.extend(vague.scan(text))
+        findings.extend(vague.scan(text, ignore_spans=fake))
     except Exception as e:
         findings.append(Finding(Claim("v0", ClaimKind.VAGUE, "", 0, 0), Status.UNVERIFIED,
                                 "vague", f"could not scan for unsourced claims ({type(e).__name__})"))

@@ -51,6 +51,12 @@ Not verified live: the Claude call was checked against the real SDK's request va
 
 Runs code taken from the answer on this machine, in a subprocess with time/memory/file limits, a scrubbed environment, a temp working directory and a socket guard. That is defence against accidents, **not a security boundary against hostile code**. Off by default; use Docker/gVisor for untrusted input.
 
+## Evaluation
+
+`python3 eval/run_eval.py` runs the filter over a labelled corpus and counts false alarms and misses (see `eval/README.md`). The shipped corpus is synthetic; it needs real AI answers before its numbers mean anything.
+
+Network notes: behind an egress proxy the filter lets the proxy resolve names (local DNS is not consulted) and the SSRF guard falls back to name-based refusals, so the proxy's own policy must block internal targets. OpenAlex shares a free budget per IP unless `OPENALEX_API_KEY` is set (free key from openalex.org/settings/api).
+
 ## Tests
 
 ```

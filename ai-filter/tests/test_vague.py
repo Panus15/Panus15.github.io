@@ -355,6 +355,26 @@ def test_realistic_thai_paragraphs():
     assert phrases(p4) == ["ว่ากันว่า", "ผลสำรวจชี้ว่า", "ร้อยละ 73.42"]
 
 
+def test_ignored_spans_stop_a_fake_citation_from_backing_a_claim():
+    text = "มีการศึกษาพบว่าได้ผลดี doi:10.9999/invented.2021 อ้างอิงไว้"
+    assert scan(text) == []                                   # a DOI nearby normally backs it
+    at = text.index("doi:")
+    fs = scan(text, ignore_spans=[(at, at + len("doi:10.9999/invented.2021"))])
+    assert len(fs) == 1 and fs[0].status.value == "unverified"
+    # a span elsewhere does not matter; a REAL backing signal outside the ignored span still counts
+    text2 = "Studies show it works [1] and see doi:10.9999/invented.2021 too."
+    at2 = text2.index("doi:")
+    assert scan(text2, ignore_spans=[(at2, at2 + 25)]) == []   # the [1] still backs it
+    assert scan(text2, ignore_spans=[(0, len(text2))]) != []   # ignoring everything removes all backing
+
+
+def test_ignored_spans_respect_offsets_after_combining_marks():
+    text = "e\u0301 " * 5 + "Studies show it works doi:10.9999/x"
+    at = text.index("doi:")
+    fs = scan(text, ignore_spans=[(at, len(text))])
+    assert len(fs) == 1 and text[fs[0].claim.start:fs[0].claim.end] == fs[0].claim.text
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

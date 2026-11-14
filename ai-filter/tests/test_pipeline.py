@@ -161,6 +161,23 @@ def test_cli_never_runs_code_unless_asked():
         # exactly why the flag is opt-in and documented as not a security boundary.
 
 
+def test_a_fake_citation_does_not_back_a_nearby_unsourced_claim():
+    from engine.net import FakeFetcher, FetchResult
+    import json
+    text = "มีการศึกษาพบว่าได้ผลดี doi:10.9999/invented.2021 ยืนยัน\n"
+    fake = FakeFetcher({
+        "https://api.crossref.org/works/10.9999/invented.2021": FetchResult("", "", 404, b""),
+        "https://doi.org/api/handles/10.9999/invented.2021": FetchResult("", "", 404, json.dumps({"responseCode": 100}).encode()),
+    })
+    fs = pipeline.run(text, fake)
+    assert any(f.module == "citations" and f.status is C for f in fs)
+    assert any(f.module == "vague" and f.status is U for f in fs), [(f.module, f.status) for f in fs]
+    # control: the SAME sentence with a REAL doi is backed, so no vague finding
+    ok = FakeFetcher({"https://api.crossref.org/works/10.1038/nature14539": FetchResult("", "", 200, json.dumps({"message": {"title": ["Deep learning"], "issued": {"date-parts": [[2015]]}}}).encode())})
+    fs2 = pipeline.run("มีการศึกษาพบว่าได้ผลดี doi:10.1038/nature14539 ยืนยัน\n", ok)
+    assert not any(f.module == "vague" for f in fs2)
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

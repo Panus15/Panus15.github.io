@@ -40,6 +40,8 @@ the char caps above do that job instead.  Two sentences later never backs.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import re
 import unicodedata
 from bisect import bisect_left, bisect_right
@@ -439,8 +441,12 @@ def _sentences(t: str) -> list[tuple[int, int]]:
 # ---------------------------------------------------------------------------
 # scan
 # ---------------------------------------------------------------------------
-def scan(text: str) -> list[Finding]:
-    """Flag unsourced appeals to authority and unsourced over-precise figures."""
+def scan(text: str, ignore_spans: Sequence[tuple[int, int]] = ()) -> list[Finding]:
+    """Flag unsourced appeals to authority and unsourced over-precise figures.
+
+    `ignore_spans` are (start, end) offsets into `text` of citations already proven fake
+    (a dead link, an unregistered DOI). A backing signal inside one does not count: pasting
+    an invented source next to a claim must not make the claim look sourced."""
     if not isinstance(text, str) or not text:
         return []
     norm, omap = _nfc(_mask_code(text))
@@ -452,6 +458,13 @@ def scan(text: str) -> list[Finding]:
     s_starts = [s for s, _ in sents]
     s_ends = [e for _, e in sents]
     signals = sorted((m.start(), m.end()) for rx in _BACKING_RES for m in rx.finditer(norm))
+    if ignore_spans:
+        def _orig(a: int, b: int) -> tuple[int, int]:
+            return (a, b) if omap is None else (omap[0][a], omap[1][b - 1])
+        def _ignored(a: int, b: int) -> bool:
+            oa, ob = _orig(a, b)
+            return any(ia < ob and oa < ib for ia, ib in ignore_spans)
+        signals = [(a, b) for a, b in signals if not _ignored(a, b)]
     sig_starts = [s for s, _ in signals]
 
     def sent_index(pos: int) -> int:

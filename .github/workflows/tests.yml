@@ -120,6 +120,12 @@ jobs:
             exit 1
           fi
 
+      # The labelled corpus the filter is measured against. Offline here (CI proves the
+      # suite needs no network); the live cases are run by hand: python3 eval/run_eval.py
+      - name: ai-filter eval (offline cases)
+        working-directory: ai-filter
+        run: python3 eval/run_eval.py --offline
+
       - name: Smoke-test the demo (stdlib-only, no deps)
         working-directory: options-alpha-engine
         run: python3 demo.py
