@@ -616,6 +616,81 @@ quotable because skew prices them far above flat-vol value. The Deribit control
 test is the evidence this is real and not pedantry — widening its ladder from ±20%
 to ±45% at a 60% vol took its recovered vol from needing a 0.03 tolerance to an
 error of **+0.0036**.
+### 2.7k The surface fit promised a fallback it did not have
+
+`models/surface.py` fits SVI to the quoted smile and **densifies it into 81 quotes**
+that `rnd` then reads as market prices. That densification is the module's whole
+value — it is what removes the truncated-wing bias that reads **low exactly in
+stressed regimes** — and it is also its one real danger, because five quotes become
+eighty-one and every one of them looks like a market.
+
+Two of its claims were not true of the code:
+
+- `robust_q_moments` said *"Falls back to raw rnd if the fit is too poor / too few
+  strikes."* **There was no fallback in any form.** Too few strikes raised out of
+  `fit_chain`, and *"too poor"* had no implementation at all — `rmse` was computed
+  and discarded, the same defect as the `mean` field in `rnd.py`.
+- `dense_chain` said *"calls above F, puts below F."* It writes **both** kinds at
+  every viable strike — 60 of 81 — and the consumers depend on that, because `rnd`
+  picks its OTM leg by K0 and `bkm_moments` by spot.
+
+**A silent fallback would have been the wrong fix.** Returning raw moments on a
+failed fit hands back the number this module exists to replace, wearing the SVI
+label, with nothing for the caller to check. It refuses instead — the convention
+in `engine.iv` (returns None rather than its Newton seed) and in
+`rnd._coverage_ok` (reports False rather than a narrow integral).
+
+**The threshold was measured.** Twelve noise seeds on a 21-strike 30-day crash
+skew, comparing the Q vol recovered through the fit against the dense-chain truth:
+
+| quote noise | `vol_rmse` | error in recovered Q vol |
+|---|---|---|
+| none | 0.00006 | 0.0023 ← SVI-vs-true-smile model error **floor** |
+| 1 vol pt | 0.00591 | 0.0022 |
+| 3 vol pt | 0.01764 | 0.0044 |
+| 5 vol pt | 0.02912 | 0.0072 |
+| 8 vol pt | 0.04377 | **0.0481** ← breaks down, 7× the previous row |
+
+The fit absorbs quote noise well because it averages across strikes, so the
+recovered vol holds under one vol point until the shape itself stops being SVI.
+`MAX_VOL_RMSE = 0.02` keeps a 7× margin while still admitting ~3.5 vol points of
+ordinary noise. Note the **0.0023 floor**: a perfect fit is not an exact answer.
+
+**The arbitrage check sampled 61 points and called it "the slice".** `no_arb_ok`
+walked k over [−1.5, 1.5] — so a dip between samples was missed, and nothing
+outside ±1.5 log-moneyness was looked at at all, while `dense_chain` extrapolates
+over 0.6–1.6 of spot. The minimum has a closed form, so there is nothing to
+sample; it now agrees with an 80001-point brute force to **4e-11**, and across 18
+fits over six smile shapes the exact condition and the old scan never disagreed.
+
+**The penalties needed shapes that make them bind**, which was the whole
+difficulty — on an ordinary crash skew none of them do, so dropping one moves the
+fit by ~1e-5 and nothing can see it:
+
+| penalty | shape that binds it | real fit | without the penalty |
+|---|---|---|---|
+| `b >= 0` | inverted smile (peak ATM) | b pinned at **0** | b = −0.028, still reports arbitrage-free |
+| min variance ≥ 0 | monotone smile | min = **+1e-09** | leaves the region |
+| \|rho\| < 1 | deep **reverse** skew, 20.5%→80.5% | rho = **+0.752** | rho = **+1.210**, slice monotone not a smile |
+
+**Fitting the ITM leg is invisible on synthetic prices.** ITM value is mostly
+intrinsic, so vega is small and the recovered IV is dominated by the tick — but
+the fixture rounded to four decimals, far finer than any market. At a **dime**
+tick, the real SPX increment above \$3, over 60–140 strikes, the OTM fit errs by
+**0.00062** vol points and the ITM fit by **0.02052** — so the ITM fit is refused
+by the gate while the OTM fit stands.
+
+**56/56 mutants killed**, after a first sweep of 34/59 whose survivors were almost
+entirely the no-arbitrage apparatus: the old test called `no_arb_ok()` on a surface
+that should pass and re-checked its parameters by hand, so `return True` survived
+and so did dropping any single clause. Four equivalents are documented in
+`mutation/mutants/surface.py` and removed from the table rather than left as known
+survivors — including the width penalty, which binds only on discontinuous smiles
+whose fit error is 0.054–0.084 and which the gate refuses at 0.02, so it can only
+change a number that is then thrown away.
+
+---
+
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
