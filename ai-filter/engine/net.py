@@ -48,6 +48,10 @@ class Fetcher(Protocol):
               timeout: float = 10.0, max_bytes: int = MAX_BYTES_DEFAULT) -> FetchResult: ...
 
 
+def _is_nxdomain(e: socket.gaierror) -> bool:
+    return e.errno in {getattr(socket, n) for n in ("EAI_NONAME", "EAI_NODATA") if hasattr(socket, n)}
+
+
 def check_public_host(url: str) -> Optional[str]:
     """Return None if `url` is safe to fetch, else a reason string."""
     parts = urllib.parse.urlsplit(url)
@@ -59,8 +63,11 @@ def check_public_host(url: str) -> Optional[str]:
     try:
         infos = socket.getaddrinfo(host, parts.port or (443 if parts.scheme == "https" else 80),
                                    proto=socket.IPPROTO_TCP)
-    except socket.gaierror:
-        return "dns"   # sentinel: caller maps to error="dns"
+    except socket.gaierror as e:
+        # Only "no such name" is evidence the link is bad. A resolver that is
+        # down or unreachable (EAI_AGAIN, no DNS in a sandbox...) says nothing
+        # about the link and must not be reported as a dead domain.
+        return "dns" if _is_nxdomain(e) else "resolver"   # sentinels, mapped by caller
     for info in infos:
         ip = ipaddress.ip_address(info[4][0].split("%")[0])
         if (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
@@ -86,6 +93,8 @@ class UrllibFetcher:
         problem = check_public_host(url)
         if problem == "dns":
             return FetchResult(url, url, None, error="dns", detail="host does not resolve")
+        if problem == "resolver":
+            return FetchResult(url, url, None, error="network", detail="DNS lookup failed (resolver unavailable)")
         if problem:
             return FetchResult(url, url, None, error="blocked", detail=problem)
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
@@ -93,12 +102,17 @@ class UrllibFetcher:
         try:
             with opener.open(req, timeout=timeout) as resp:
                 return FetchResult(url, resp.geturl(), resp.status, resp.read(max_bytes))
-        except urllib.error.HTTPError as e:     # 4xx/5xx still carry a real status
-            return FetchResult(url, e.geturl() or url, e.code, b"")
+        except urllib.error.HTTPError as e:     # 4xx/5xx still carry a real status AND often a
+            try:                                 # meaningful body (doi.org answers 404 + JSON for unregistered DOIs)
+                body = e.read(max_bytes)
+            except Exception:
+                body = b""
+            return FetchResult(url, e.geturl() or url, e.code, body)
         except urllib.error.URLError as e:
             reason = e.reason
             if isinstance(reason, socket.gaierror):
-                return FetchResult(url, url, None, error="dns", detail=str(reason))
+                kind = "dns" if _is_nxdomain(reason) else "network"
+                return FetchResult(url, url, None, error=kind, detail=str(reason))
             if isinstance(reason, socket.timeout) or "timed out" in str(reason):
                 return FetchResult(url, url, None, error="timeout", detail=str(reason))
             if "CERTIFICATE" in str(reason).upper() or "SSL" in str(reason).upper():

@@ -28,6 +28,47 @@ def test_fake_fetcher_unknown_route_is_a_failure_not_a_pass():
     assert f.calls == ["http://a/", "http://b/"]
 
 
+def _with_getaddrinfo(exc, fn):
+    import socket
+    real = socket.getaddrinfo
+    def boom(*a, **k): raise exc
+    socket.getaddrinfo = boom
+    try:
+        return fn()
+    finally:
+        socket.getaddrinfo = real
+
+
+def test_nxdomain_is_dns_but_resolver_failure_is_not():
+    import socket
+    assert _with_getaddrinfo(socket.gaierror(socket.EAI_NONAME, "nx"),
+                             lambda: check_public_host("http://nope.invalid/")) == "dns"
+    assert _with_getaddrinfo(socket.gaierror(socket.EAI_AGAIN, "try again"),
+                             lambda: check_public_host("http://example.com/")) == "resolver"
+    r = _with_getaddrinfo(socket.gaierror(socket.EAI_AGAIN, "try again"),
+                          lambda: UrllibFetcher().fetch("http://example.com/"))
+    assert r.error == "network"   # NOT "dns": a down resolver must never read as a dead link
+
+
+def test_http_error_body_is_kept():
+    import http.server, threading
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(404); self.send_header("Content-Type", "application/json"); self.end_headers()
+            self.wfile.write(b'{"responseCode":100}')
+        def log_message(self, *a): pass
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    import engine.net as net
+    real = net.check_public_host
+    net.check_public_host = lambda u: None      # loopback fixture: bypass the guard for this test only
+    try:
+        r = UrllibFetcher().fetch(f"http://127.0.0.1:{srv.server_port}/")
+    finally:
+        net.check_public_host = real; srv.shutdown()
+    assert r.status == 404 and r.body == b'{"responseCode":100}'
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):
