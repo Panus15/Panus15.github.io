@@ -183,7 +183,10 @@ def _split_chunks(text: str, max_chars: int, code_spans) -> tuple[list[tuple[int
     start = 0
     while start < n and len(chunks) < MAX_CHUNKS:
         limit = min(start + max_chars, n)
-        cut = n if limit == n else _choose_cut(text, start, limit, code_spans, max_chars)
+        if limit == n or not text[limit:].strip():
+            cut = limit if limit < n else n      # only blank text follows: nothing is lost
+        else:
+            cut = _choose_cut(text, start, limit, code_spans, max_chars)
         chunks.append((start, cut))
         start = cut
     return chunks, bool(text[start:].strip())
@@ -276,6 +279,8 @@ class _Locator:
             return False
         if any(x <= a and b <= y for x, y in self.inline):    # entirely inside inline code
             return False
+        if _splits_cluster(self.text, a) or _splits_cluster(self.text, b):
+            return False                                      # would start/end mid character cluster
         piece = self.text[a:b]
         if not any(ch.isalnum() for ch in piece) or _is_url_only(piece):
             return False

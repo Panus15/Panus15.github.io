@@ -211,6 +211,7 @@ _MD_LINK = re.compile(
 _GENERIC_LABELS = frozenset((
     "here", "link", "source", "sources", "this", "this link", "click here", "read more", "more", "website",
     "site", "page", "this page", "url", "ที่นี่", "ลิงก์", "ลิงค์", "แหล่งที่มา", "ที่มา", "อ้างอิง", "ต้นฉบับ"))
+_MARK_JOIN = re.compile(r"(" + _MK + r")\s*(?:[,;&]|\b(?:and|or)\b|และ|หรือ)\s*(?=" + _MK + r")", re.I)
 _EMPTY_BRACKETS = re.compile(r"[(\[（]\s*[,;:]?\s*[)\]）]")
 
 
@@ -223,6 +224,7 @@ def _clean(marked: str) -> str:
         return (label + m.group(2)) if label else m.group(2)
 
     s = _MD_LINK.sub(link, marked)
+    s = _MARK_JOIN.sub(r"\1", s)
     s = _PAREN_MARK.sub(lambda m: m.group(1), s)
     for _ in range(3):
         t = _LEAD_BEFORE_MARK.sub("", s)
@@ -241,6 +243,7 @@ def _finish(s: str) -> str:
     s = re.sub(_MK, " ", s)
     s = " ".join(s.split())
     s = re.sub(r"\s+([.,;:!?。])", r"\1", s)
+    s = re.sub(r"[,;:]+([.!?。])$", r"\1", s)
     return s.strip(" :;,-–—|")
 
 

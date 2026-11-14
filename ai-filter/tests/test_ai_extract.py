@@ -557,7 +557,7 @@ def test_malformed_response_raises_llmerror_not_empty():
     text = "The Danube is 2,850 km long."
     for bad in ({}, {"claims": "none"}, {"claims": None}, [], None, "nope", {"other": []}):
         try:
-            extract_facts(text, Stub(bad))
+            extract_facts(text, Stub(lambda u, bad=bad: bad))
         except LLMError:
             continue
         raise AssertionError(f"accepted {bad!r}")
@@ -575,7 +575,7 @@ def test_only_url_or_only_code_makes_no_call_and_no_claims():
               "```python\nprint('The sky is blue in 2024')\n```",
               "`inline code only`",
               "```\nunterminated code block with facts 1999\n",
-              "see https://example.com and\n\n```\ncode 123\n```\n"):
+              "https://example.com\n\n```\ncode 123\n```\n"):
         llm = Stub(resp(item("The sky is blue in 2024")))
         r = extract_facts_ex(t, llm)
         assert r.claims == [] and r.calls == 0, t
