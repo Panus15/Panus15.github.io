@@ -391,6 +391,33 @@ def test_the_min_variance_penalty_keeps_a_pure_skew_in_the_region():
         assert surf.no_arb_ok(), (surf.a, surf.b, surf.rho, surf.sigma)
 
 
+#: A deep REVERSE skew: vol rising steeply with strike, 20.5% at 90 to 80.5% at
+#: 110 with nothing clamped. SVI fits this by driving rho towards its bound --
+#: measured, the real fit lands at +0.7519 and without the |rho| < 1 penalty the
+#: optimiser runs away to +1.2097, where the slice is monotone rather than a
+#: smile. The fit error is 0.0013, fifteen times inside MAX_VOL_RMSE, so this is
+#: an accepted fit and not one the gate would have discarded regardless.
+_REVERSE_SKEW = lambda K: 0.50 + 3.0 * (K / S - 1) + 0.5 * (K / S - 1) ** 2
+
+
+def test_the_correlation_penalty_holds_a_reverse_skew_inside_its_bound():
+    """|rho| < 1 is a parameter-region constraint, not a preference: at |rho| >= 1
+    the rho*(k-m) term dominates the hyperbola and total variance is monotone in
+    k, which is not a smile at any price.
+
+    This needed a shape steep enough to push the fitter there. On every ordinary
+    smile the penalty never binds, so dropping it is invisible -- and on the
+    first dozen shapes tried it stayed invisible, which is why it outlived the
+    rest of the no-arbitrage mutants.
+    """
+    surf = surface.fit_chain(_shaped_chain(range(90, 112, 2), _REVERSE_SKEW), T, DTE)
+    assert abs(surf.rho) < 1.0, surf.rho                   # measured +0.7519, mutant +1.2097
+    assert surf.no_arb_ok(), (surf.a, surf.b, surf.rho, surf.sigma)
+    assert surf.vol_rmse() < surface.MAX_VOL_RMSE          # 0.0013: an ACCEPTED fit
+    # the fixture really is a reverse skew, and steeply so
+    assert _REVERSE_SKEW(110) > _REVERSE_SKEW(90) + 0.5
+
+
 def test_the_otm_leg_is_what_survives_a_realistic_tick():
     """Fitting the ITM quote instead of the OTM one is not a cosmetic swap. ITM
     value is mostly intrinsic, so the vega is small and the recovered IV is
