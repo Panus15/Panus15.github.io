@@ -16,7 +16,7 @@ from engine import pricing
 from engine.data import OptionChain, OptionQuote
 from models import rnd
 from models.baseline import BaselineDensityForecaster
-from models.edge import compare
+from models.edge import compare, regime_stressed
 
 
 def _chain(S=100.0, r=0.03, q=0.0, dte=30, n=61, lo=0.55, hi=1.55, iv_fn=None):
@@ -454,6 +454,141 @@ def test_the_coverage_threshold_is_the_measured_one():
         f"COVERAGE_SIGMAS is {rnd.COVERAGE_SIGMAS}; the measured table in the "
         f"module says 2.5 is the first level whose worst case is small "
         f"against the edge being sought")
+
+
+# ---------------------------------------------------------------------------
+# The eleven survivors of models/edge.py's first sweep. Five of the six regime
+# mutants were among them: only the gate's FLAG had a test, while
+# `regime_stressed` -- the function that decides whether vol is accelerating --
+# had none. That guard exists because HAR-RV lags spikes, so the naive
+# short-vol signal is loudest right into a developing crash. It was the least
+# tested thing in the module.
+# ---------------------------------------------------------------------------
+
+def _regime_series(calm_n, calm_step, hot_n, hot_step):
+    """A price path that is calm for a while and then violent, or the reverse."""
+    px = [100.0]
+    for i in range(calm_n):
+        px.append(px[-1] * (1 + calm_step * (1 if i % 2 else -1)))
+    for i in range(hot_n):
+        px.append(px[-1] * (1 + hot_step * (1 if i % 2 else -1)))
+    return px
+
+
+def test_the_regime_gate_fires_on_acceleration_and_nothing_else():
+    # Measured on these fixtures: accelerating gives a 5/21-day vol ratio of
+    # 1.99, decelerating 0.06, and a steady path 1.07 -- so the 1.3 threshold
+    # separates all three. Swapping the windows turns the accelerating case
+    # into 0.50 and the gate goes quiet exactly when it is needed.
+    accelerating = _regime_series(40, 0.001, 6, 0.02)
+    decelerating = _regime_series(40, 0.02, 6, 0.001)
+    steady = _regime_series(46, 0.002, 0, 0.0)
+    assert regime_stressed(accelerating) is True, "acceleration not detected"
+    assert regime_stressed(decelerating) is False, (
+        "a market calming down was called stressed -- the comparison is "
+        "inverted, which suppresses selling in the calm and permits it in "
+        "the spike")
+    assert regime_stressed(steady) is False, "a steady path was called stressed"
+
+
+def test_too_little_history_is_not_stress():
+    # close_to_close_vol raises on under three prices. Reading that as stress
+    # would silently suppress every signal on a new or thin series; reading it
+    # as calm is the documented choice.
+    assert regime_stressed([100.0, 101.0]) is False
+    assert regime_stressed([]) is False
+
+
+def test_a_stressed_regime_does_not_block_BUYING_volatility():
+    # The gate is `stressed AND vrp > 0`: it suppresses SELLING into a spike.
+    # Buying vol as realised accelerates is the right side of that trade, and
+    # dropping the vrp clause blocks it too.
+    s = compare(_p_at(0.30), _q(0.18), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, stressed=True)
+    assert s.variance_risk_premium < 0, s.variance_risk_premium
+    assert s.verdict == "CHEAP", (
+        f"buying vol in a stressed regime was suppressed: {s.verdict} "
+        f"({s.basis}, {s.note})")
+
+
+def test_an_edge_of_exactly_zero_does_not_survive_the_cost_gate():
+    # `<= 0` loosened to `< 0` admits the trade whose edge exactly equals its
+    # cost -- a free option on being wrong.
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=0.0)
+    assert s.verdict == "FAIR" and "cost" in s.note, (f"{s.verdict} / {s.note}")
+
+
+def test_a_sparse_chain_is_NO_TRADE_whatever_the_premium_says():
+    # Coverage is the first gate and must not be overridable. The VRP here is
+    # large and the edge is generous; the chain is still untrustworthy.
+    s = compare(_p_at(0.18), _q(0.26, cov=False), spot=100, T=30 / 365,
+                expiry_days=30, edge_net=500)
+    assert s.verdict == "NO-TRADE" and s.basis == "coverage", (
+        f"{s.verdict} / {s.basis}")
+
+
+def test_the_vol_premium_is_reported_as_q_minus_p():
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120)
+    assert abs(s.vol_premium - (0.26 - 0.18)) < 1e-9, (
+        f"vol_premium is {s.vol_premium:+.4f}; implied exceeds the forecast "
+        f"so it must be positive")
+
+
+def test_a_history_shorter_than_twenty_falls_back_to_the_carry_basis():
+    # Nineteen observations cannot support a z-score, and claiming one anyway
+    # is the commitment this module makes undone: it would trade the LEVEL
+    # while labelling it a deviation.
+    # The history has to have DISPERSION, or the fallback happens for the
+    # other reason and the length check is never exercised -- which is what my
+    # first version of this test did with nineteen identical values.
+    hist = [0.02] * 10 + [0.04] * 9
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, vrp_history=hist)
+    assert s.basis == "vrp_level(carry)", (
+        f"basis {s.basis} with z={s.vrp_z}: nineteen observations were "
+        f"treated as enough for a z-score")
+    assert s.vrp_z is None, s.vrp_z
+    # Twenty of the same shape must switch basis, so the boundary is pinned
+    # from both sides.
+    s20 = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                  edge_net=120, vrp_history=hist + [0.04])
+    assert s20.basis == "vrp_zscore", s20.basis
+
+
+def test_a_history_with_no_dispersion_falls_back_rather_than_dividing():
+    # A flat history has no scale, so there is no deviation to measure. The
+    # guard is `sd > 1e-6`; at `sd > 0` a history that varies by 1e-9 produces
+    # a z-score in the thousands and every day looks like a record.
+    hist = [0.03] * 19 + [0.03 + 1e-9]
+    s = compare(_p_at(0.18), _q(0.26), spot=100, T=30 / 365, expiry_days=30,
+                edge_net=120, vrp_history=hist)
+    assert s.basis == "vrp_level(carry)", (
+        f"basis {s.basis} with z={s.vrp_z}: a history with 1e-9 of dispersion "
+        f"was treated as a distribution")
+
+
+def test_the_z_score_uses_the_SAMPLE_standard_deviation():
+    """Twenty observations, where n and n-1 decide the verdict.
+
+    history = ten 0.02s and ten 0.04s: mean 0.03, sample sd 0.01025978,
+    population sd exactly 0.01 -- a ratio of 1.026. A VRP of 0.04015719 is
+    therefore 0.99 sample deviations above the mean, and 1.0157 population
+    ones, which lands on either side of the 1.0 threshold.
+
+    q_vol is solved backwards from that: sqrt(0.04015719 + 0.18^2).
+    """
+    hist = [0.02] * 10 + [0.04] * 10
+    s = compare(_p_at(0.18), _q(0.26936441), spot=100, T=30 / 365,
+                expiry_days=30, edge_net=120, vrp_history=hist, z_thresh=1.0)
+    assert abs(s.variance_risk_premium - 0.04015719) < 1e-6, \
+        s.variance_risk_premium
+    assert s.vrp_z is not None and abs(s.vrp_z - 0.99) < 1e-3, (
+        f"z = {s.vrp_z:.5f}; 1.0157 is the population sd")
+    assert s.verdict == "FAIR", (
+        f"{s.verdict}: a 0.99-sigma deviation is inside the 1.0 threshold, "
+        f"and only a population sd pushes it over")
 
 
 def _run_all():
