@@ -15,7 +15,7 @@ import re
 from typing import Sequence
 
 from engine.models import Finding, Status
-from engine.score import Verdict, counts, verdict
+from engine.score import Verdict, counts, risk, verdict
 
 ICON = {Status.CONTRADICTED: "❌", Status.UNVERIFIED: "⚠️", Status.VERIFIED: "✅"}
 ORDER = (Status.CONTRADICTED, Status.UNVERIFIED, Status.VERIFIED)
@@ -25,6 +25,7 @@ HEADLINE = {
     Verdict.NO_CHECKABLE_CLAIMS: "ℹ️ ไม่พบสิ่งที่ตัวกรองนี้ตรวจได้ (ไม่ได้แปลว่าถูกต้อง)",
     Verdict.NO_PROBLEMS_FOUND: "✅ ไม่พบปัญหาในข้อที่ตรวจ (ไม่ได้แปลว่าถูกต้องทั้งหมด)",
 }
+RISK_TH = {"high": "สูง", "medium": "กลาง", "low": "ต่ำ", "none": "ไม่พบสัญญาณ"}
 MAX_SHOWN = 200
 
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f  ‪-‮⁦-⁩]")
@@ -48,6 +49,7 @@ def to_dict(findings: Sequence[Finding]) -> dict:
     return {
         "verdict": verdict(findings).value,
         "counts": {s.value: n for s, n in counts(findings).items()},
+        "risk": {"score": risk(findings)["score"], "level": risk(findings)["level"]},
         "findings": [{
             "claim_id": f.claim.id, "kind": f.claim.kind.value, "text": f.claim.text,
             "start": f.claim.start, "end": f.claim.end, "status": f.status.value,
@@ -58,9 +60,14 @@ def to_dict(findings: Sequence[Finding]) -> dict:
 
 def render(findings: Sequence[Finding]) -> str:
     v, c = verdict(findings), counts(findings)
+    r = risk(findings)
     out = ["# รายงานตรวจคำตอบ AI", "", f"**{HEADLINE[v]}**", "",
            f"ตรวจ {len(findings)} ข้อ: ❌ {c[Status.CONTRADICTED]} · "
-           f"⚠️ {c[Status.UNVERIFIED]} · ✅ {c[Status.VERIFIED]}", ""]
+           f"⚠️ {c[Status.UNVERIFIED]} · ✅ {c[Status.VERIFIED]}",
+           f"ระดับความเสี่ยง: **{RISK_TH[r['level']]}** (คะแนน {r['score']}; น้ำหนักเป็นค่าประมาณ ยังไม่ได้ปรับจากข้อมูลจริง)", ""]
+    if r["top"]:
+        out += ["จุดที่ควรดูก่อน:"] + [f"1. {code_span(f.claim.text) if f.claim.text else '(ทั้งคำตอบ)'} — {_clean(f.reason, 160)}"
+                                     for f in r["top"]] + [""]
     for status in ORDER:
         group = [f for f in findings if f.status is status]
         if not group:

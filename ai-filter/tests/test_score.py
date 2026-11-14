@@ -76,6 +76,36 @@ def test_to_dict_roundtrips_json():
     assert json.loads(json.dumps(d, ensure_ascii=False))["verdict"] == "do_not_use"
 
 
+def test_risk_levels_and_weights():
+    from engine.score import risk, CUE_WEIGHTS, CONTRADICTED_WEIGHT
+    def cue(tag, text="x"):
+        return Finding(Claim("q1", ClaimKind.CUE, text, 0, len(text)), Status.UNVERIFIED, "cue", "r", (), tag)
+    assert risk([])["level"] == "none"
+    assert risk([F(Status.VERIFIED)])["level"] == "none"
+    assert risk([cue("time_sensitive")])["level"] == "low"
+    assert risk([cue("unsourced_quote")])["level"] == "medium"            # weight 3
+    assert risk([cue("unsourced_quote"), cue("placeholder_url"), cue("count_mismatch")])["level"] == "high"
+    assert risk([F(Status.CONTRADICTED)])["level"] == "high"              # one proven error is always high
+    assert risk([cue("unknown_future_tag")])["score"] == 1                # unknown tag: default weight, never a crash
+    assert risk([cue("consistency_unavailable")])["level"] == "none"
+    assert CONTRADICTED_WEIGHT > max(CUE_WEIGHTS.values()) * 3
+
+
+def test_risk_top_is_heaviest_first_and_capped():
+    from engine.score import risk
+    fs = [Finding(Claim(f"q{i}", ClaimKind.CUE, "x", 0, 1), Status.UNVERIFIED, "cue", "r", (), t)
+          for i, t in enumerate(["time_sensitive", "unsourced_quote", "absolute_claim"] * 3)]
+    top = risk(fs)["top"]
+    assert len(top) == 5 and top[0].tag == "unsourced_quote"
+
+
+def test_report_shows_risk_line_and_json_risk():
+    import json
+    md = report.render([F(Status.UNVERIFIED)])
+    assert "ระดับความเสี่ยง" in md and "ยังไม่ได้ปรับ" in md
+    assert json.loads(json.dumps(report.to_dict([F(Status.CONTRADICTED)]), ensure_ascii=False))["risk"]["level"] == "high"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in sorted(globals().items()):

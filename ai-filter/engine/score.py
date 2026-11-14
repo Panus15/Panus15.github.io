@@ -47,6 +47,49 @@ def counts(findings: Sequence[Finding]) -> dict[Status, int]:
     return {s: c.get(s, 0) for s in Status}
 
 
+# --------------------------------------------------------------------------- risk (second view)
+#
+# The verdict above is a GATE (it decides the exit code). Risk is a READING AID: how much
+# of the answer needs a human's attention, on topics where nothing could be verified or
+# contradicted. It is a transparent weighted count, not a probability, and THE WEIGHTS
+# ARE GUESSES until they are calibrated on real labelled answers (eval/). They live in
+# this one table so that calibration is a data change, not a code change.
+
+CUE_WEIGHTS: dict[str, int] = {
+    "placeholder_url": 3,            # a template address cannot be a source
+    "unsourced_quote": 3,            # fabricated quotations are a known failure
+    "inconsistent_across_samples": 3,  # independent answers disagree: the model was guessing
+    "absolute_claim": 2,
+    "named_expert_claim": 2,
+    "count_mismatch": 2,
+    "question_asks_for_sources": 2,
+    "time_sensitive": 1,
+    "ai_self_disclosure": 1,
+    "consistency_unavailable": 0,    # says nothing about the answer
+}
+DEFAULT_UNVERIFIED_WEIGHT = 1        # any other UNVERIFIED finding (vague appeal, unchecked link, ...)
+CONTRADICTED_WEIGHT = 10             # positive evidence outweighs any pile of cues
+RISK_HIGH, RISK_MEDIUM = 8, 3        # score thresholds
+
+
+def _weight(f: Finding) -> int:
+    if f.status is Status.CONTRADICTED:
+        return CONTRADICTED_WEIGHT
+    if f.status is Status.VERIFIED:
+        return 0
+    return CUE_WEIGHTS.get(f.tag, DEFAULT_UNVERIFIED_WEIGHT)
+
+
+def risk(findings: Sequence[Finding]) -> dict:
+    """{"score": int, "level": "high"|"medium"|"low"|"none", "top": [Finding, ...]} (top = heaviest, max 5)."""
+    score = sum(_weight(f) for f in findings)
+    contradicted = any(f.status is Status.CONTRADICTED for f in findings)
+    level = ("high" if contradicted or score >= RISK_HIGH else
+             "medium" if score >= RISK_MEDIUM else "low" if score > 0 else "none")
+    top = sorted((f for f in findings if _weight(f) > 0), key=lambda f: -_weight(f))[:5]
+    return {"score": score, "level": level, "top": top}
+
+
 # Process exit codes, so the CLI can gate a script or CI step.
 EXIT_CODE = {
     Verdict.NO_PROBLEMS_FOUND: 0,
