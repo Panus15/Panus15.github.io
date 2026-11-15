@@ -32,12 +32,30 @@ Setup: `pip install anthropic` (the only non-stdlib dependency, imported lazily)
 | Module | What it adds |
 |---|---|
 | `ai_extract` | the LLM proposes check-worthy facts (names, numbers, dates, laws, prices); each must quote a span that really exists in the answer or it is dropped |
-| `official` | searches only the trusted-domain registry (`sources.json`, 120 official sites), fetches the pages, and has them judged. Fast-changing facts need a recent dated page |
+| `official` | searches the trusted-domain registry (`sources.json`, 120 official sites), fetches the pages, and has them judged; if no official site decides, a general reference is tried (can verify with a label, never contradict). Fast-changing facts need a recent dated page |
 | `support` | for a link that opens, checks the page actually contains what the sentence around it claims. A link that opens but lacks the claim is downgraded to ⚠️ |
 
 **The LLM never decides alone.** Its output is validated in code (`engine/judge.py`): a quote must appear verbatim on the page; every number in the claim must be in the quote; the negation must agree; a contradiction needs two differing values that really sit in the claim and the quote. Failing any rule gives "not stated" (⚠️), never ✅/❌. Answer text and page text are treated as untrusted (hidden HTML text is stripped, tags are escaped), so a page saying "ignore your instructions" changes nothing.
 
 Not verified live: the Claude call was checked against the real SDK's request validation and a local fake server, not against the live API (no credentials in the build environment). The first real run is the live test; if the API rejects structured outputs together with `fallbacks`, pass `fallbacks=False` to `AnthropicLLM`.
+
+## Phase 3: checks that work on any topic
+
+Phase 1 and 2 lean on things you can look up (links, DOIs, official sites). Most questions have none of those, so phase 3 adds checks that need no knowledge base. They run by default, offline except the package lookups.
+
+| Module | Looks for | Verdict logic |
+|---|---|---|
+| `cues` | signals in the text: present-tense claims that may be out of date, absolute claims ("100% safe") in health/legal/money sentences, quotations with no source, "Dr X found..." with no citation, placeholder URLs, "3 tips" followed by 4, the model admitting its limits | ⚠️ only: "check this", never "wrong" |
+| `computable` | claims you can prove by calculation: dates that do not exist, wrong weekday, wrong age/duration/century, wrong unit conversion, percentages that do not add up | ❌ only when provably wrong; ✅ when it checks out |
+| `codecheck` | code that uses things that do not exist: `json.parse`, a package nobody published (`pip install ...` / `npm install ...` that 404s) | ❌ for an explicit install or JS import that 404s; ⚠️ for the rest |
+| `consistency` (`--ai --question`) | re-asks the question and flags claims the independent answers do not repeat | ⚠️ only. Agreement is not truth: models share errors, so silence never means "true" |
+| reference fallback (`--ai`) | when no official site covers a fact (history, sport, culture), a general reference (Wikipedia, Britannica) is consulted | can ✅ with a "general reference, not official" label; can never ❌ |
+
+`--question` tells the filter what was asked: it is used for the re-ask check, and an answer that supplies "sources" to a question that asked for them is flagged (models invent citations when asked).
+
+The report ends with a **risk level** (none / low / medium / high). It is a weighted count of the findings, not a probability, and the weights (`score.CUE_WEIGHTS`) are guesses until they are calibrated on real labelled answers.
+
+**Known blind spot:** a plain false statement with no tell ("Sydney is the capital of Australia") shows nothing offline. Only `--ai` can look it up, and even then a general reference gives ⚠️, not ❌. No text-only filter can catch a fluent, confident, wrong fact; it can only point at where wrong facts tend to hide.
 
 ## Rules the code is built around
 
@@ -65,6 +83,6 @@ for t in tests/test_*.py; do python3 "$t" || echo FAIL $t; done
 
 All offline (checkers take an injected `Fetcher`; tests use `FakeFetcher`). `tests/test_pipeline.py` runs an answer with planted defects and true controls end to end.
 
-## Not yet (phases 3–4)
+## Not yet
 
-Repeat-asking and cross-model comparison (modules 4–5), calibration of the scoring weights, a web UI. Known gaps in phase 2: negation is checked only by presence of a negation word, not scope; the trusted-domain list is hand-curated and incomplete (Thai courts and the Attorney General's office were left out as unverified).
+Cross-model comparison (a second provider behind the same `LLM` interface), calibration of the risk weights on real labelled answers, a web UI. Known gaps in phase 2: negation is checked only by presence of a negation word, not scope; the trusted-domain list is hand-curated and incomplete (Thai courts and the Attorney General's office were left out as unverified).

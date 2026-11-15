@@ -1,66 +1,499 @@
 {
-  "note": "SYNTHETIC answers written by the tool's author, each claim hand-labelled. They measure whether the filter does what it was designed to do, not how it fares on real AI output. Add real answers (see README) before trusting any rate. needs_network cases use live Crossref/doi.org.",
+  "note": "SYNTHETIC answers written by the tool's author, each claim hand-labelled. They measure whether the filter does what it was designed to do, not how it fares on real AI output. Add real answers (see README) before trusting any rate. needs_network cases use live Crossref/doi.org. Cases prefixed gen- are topic-general (history, sport, travel, cooking, medicine, code, finance, science).",
   "cases": [
-    {"id": "arith-true-th", "needs_network": false,
-     "text": "ดอกเบี้ยปีละ 1,200 × 5% = 60 บาท และ 15% ของ 2,000 เท่ากับ 300 บาท",
-     "expect": [{"find": "1,200 × 5% = 60", "status": "verified"}, {"find": "15% ของ 2,000", "status": "verified"}]},
-    {"id": "arith-wrong", "needs_network": false,
-     "text": "ยอดรวมคือ 2 + 2 = 5 และ 17 × 3 = 52",
-     "expect": [{"find": "2 + 2 = 5", "status": "contradicted"}, {"find": "17 × 3 = 52", "status": "contradicted"}]},
-    {"id": "arith-truncated", "needs_network": false,
-     "text": "ผลหารคือ 10 / 4 = 2 ตามที่คำนวณ",
-     "expect": [{"find": "10 / 4 = 2", "status": "unverified"}]},
-    {"id": "arith-false-positive-controls", "needs_network": false,
-     "text": "ประชุมวันที่ 2024-01-05 มีคนเข้าร่วม 5-10 คน ใช้ Python v1.2+3 และเบอร์ 02-123-4567 โทรได้",
-     "expect": [{"find": "2024-01-05", "status": "absent"}, {"find": "5-10", "status": "absent"},
-                {"find": "1.2+3", "status": "absent"}, {"find": "02-123-4567", "status": "absent"}]},
-    {"id": "code-good-syntax", "needs_network": false,
-     "text": "ตัวอย่าง:\n```python\ndef sq(x):\n    return x * x\nprint(sq(7))\n```\n",
-     "expect": [{"find": "def sq", "status": "unverified"}]},
-    {"id": "code-broken", "needs_network": false,
-     "text": "ใช้โค้ดนี้:\n```python\ndef total(items:\n    return sum(items)\n```\n",
-     "expect": [{"find": "def total", "status": "contradicted"}]},
-    {"id": "vague-en-unbacked", "needs_network": false,
-     "text": "Studies show that drinking cold water improves focus. Experts say this works for everyone.",
-     "expect": [{"find": "Studies show", "status": "unverified"}, {"find": "Experts say", "status": "unverified"}]},
-    {"id": "vague-en-backed", "needs_network": false,
-     "text": "Studies show that sleep affects memory (Walker et al., 2017). Research has found similar effects at Stanford University.",
-     "expect": [{"find": "Studies show", "status": "absent"}, {"find": "Research has found", "status": "absent"}]},
-    {"id": "vague-th", "needs_network": false,
-     "text": "มีการศึกษาพบว่าการนอนน้อยทำให้อ้วน ผู้เชี่ยวชาญระบุว่าควรกินวิตามินทุกวัน",
-     "expect": [{"find": "มีการศึกษาพบว่า", "status": "unverified"}, {"find": "ผู้เชี่ยวชาญระบุว่า", "status": "unverified"}]},
-    {"id": "vague-th-backed", "needs_network": false,
-     "text": "องค์การอนามัยโลก รายงานในปี 2023 ว่า มีการศึกษาพบว่าการออกกำลังกายช่วยลดความเสี่ยงโรคหัวใจ",
-     "expect": [{"find": "มีการศึกษาพบว่า", "status": "absent"}]},
-    {"id": "precise-number", "needs_network": false,
-     "text": "ผู้ใช้ 73.42% ชอบฟีเจอร์นี้ ในปี 2023 ราคา 1,299 บาท รุ่น v2.10 เวลา 14:30",
-     "expect": [{"find": "73.42", "status": "unverified"}, {"find": "1,299", "status": "absent"}, {"find": "2.10", "status": "absent"}]},
-    {"id": "doi-real", "needs_network": true,
-     "text": "งานสำคัญ: doi:10.1038/nature14539 และ doi:10.1126/science.1127647 และ doi:10.1145/3065386 และ doi:10.1038/171737a0",
-     "expect": [{"find": "nature14539", "status": "verified"}, {"find": "science.1127647", "status": "verified"},
-                {"find": "3065386", "status": "verified"}, {"find": "171737a0", "status": "verified"}]},
-    {"id": "doi-datacite", "needs_network": true,
-     "text": "Transformer: https://doi.org/10.48550/arXiv.1706.03762 เป็นต้นแบบ",
-     "expect": [{"find": "arXiv.1706.03762", "status": "verified"}]},
-    {"id": "doi-fabricated", "needs_network": true,
-     "text": "ดูเพิ่ม doi:10.1038/nature99999999 และ doi:10.9999/invented.2021 และ doi:10.1145/9999999.9999999",
-     "expect": [{"find": "nature99999999", "status": "contradicted"}, {"find": "invented.2021", "status": "contradicted"},
-                {"find": "9999999.9999999", "status": "contradicted"}]},
-    {"id": "ref-borrowed-doi", "needs_network": true,
-     "text": "Smith, J. & Chen, L. (2020). *Quantum gravity effects in green tea fermentation*. Journal of Imaginary Science, 12(3), 45-67. doi:10.1038/nature14539\n",
-     "expect": [{"find": "Quantum gravity", "status": "contradicted", "kind": "reference"}]},
-    {"id": "ref-correct", "needs_network": true,
-     "text": "LeCun, Y., Bengio, Y., & Hinton, G. (2015). *Deep learning*. Nature, 521, 436-444. doi:10.1038/nature14539\n",
-     "expect": [{"find": "LeCun", "status": "verified", "kind": "reference"}]},
-    {"id": "ref-right-title-wrong-authors", "needs_network": true,
-     "text": "Smith, J. & Chen, L. (2015). *Deep learning*. Nature, 521, 436-444. doi:10.1038/nature14539\n",
-     "expect": [{"find": "Smith", "status": "contradicted", "kind": "reference"}]},
-    {"id": "links-live-and-dead", "needs_network": true,
-     "text": "แหล่งข้อมูล https://api.crossref.org/works/10.1038/nature14539 และ https://api.crossref.org/works/10.9999/none-such เก็บไว้",
-     "expect": [{"find": "nature14539", "status": "verified"}, {"find": "none-such", "status": "contradicted"}]},
-    {"id": "realistic-mixed-th", "needs_network": true,
-     "text": "สรุปการลงทุน: เงินต้น 100,000 × 3% = 3,000 บาทต่อปี ตามงานวิจัยของ Smith & Chen (2020) doi:10.9999/invented.2021 ซึ่งมีการศึกษาพบว่าได้ผลดี และผู้ใช้ 82.37% พึงพอใจ",
-     "expect": [{"find": "100,000 × 3% = 3,000", "status": "verified"}, {"find": "invented.2021", "status": "contradicted"},
-                {"find": "มีการศึกษาพบว่า", "status": "unverified"}, {"find": "82.37", "status": "absent", "note": "attributed to \"Smith & Chen (2020)\" so it counts as sourced; the fake DOI beside it already makes the whole answer DO_NOT_USE. Known gap: the filter cannot tell that this author-year cite is the same fake work."}]}
+    {
+      "id": "arith-true-th",
+      "needs_network": false,
+      "text": "ดอกเบี้ยปีละ 1,200 × 5% = 60 บาท และ 15% ของ 2,000 เท่ากับ 300 บาท",
+      "expect": [
+        {
+          "find": "1,200 × 5% = 60",
+          "status": "verified"
+        },
+        {
+          "find": "15% ของ 2,000",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "arith-wrong",
+      "needs_network": false,
+      "text": "ยอดรวมคือ 2 + 2 = 5 และ 17 × 3 = 52",
+      "expect": [
+        {
+          "find": "2 + 2 = 5",
+          "status": "contradicted"
+        },
+        {
+          "find": "17 × 3 = 52",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "arith-truncated",
+      "needs_network": false,
+      "text": "ผลหารคือ 10 / 4 = 2 ตามที่คำนวณ",
+      "expect": [
+        {
+          "find": "10 / 4 = 2",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "arith-false-positive-controls",
+      "needs_network": false,
+      "text": "ประชุมวันที่ 2024-01-05 มีคนเข้าร่วม 5-10 คน ใช้ Python v1.2+3 และเบอร์ 02-123-4567 โทรได้",
+      "expect": [
+        {
+          "find": "2024-01-05",
+          "status": "absent"
+        },
+        {
+          "find": "5-10",
+          "status": "absent"
+        },
+        {
+          "find": "1.2+3",
+          "status": "absent"
+        },
+        {
+          "find": "02-123-4567",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "id": "code-good-syntax",
+      "needs_network": false,
+      "text": "ตัวอย่าง:\n```python\ndef sq(x):\n    return x * x\nprint(sq(7))\n```\n",
+      "expect": [
+        {
+          "find": "def sq",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "code-broken",
+      "needs_network": false,
+      "text": "ใช้โค้ดนี้:\n```python\ndef total(items:\n    return sum(items)\n```\n",
+      "expect": [
+        {
+          "find": "def total",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "vague-en-unbacked",
+      "needs_network": false,
+      "text": "Studies show that drinking cold water improves focus. Experts say this works for everyone.",
+      "expect": [
+        {
+          "find": "Studies show",
+          "status": "unverified"
+        },
+        {
+          "find": "Experts say",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "vague-en-backed",
+      "needs_network": false,
+      "text": "Studies show that sleep affects memory (Walker et al., 2017). Research has found similar effects at Stanford University.",
+      "expect": [
+        {
+          "find": "Studies show",
+          "status": "absent"
+        },
+        {
+          "find": "Research has found",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "id": "vague-th",
+      "needs_network": false,
+      "text": "มีการศึกษาพบว่าการนอนน้อยทำให้อ้วน ผู้เชี่ยวชาญระบุว่าควรกินวิตามินทุกวัน",
+      "expect": [
+        {
+          "find": "มีการศึกษาพบว่า",
+          "status": "unverified"
+        },
+        {
+          "find": "ผู้เชี่ยวชาญระบุว่า",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "vague-th-backed",
+      "needs_network": false,
+      "text": "องค์การอนามัยโลก รายงานในปี 2023 ว่า มีการศึกษาพบว่าการออกกำลังกายช่วยลดความเสี่ยงโรคหัวใจ",
+      "expect": [
+        {
+          "find": "มีการศึกษาพบว่า",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "id": "precise-number",
+      "needs_network": false,
+      "text": "ผู้ใช้ 73.42% ชอบฟีเจอร์นี้ ในปี 2023 ราคา 1,299 บาท รุ่น v2.10 เวลา 14:30",
+      "expect": [
+        {
+          "find": "73.42",
+          "status": "unverified"
+        },
+        {
+          "find": "1,299",
+          "status": "absent"
+        },
+        {
+          "find": "2.10",
+          "status": "absent"
+        }
+      ]
+    },
+    {
+      "id": "doi-real",
+      "needs_network": true,
+      "text": "งานสำคัญ: doi:10.1038/nature14539 และ doi:10.1126/science.1127647 และ doi:10.1145/3065386 และ doi:10.1038/171737a0",
+      "expect": [
+        {
+          "find": "nature14539",
+          "status": "verified"
+        },
+        {
+          "find": "science.1127647",
+          "status": "verified"
+        },
+        {
+          "find": "3065386",
+          "status": "verified"
+        },
+        {
+          "find": "171737a0",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "doi-datacite",
+      "needs_network": true,
+      "text": "Transformer: https://doi.org/10.48550/arXiv.1706.03762 เป็นต้นแบบ",
+      "expect": [
+        {
+          "find": "arXiv.1706.03762",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "doi-fabricated",
+      "needs_network": true,
+      "text": "ดูเพิ่ม doi:10.1038/nature99999999 และ doi:10.9999/invented.2021 และ doi:10.1145/9999999.9999999",
+      "expect": [
+        {
+          "find": "nature99999999",
+          "status": "contradicted"
+        },
+        {
+          "find": "invented.2021",
+          "status": "contradicted"
+        },
+        {
+          "find": "9999999.9999999",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "ref-borrowed-doi",
+      "needs_network": true,
+      "text": "Smith, J. & Chen, L. (2020). *Quantum gravity effects in green tea fermentation*. Journal of Imaginary Science, 12(3), 45-67. doi:10.1038/nature14539\n",
+      "expect": [
+        {
+          "find": "Quantum gravity",
+          "status": "contradicted",
+          "kind": "reference"
+        }
+      ]
+    },
+    {
+      "id": "ref-correct",
+      "needs_network": true,
+      "text": "LeCun, Y., Bengio, Y., & Hinton, G. (2015). *Deep learning*. Nature, 521, 436-444. doi:10.1038/nature14539\n",
+      "expect": [
+        {
+          "find": "LeCun",
+          "status": "verified",
+          "kind": "reference"
+        }
+      ]
+    },
+    {
+      "id": "ref-right-title-wrong-authors",
+      "needs_network": true,
+      "text": "Smith, J. & Chen, L. (2015). *Deep learning*. Nature, 521, 436-444. doi:10.1038/nature14539\n",
+      "expect": [
+        {
+          "find": "Smith",
+          "status": "contradicted",
+          "kind": "reference"
+        }
+      ]
+    },
+    {
+      "id": "links-live-and-dead",
+      "needs_network": true,
+      "text": "แหล่งข้อมูล https://api.crossref.org/works/10.1038/nature14539 และ https://api.crossref.org/works/10.9999/none-such เก็บไว้",
+      "expect": [
+        {
+          "find": "nature14539",
+          "status": "verified"
+        },
+        {
+          "find": "none-such",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "realistic-mixed-th",
+      "needs_network": true,
+      "text": "สรุปการลงทุน: เงินต้น 100,000 × 3% = 3,000 บาทต่อปี ตามงานวิจัยของ Smith & Chen (2020) doi:10.9999/invented.2021 ซึ่งมีการศึกษาพบว่าได้ผลดี และผู้ใช้ 82.37% พึงพอใจ",
+      "expect": [
+        {
+          "find": "100,000 × 3% = 3,000",
+          "status": "verified"
+        },
+        {
+          "find": "invented.2021",
+          "status": "contradicted"
+        },
+        {
+          "find": "มีการศึกษาพบว่า",
+          "status": "unverified"
+        },
+        {
+          "find": "82.37",
+          "status": "absent",
+          "note": "attributed to \"Smith & Chen (2020)\" so it counts as sourced; the fake DOI beside it already makes the whole answer DO_NOT_USE. Known gap: the filter cannot tell that this author-year cite is the same fake work."
+        }
+      ]
+    },
+    {
+      "id": "gen-history-th",
+      "needs_network": false,
+      "text": "สงครามโลกครั้งที่สองในยุโรปสิ้นสุดเมื่อวันจันทร์ที่ 8 พฤษภาคม ค.ศ. 1945 ซึ่งเรียกว่า VE Day ผู้เชี่ยวชาญระบุว่ามีผู้เสียชีวิตกว่า 70 ล้านคน",
+      "expect": [
+        {
+          "find": "วันจันทร์ที่ 8 พฤษภาคม",
+          "status": "contradicted"
+        },
+        {
+          "find": "ผู้เชี่ยวชาญระบุว่า",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-history-th-control",
+      "needs_network": false,
+      "text": "สงครามโลกครั้งที่สองในยุโรปสิ้นสุดเมื่อวันอังคารที่ 8 พฤษภาคม ค.ศ. 1945 ซึ่งเรียกว่า VE Day",
+      "expect": [
+        {
+          "find": "วันอังคารที่ 8 พฤษภาคม",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "gen-sport",
+      "needs_network": false,
+      "text": "Lionel Messi was born on Friday, 24 June 1987 in Rosario, Argentina.",
+      "expect": [
+        {
+          "find": "Friday, 24 June 1987",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "gen-sport-control",
+      "needs_network": false,
+      "text": "Lionel Messi was born on Wednesday, 24 June 1987 in Rosario, Argentina.",
+      "expect": [
+        {
+          "find": "Wednesday, 24 June 1987",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "gen-travel",
+      "needs_network": false,
+      "text": "Mount Fuji stands 3,776 m (10,000 ft) tall, and the Great Wall is about 21,196 km (13,171 miles) long.",
+      "expect": [
+        {
+          "find": "3,776 m",
+          "status": "contradicted"
+        },
+        {
+          "find": "21,196 km",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "gen-cooking",
+      "needs_network": false,
+      "text": "Bake at 180°C (356°F) for 40 minutes. Here are 3 tips for a moist cake:\n1. Use room-temperature eggs\n2. Do not overmix\n3. Add yoghurt\n4. Cool in the pan\n",
+      "expect": [
+        {
+          "find": "180°C",
+          "status": "verified"
+        },
+        {
+          "find": "3 tips",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-medicine",
+      "needs_network": false,
+      "text": "This supplement is 100% safe for children and cures all colds. Studies show it works for everyone.",
+      "expect": [
+        {
+          "find": "100% safe",
+          "status": "unverified"
+        },
+        {
+          "find": "Studies show",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-quote",
+      "needs_network": false,
+      "text": "Albert Einstein once said, \"The definition of insanity is doing the same thing over and over again and expecting different results.\"",
+      "expect": [
+        {
+          "find": "definition of insanity",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-time-sensitive",
+      "needs_network": false,
+      "text": "The current CEO of Acme Corp is Jane Doe, as of 2026, and the latest model costs $999.",
+      "expect": [
+        {
+          "find": "as of",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-code-stdlib",
+      "needs_network": false,
+      "text": "Parse it like this:\n```python\nimport json\ndata = json.parse(text)\nprint(data)\n```\n",
+      "expect": [
+        {
+          "find": "json.parse",
+          "status": "unverified",
+          "kind": "api_ref"
+        }
+      ]
+    },
+    {
+      "id": "gen-code-hallucinated-package",
+      "needs_network": true,
+      "text": "Install the helper first:\n```bash\npip install flask-quantum-authkit-pro9\n```\n",
+      "expect": [
+        {
+          "find": "flask-quantum-authkit-pro9",
+          "status": "contradicted",
+          "kind": "api_ref"
+        }
+      ]
+    },
+    {
+      "id": "gen-code-real-package",
+      "needs_network": true,
+      "text": "Install it first:\n```bash\npip install requests\n```\n",
+      "expect": [
+        {
+          "find": "requests",
+          "status": "verified",
+          "kind": "api_ref"
+        }
+      ]
+    },
+    {
+      "id": "gen-placeholder-url",
+      "needs_network": false,
+      "text": "Download the dataset from https://www.example.com/your-dataset-12345 and unzip it.",
+      "expect": [
+        {
+          "find": "your-dataset-12345",
+          "status": "unverified"
+        }
+      ]
+    },
+    {
+      "id": "gen-finance",
+      "needs_network": false,
+      "text": "Investing 100000 at 7% for 10 years gives 1.07^10 * 100000 = 196715 baht. A cheaper plan gives 1.05^10 * 100000 = 190000 baht.",
+      "expect": [
+        {
+          "find": "1.07^10 * 100000 = 196715",
+          "status": "verified"
+        },
+        {
+          "find": "1.05^10 * 100000 = 190000",
+          "status": "contradicted"
+        }
+      ]
+    },
+    {
+      "id": "gen-science-control",
+      "needs_network": false,
+      "text": "Water boils at 100°C (212°F) at sea level, and freezes at 0°C (32°F).",
+      "expect": [
+        {
+          "find": "100°C",
+          "status": "verified"
+        },
+        {
+          "find": "0°C",
+          "status": "verified"
+        }
+      ]
+    },
+    {
+      "id": "gen-pure-fact-error",
+      "needs_network": false,
+      "text": "Sydney is the capital of Australia, and the Pacific is the smallest ocean.",
+      "expect": [
+        {
+          "find": "Sydney is the capital",
+          "status": "unverified",
+          "needs_ai": true,
+          "note": "BLIND SPOT without --ai: nothing in the text signals this error. With --ai a general reference can only make it UNVERIFIED (never CONTRADICTED)."
+        }
+      ]
+    }
   ]
 }

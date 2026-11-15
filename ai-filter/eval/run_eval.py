@@ -66,6 +66,7 @@ def main():
     tally = {"OK": 0, "SOFT": 0, "FALSE ALARM": 0, "MISS": 0}
     bad = []
     skipped = 0
+    skipped_ai = 0
     for case in cases:
         if a.only and a.only not in case["id"]:
             continue
@@ -76,6 +77,9 @@ def main():
         t0 = time.time()
         findings = pipeline.run(case["text"], fetcher, timeout=20, ai=ai)
         for exp in case["expect"]:
+            if exp.get("needs_ai") and not a.ai:
+                skipped_ai += 1          # a known blind spot of the no-AI filter, reported rather than hidden
+                continue
             got, f = got_status(findings, exp)
             verdict = classify(exp["status"], got)
             tally[verdict] += 1
@@ -85,7 +89,7 @@ def main():
                 why = f.reason[:90] if f else "(no finding)"
                 print(f"{verdict:11} {case['id']:30} {exp['find'][:24]:24} want {exp['status']:12} got {got:12} {why}")
     n = sum(tally.values())
-    print(f"\n{n} expectations, {skipped} cases skipped (offline). " +
+    print(f"\n{n} expectations, {skipped} cases skipped (--offline), {skipped_ai} expectations need --ai (blind spots without it). " +
           "  ".join(f"{k}: {v}" for k, v in tally.items()))
     sys.exit(1 if tally["FALSE ALARM"] or tally["MISS"] else 0)
 
