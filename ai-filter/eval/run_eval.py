@@ -38,6 +38,21 @@ def classify(expected: str, got: str) -> str:
     return "SOFT"
 
 
+def classify_truth(truth: str, got: str) -> str:
+    """Grade by what is TRUE, which the person labelling can check, instead of by what the filter
+    'should' say, which they cannot know.
+
+      truth "false": CAUGHT (marked contradicted) | FLAGGED (marked unverified: pointed at it) | MISS
+      truth "true":  OK (verified or silent) | NOISE (flagged unverified: wasted attention)
+                     | FALSE ALARM (called contradicted: the worst outcome)
+    """
+    if truth == "false":
+        return {"contradicted": "CAUGHT", "unverified": "FLAGGED"}.get(got, "MISS")
+    if got == "contradicted":
+        return "FALSE ALARM"
+    return "NOISE" if got == "unverified" else "OK"
+
+
 def got_status(findings, exp):
     hits = [f for f in findings if exp["find"] in f.claim.text
             and (("kind" not in exp) or f.claim.kind.value == exp["kind"])]
@@ -63,7 +78,7 @@ def main():
         ai, err = cli._build_ai(argparse.Namespace(model=None, max_llm_calls=60))
         if err:
             sys.exit(f"eval: {err}")
-    tally = {"OK": 0, "SOFT": 0, "FALSE ALARM": 0, "MISS": 0}
+    tally = {"OK": 0, "SOFT": 0, "FALSE ALARM": 0, "MISS": 0, "CAUGHT": 0, "FLAGGED": 0, "NOISE": 0}
     bad = []
     skipped = 0
     skipped_ai = 0
@@ -81,14 +96,23 @@ def main():
                 skipped_ai += 1          # a known blind spot of the no-AI filter, reported rather than hidden
                 continue
             got, f = got_status(findings, exp)
-            verdict = classify(exp["status"], got)
+            if "truth" in exp:
+                verdict = classify_truth(exp["truth"], got)
+                want = f"truth={exp['truth']}"
+            else:
+                verdict = classify(exp["status"], got)
+                want = f"want {exp['status']}"
             tally[verdict] += 1
-            if verdict != "OK":
+            if verdict not in ("OK", "CAUGHT"):
                 bad.append((verdict, case["id"], exp, got, f))
-            if a.verbose or verdict != "OK":
+            if a.verbose or verdict not in ("OK", "CAUGHT"):
                 why = f.reason[:90] if f else "(no finding)"
-                print(f"{verdict:11} {case['id']:30} {exp['find'][:24]:24} want {exp['status']:12} got {got:12} {why}")
+                print(f"{verdict:11} {case['id']:30} {exp['find'][:24]:24} {want:18} got {got:12} {why}")
     n = sum(tally.values())
+    wrong_items = tally["CAUGHT"] + tally["FLAGGED"] + tally["MISS"]
+    if wrong_items:
+        print(f"\nของที่ผิดจริง {wrong_items} ข้อ: จับเป็น ❌ {tally['CAUGHT']}, ชี้เป็น ⚠️ {tally['FLAGGED']}, พลาด {tally['MISS']}")
+    right_items = tally["OK"] + tally["NOISE"] + tally["FALSE ALARM"]
     print(f"\n{n} expectations, {skipped} cases skipped (--offline), {skipped_ai} expectations need --ai (blind spots without it). " +
           "  ".join(f"{k}: {v}" for k, v in tally.items()))
     sys.exit(1 if tally["FALSE ALARM"] or tally["MISS"] else 0)
