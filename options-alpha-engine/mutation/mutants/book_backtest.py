@@ -21,6 +21,24 @@ on what the governor is shown.
 THE KILL-SWITCH PATH IS NOT EXERCISED BY ORDINARY CALM FIXTURES. Over 60 runs
 at the default 25% drawdown limit it fired zero times under either accounting,
 so its tests need a deliberately tight limit.
+
+THREE EQUIVALENT MUTANTS ARE DELIBERATELY ABSENT.
+
+`drawdown` cannot go negative, so flooring it at zero changes nothing: `peak` is
+a running maximum of `equity`, hence `1 - equity/peak` is never below zero.
+
+`s in open_until` in the entry test is redundant with the cycle test. A position
+is opened only on a cycle bar and expires exactly one tenor later, which is the
+next cycle bar, and the retirement loop runs BEFORE the entry loop -- so by the
+time the entry test is reached the slot is always free. Measured identical on 38
+runs and argued here because no fixture could ever distinguish it.
+
+`equity` passed to the governor is not read by it. `RiskGovernor.can_add` takes
+`equity` as a parameter and never uses it; its gates read the drawdown fraction
+and the prospective book only. So passing the starting equity instead is
+equivalent. Noted rather than changed, because other callers and tests pass it
+positionally and removing a parameter is an interface change this sweep has no
+business making.
 """
 
 TARGET = "engine/book_backtest.py"
@@ -32,7 +50,6 @@ MUTANTS = [
  ("ungoverned sees the book",     "            against = book if govern else portfolio.Portfolio([], rho=rho)", "            against = book"),
  ("govern flag inverted",         "            against = book if govern else portfolio.Portfolio([], rho=rho)", "            against = portfolio.Portfolio([], rho=rho) if govern else book"),
  ("governor ignores drawdown",    "            ok, reason = gov.can_add(leg, against, equity, drawdown)", "            ok, reason = gov.can_add(leg, against, equity, 0.0)"),
- ("governor sees no equity",      "            ok, reason = gov.can_add(leg, against, equity, drawdown)", "            ok, reason = gov.can_add(leg, against, starting_equity, drawdown)"),
  ("refusal admitted anyway",      "            if not ok:\n                _skip(\"kill_switch\" if \"KILL\" in reason else \"vega_cap\")", "            if False:\n                _skip(\"kill_switch\" if \"KILL\" in reason else \"vega_cap\")"),
  ("kill switch counted as a cap", "                n_blocked += \"KILL\" not in reason", "                n_blocked += 1"),
  ("cap block not counted",        "                n_blocked += \"KILL\" not in reason", "                n_blocked += 0"),
@@ -43,7 +60,6 @@ MUTANTS = [
  ("stagger ignores the flag",     "if stagger else 0)\n              for i, s in enumerate(syms)}", "if True else 0)\n              for i, s in enumerate(syms)}"),
  ("stagger offset not spread",    "    offset = {s: (i * max(1, dte // len(syms)) if stagger else 0)", "    offset = {s: (max(1, dte // len(syms)) if stagger else 0)"),
  ("entry cycle not the tenor",    "            if s in open_until or (t - warmup - offset[s]) % dte != 0:", "            if s in open_until or (t - warmup - offset[s]) % (dte + 1) != 0:"),
- ("entry ignores the open slot",  "            if s in open_until or (t - warmup - offset[s]) % dte != 0:", "            if (t - warmup - offset[s]) % dte != 0:"),
  ("entry ignores the cycle",      "            if s in open_until or (t - warmup - offset[s]) % dte != 0:", "            if s in open_until:"),
  ("positions never retired",      "            book.positions.remove(pos)", "            pass"),
  ("retired a bar late",           "        for s in [s for s, (exp, _) in open_until.items() if exp <= t]:", "        for s in [s for s, (exp, _) in open_until.items() if exp < t]:"),
@@ -61,7 +77,6 @@ MUTANTS = [
  ("peak is the trough",           "            equity += pnl[t - 1]\n            peak = max(peak, equity)", "            equity += pnl[t - 1]\n            peak = min(peak, equity)"),
  ("drawdown inverted",            "        drawdown = max(0.0, 1.0 - equity / peak)", "        drawdown = max(0.0, equity / peak - 1.0)"),
  ("drawdown from the start",      "        drawdown = max(0.0, 1.0 - equity / peak)", "        drawdown = max(0.0, 1.0 - equity / starting_equity)"),
- ("drawdown unfloored",           "        drawdown = max(0.0, 1.0 - equity / peak)", "        drawdown = 1.0 - equity / peak"),
 
  # Sizing.
  ("regime gate dropped",          "            if regime_stressed(trailing):\n                _skip(\"regime\")\n                continue", "            if False:\n                _skip(\"regime\")\n                continue"),

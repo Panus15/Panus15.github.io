@@ -171,6 +171,97 @@ def test_a_book_that_never_draws_down_is_unchanged_by_accrual():
         r.n_trades, r.n_blocked_by_vega_cap)
     assert abs(r.metrics.total_return - 0.0903) < 5e-4, r.metrics.total_return
 
+
+def _many_world(nsym, n=500, seed=1, vol=0.012):
+    import math
+    import random
+    rng = random.Random(seed)
+    out = {}
+    for k in range(nsym):
+        pr = [100.0]
+        for _ in range(n - 1):
+            pr.append(pr[-1] * math.exp(rng.gauss(0.0002, vol)))
+        out["S%02d" % k] = pr
+    return out
+
+
+def test_the_trade_ledger_reconciles_to_the_equity_curve():
+    """Every trade resolves before the run ends, so starting equity plus the sum
+    of the per-trade P&L must be the curve's final value, to the cent. Two
+    independent accumulations -- the per-trade totals and the day-by-day array --
+    agreeing is what ties the ledger to the curve; a trade that is booked in one
+    and not the other shows up here and nowhere else."""
+    lim = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.002)
+    r = run_book_backtest(_gauss_world(seed=1, crash_at=300), dte=21, warmup=63,
+                          limits=lim)
+    assert len(r.trade_pnl) == r.n_trades == 23
+    assert abs(100_000.0 + sum(r.trade_pnl) - r.metrics.equity_curve[-1]) < 1e-6
+    assert abs(r.metrics.equity_curve[-1] - 103169.5268) < 1e-3
+
+
+def test_a_kill_switch_refusal_is_not_a_vega_cap_block():
+    """`n_blocked_by_vega_cap` is what the module's headline compares, so a
+    drawdown refusal must not be counted in it. In the tight-limit run the book
+    refused 51 entries on the kill-switch and only 6 on the vega cap."""
+    lim = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.002)
+    r = run_book_backtest(_gauss_world(seed=1, crash_at=300), dte=21, warmup=63,
+                          limits=lim)
+    assert r.skip_reasons["kill_switch"] == 51
+    assert r.skip_reasons["vega_cap"] == 6
+    assert r.n_blocked_by_vega_cap == 6, r.n_blocked_by_vega_cap
+
+    q = run_book_backtest(_gauss_world(seed=2), dte=21, warmup=63,
+                          limits=portfolio.RiskLimits(max_net_short_vega=8_000.0,
+                                                      max_drawdown=0.005))
+    assert (q.skip_reasons["kill_switch"], q.n_blocked_by_vega_cap) == (1, 23)
+
+
+def test_a_position_leaves_the_book_on_its_expiry_bar_not_before():
+    """Entries are normally a whole stagger apart, so a position's last bar never
+    coincides with a neighbour's entry. At dte=5 with five symbols the offsets are
+    0..4 and entries land on CONSECUTIVE bars, so retiring one bar early lets the
+    next entry see a book without the position that is still open -- and the cap
+    admits more. Measured: cap 3000 gives 196 trades and 174 blocks; retiring a
+    bar early changes both."""
+    w = _many_world(5)
+    r = run_book_backtest(w, dte=5, warmup=63, limits=portfolio.RiskLimits(
+        max_net_short_vega=3_000.0, max_drawdown=0.25))
+    assert (r.n_trades, r.n_blocked_by_vega_cap, r.max_open) == (196, 174, 3)
+    assert r.peak_net_short_vega <= 3_000.0 + 1e-6, r.peak_net_short_vega
+    t = run_book_backtest(w, dte=5, warmup=63, limits=portfolio.RiskLimits(
+        max_net_short_vega=1_500.0, max_drawdown=0.25))
+    assert (t.n_trades, t.n_blocked_by_vega_cap) == (85, 285)
+
+
+def test_a_size_of_zero_is_a_skip_not_a_trade():
+    """When the CVaR limit is too tight to size even one contract, the entry is a
+    skip. Without the check the book opens a zero-contract position, counts it as
+    a trade, and reports 42 of them for a strategy that traded nothing."""
+    r = run_book_backtest(_gauss_world(n=400), dte=21, warmup=63, cvar_limit=1e-6)
+    assert r.n_trades == 0 and r.entries == [] and r.trade_pnl == []
+    assert r.skip_reasons["size_zero"] == 42, r.skip_reasons
+    assert r.metrics.total_return == 0.0
+
+
+def test_the_vol_floor_keeps_a_quiet_market_priceable():
+    """Implied vol is the HAR forecast plus the premium, floored at 5%. In a very
+    quiet market the forecast sits under that, and the floor is what keeps the
+    straddle priced at a vol anyone would quote. Pinned on a 0.3% daily-vol world:
+    72 trades and +0.8418% with the floor; removing it changes the outcome."""
+    r = run_book_backtest(_gauss_world(n=700, seed=1, vol=0.003), dte=21, warmup=63)
+    assert r.n_trades == 72, r.n_trades
+    assert abs(r.metrics.total_return - 0.008418) < 5e-6, r.metrics.total_return
+
+
+def test_the_run_stops_at_the_shortest_history():
+    """Series of unequal length: the loop must not index past the shortest, or it
+    reads bars that do not exist for that symbol."""
+    w = _gauss_world(n=700, seed=1)
+    w = {"AAA": w["AAA"][:700], "BBB": w["BBB"][:650], "CCC": w["CCC"][:600]}
+    r = run_book_backtest(w, dte=21, warmup=63)
+    assert len(r.metrics.equity_curve) == 600 - 63 + 1, len(r.metrics.equity_curve)
+    assert max(e["t"] for e in r.entries) + 21 < 600
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
