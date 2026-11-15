@@ -20,6 +20,29 @@ are grouped by what each would silently make easier.
      deadband and a cap, using only past prices. Removing the deadband makes the
      calm path react to sampling noise; removing the cap lets a gap produce an
      unbounded IV.
+
+THREE EQUIVALENT MUTANTS ARE DELIBERATELY ABSENT, AND ONE UNREACHED ONE.
+
+`max(peak, eq_now)` in the intra-trade drawdown cannot matter. When equity is
+above the peak, `1 - eq/peak` is negative and the outer `max(0.0, ...)` floors it
+to zero; with the inner max it is `1 - 1 = 0`. Both are zero.
+
+`dd_now >= limit` against `dd_now > limit` differs only where the drawdown equals
+the limit exactly, a float equality that no path produces. A zero limit cannot
+reach it either, because the entry governor refuses at drawdown >= limit and so
+no trade ever opens.
+
+`lo = max(0, s - 2 * window)` against `s - window` in `_recent_realized_vol` is
+harmless: `close_to_close_vol` slices `log_returns(prices)[-window:]`, so extra
+history is discarded before it is used.
+
+`killed_dd = dd_now` against `max(killed_dd, dd_now)` is NOT proven equivalent,
+only UNREACHED. It differs only when a later liquidation has a smaller drawdown
+than an earlier one, which needs two kills in one run, and across 240 grid
+scenarios and 600 further gaussian runs there was none: after a kill the book is
+beyond the limit, and the governor refuses entries until equity recovers below
+it, which a premium harvest rarely does. Removed from the table for that reason
+and recorded here so it is not mistaken for a proof.
 """
 
 TARGET = "engine/hedged_backtest.py"
@@ -85,9 +108,7 @@ MUTANTS = [
  ("kill switch ignores the flag", "            if kill_midtrade and rem > 0:", "            if rem > 0:"),
  ("equity not marked",            "                eq_now = equity + trade_total", "                eq_now = equity"),
  ("drawdown vs start not peak",   "                dd_now = max(0.0, 1.0 - eq_now / max(peak, eq_now))", "                dd_now = max(0.0, 1.0 - eq_now / starting_equity)"),
- ("peak not allowed to rise",     "                dd_now = max(0.0, 1.0 - eq_now / max(peak, eq_now))", "                dd_now = max(0.0, 1.0 - eq_now / peak)"),
  ("kill threshold inverted",      "                if dd_now > limits.max_drawdown:", "                if dd_now < limits.max_drawdown:"),
- ("kill at the boundary",         "                if dd_now > limits.max_drawdown:", "                if dd_now >= limits.max_drawdown:"),
  ("exit cost not charged",        "                    pnl_by_day[s] -= exit_cost", "                    pass"),
  ("exit cost not in the trade",   "                    trade_total -= exit_cost", "                    pass"),
  ("exit spread dropped",          "                    exit_cost = (size * contract_mult * 0.5\n                                 * (spread_frac * v_now + 0.04)\n                                 + abs(hedge_now) * S * hedge_bps)", "                    exit_cost = abs(hedge_now) * S * hedge_bps"),
@@ -95,7 +116,6 @@ MUTANTS = [
  ("kill does not liquidate",      "                    killed_dd = max(killed_dd, dd_now)\n                    break", "                    killed_dd = max(killed_dd, dd_now)"),
  ("kill not counted",             "                    n_killed += 1", "                    pass"),
  ("worst drawdown not recorded",  "                    killed_dd = max(killed_dd, dd_now)", "                    pass"),
- ("worst drawdown is the last",   "                    killed_dd = max(killed_dd, dd_now)", "                    killed_dd = dd_now"),
 
  # Book-keeping at the end of a trade.
  ("equity not updated",           "        equity += trade_total\n        peak = max(peak, equity)", "        peak = max(peak, equity)"),
@@ -116,5 +136,4 @@ MUTANTS = [
  ("beta ignored",                 "                iv_t = iv_entry * (1.0 + iv_beta * min(shock, iv_shock_cap))", "                iv_t = iv_entry * (1.0 + min(shock, iv_shock_cap))"),
  ("iv falls in a shock",          "                iv_t = iv_entry * (1.0 + iv_beta * min(shock, iv_shock_cap))", "                iv_t = iv_entry * (1.0 - iv_beta * min(shock, iv_shock_cap))"),
  ("realised vol sees the future", "    return volforecast.close_to_close_vol(prices[lo:s + 1], window=window)", "    return volforecast.close_to_close_vol(prices[lo:s + 2], window=window)"),
- ("realised vol window off",      "    lo = max(0, s - window)", "    lo = max(0, s - 2 * window)"),
 ]

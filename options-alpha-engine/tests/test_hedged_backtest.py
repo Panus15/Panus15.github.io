@@ -265,6 +265,277 @@ def test_the_kill_switch_works_when_it_is_reachable_and_costs_more_than_it_saves
         "it fired and did not even reduce the drawdown")
 
 
+
+# --------------------------------------------------------------------------- #
+# Numeric oracle. The tests above are all QUALITATIVE -- the kill-switch fires,
+# a crash hurts -- so every cost term in the daily P&L could be wrong or absent
+# and none of them would notice. 29 of 78 first-sweep defects survived for that
+# reason, including the rebalancing cost, the entry spread, the opening hedge
+# and the unwind on liquidation.
+#
+# The oracle below re-derives ONE hedged trade from the module's own docstring:
+# short a straddle, hold yesterday's delta in shares, and pay the cost of
+# rebalancing and of crossing the spread. It is written differently from the
+# engine (a single function, |S-K| for the expired straddle) and agreed with it
+# bit-for-bit on four paths before it was trusted.
+# --------------------------------------------------------------------------- #
+import math
+import random
+
+from engine import pricing, volforecast
+
+
+def _straddle(S, K, T, iv, r=0.03, q=0.0):
+    if T <= 0:
+        return abs(S - K), 0.0
+    c = pricing.greeks(S, K, T, r, q, iv, "call")
+    p = pricing.greeks(S, K, T, r, q, iv, "put")
+    return c.price + p.price, c.delta + p.delta
+
+
+def _oracle_trade(path, i0, dte, size, iv=0.05, bps=5e-4, sf=0.015, mult=100,
+                  kill=None, equity=100_000.0, peak=100_000.0):
+    """P&L of one delta-hedged short straddle; (total, killed, worst_dd)."""
+    K = round(path[i0])
+    v, d = _straddle(path[i0], K, dte / 252, iv)
+    hedge = size * mult * d
+    total = -(size * mult * 0.5 * (sf * v + 0.04))
+    for s in range(i0 + 1, i0 + dte + 1):
+        rem = (i0 + dte - s) / 252
+        S, Sp = path[s], path[s - 1]
+        vn, dn = _straddle(S, K, rem, iv)
+        hn = size * mult * dn
+        total += size * mult * (v - vn) + hedge * (S - Sp) - abs(hn - hedge) * S * bps
+        v, hedge = vn, hn
+        if kill is not None and rem > 0:
+            dd = max(0.0, 1.0 - (equity + total) / max(peak, equity + total))
+            if dd > kill:
+                total -= size * mult * 0.5 * (sf * vn + 0.04) + abs(hn) * S * bps
+                return total, True, dd
+    return total, False, 0.0
+
+
+def _gw(n, seed, vol, drift=0.0003):
+    rng = random.Random(seed)
+    pr = [100.0]
+    for _ in range(n - 1):
+        pr.append(pr[-1] * math.exp(rng.gauss(drift, vol)))
+    return pr
+
+
+def _lim(dd, vega=8_000.0):
+    return portfolio.RiskLimits(max_net_short_vega=vega, max_drawdown=dd)
+
+
+# A flat 63-bar warmup gives HAR a zero forecast, so IV is the 5% floor, and one
+# 21-bar trade then fits exactly (63 + 21 < 85). CVaR sizing gives 2 contracts.
+_FLAT = [100.0] * 85
+_WIGGLE = [100.0] * 64 + [100.0 * (1 + 0.01 * math.sin(k)) for k in range(1, 22)]
+_SIZE = 2
+
+
+def test_a_flat_path_trade_matches_the_oracle_to_the_cent():
+    """No price move, so the shares P&L is zero and the whole trade is theta, the
+    entry spread and the rebalancing drag -- every friction in isolation.
+
+    It also pins the IV FLOOR: HAR on a flat path forecasts exactly 0.0, so the
+    straddle is sold at the 5% floor. Without the floor it would be priced at a
+    zero vol and the pricer refuses.
+    """
+    assert volforecast.har_rv_forecast(_FLAT[:64]) == 0.0
+    r = run_hedged_backtest(_FLAT)
+    assert r.n_trades == 1 and r.skip_reasons == {}
+    want, killed, _ = _oracle_trade(_FLAT, 63, 21, _SIZE)
+    assert not killed
+    assert abs(r.trade_pnl[0] - want) < 1e-9, (r.trade_pnl[0], want)
+    assert abs(r.trade_pnl[0] - 226.2989189975) < 1e-6, r.trade_pnl[0]
+
+
+def test_a_moving_path_trade_matches_the_oracle_to_the_cent():
+    """A 1% sine wiggle makes the opening hedge, yesterday's-delta shares P&L and
+    the daily re-hedge all matter. Using today's delta would be a look-ahead; a
+    zero or wrong-sized opening hedge changes day one; expiry days measured in
+    calendar rather than trading days change every mark."""
+    r = run_hedged_backtest(_WIGGLE)
+    want, killed, _ = _oracle_trade(_WIGGLE, 63, 21, _SIZE)
+    assert not killed and r.n_trades == 1
+    assert abs(r.trade_pnl[0] - want) < 1e-9, (r.trade_pnl[0], want)
+    assert abs(r.trade_pnl[0] - (-656.9115437216)) < 1e-6, r.trade_pnl[0]
+
+
+def test_each_friction_moves_the_trade_by_the_amount_it_should():
+    """Isolating each cost term, in the direction it should move."""
+    base = run_hedged_backtest(_WIGGLE).trade_pnl[0]
+    hi_bps = run_hedged_backtest(_WIGGLE, hedge_bps=5e-3).trade_pnl[0]
+    hi_spread = run_hedged_backtest(_WIGGLE, spread_frac=0.05).trade_pnl[0]
+    assert hi_bps < base and hi_spread < base
+    want_bps, _, _ = _oracle_trade(_WIGGLE, 63, 21, _SIZE, bps=5e-3)
+    want_sf, _, _ = _oracle_trade(_WIGGLE, 63, 21, _SIZE, sf=0.05)
+    assert abs(hi_bps - want_bps) < 1e-9, (hi_bps, want_bps)
+    assert abs(hi_spread - want_sf) < 1e-9, (hi_spread, want_sf)
+
+
+def test_the_kill_switch_liquidates_mid_trade_and_pays_to_leave():
+    """A 5% gap on trade day 4 breaches a 0.3% limit. The trade is closed that day
+    and pays the exit spread AND the cost of unwinding the hedge: -896.0623
+    against -925.2948 for riding it to expiry. The oracle reproduces the
+    liquidation, so the exit cost is checked term by term, not just its sign."""
+    path = [100.0] * 67 + [95.0] * 18
+    r = run_hedged_backtest(path, limits=_lim(0.003))
+    want, killed, dd = _oracle_trade(path, 63, 21, _SIZE, kill=0.003)
+    assert killed and r.n_killed_midtrade == 1
+    assert abs(r.trade_pnl[0] - want) < 1e-9, (r.trade_pnl[0], want)
+    assert abs(r.trade_pnl[0] - (-896.0623056417)) < 1e-6
+    assert abs(r.worst_intratrade_drawdown - dd) < 1e-12
+    assert abs(r.worst_intratrade_drawdown - 0.0087536695) < 1e-9
+
+    ride = run_hedged_backtest(path, limits=_lim(0.01))
+    assert ride.n_killed_midtrade == 0
+    assert abs(ride.trade_pnl[0] - (-925.2948190234)) < 1e-6
+    # the exit unwind is real money: dropping it would make leaving cheaper
+    hedge_unwind = abs(_oracle_trade(path, 63, 21, _SIZE)[0] - want)
+    assert hedge_unwind > 1.0, hedge_unwind
+
+
+def test_the_kill_switch_does_not_liquidate_on_the_expiry_bar():
+    """A loss that first breaches the limit on the LAST bar has nothing left to
+    liquidate: the position is expiring, so there is no exit to pay for. Firing
+    there would charge an exit spread and unwind a hedge on a trade that is
+    already over."""
+    path = [100.0] * 84 + [94.0]
+    r = run_hedged_backtest(path, limits=_lim(0.003))
+    want, killed, _ = _oracle_trade(path, 63, 21, _SIZE, kill=0.003)
+    assert not killed and r.n_killed_midtrade == 0
+    assert abs(r.trade_pnl[0] - want) < 1e-9
+    assert abs(r.trade_pnl[0] - (-1011.3690031906)) < 1e-6
+
+
+def test_drawdown_is_measured_from_the_peak_across_trades():
+    """The entry governor reads drawdown from the PEAK equity, so an early winner
+    raises the bar the later trades are judged against. Pinned on scenarios where
+    measuring from the starting equity instead, or failing to update the peak
+    after a trade, changes which entries are refused.
+
+      g12 seed 2: 9 trades, 6 refused by the kill-switch, one liquidated
+      crash seed 2: 9 trades, 4 refused, one liquidated
+      crash seed 4: 7 trades, 6 refused, none liquidated -- and the trade whose
+      only breach is on the expiry bar keeps its full holding period
+    """
+    a = run_hedged_backtest(_gw(400, 2, 0.012), limits=_lim(0.02), hedge_bps=5e-3)
+    assert (a.n_trades, a.skip_reasons, a.n_killed_midtrade) == (
+        9, {"kill_switch": 6, "regime": 1}, 1), (a.n_trades, a.skip_reasons)
+    assert abs(a.metrics.total_return - (-0.01750482)) < 1e-7
+    assert abs(a.worst_intratrade_drawdown - 0.020103) < 1e-6
+
+    b = run_hedged_backtest(price_path_with_crash(400, seed=2), limits=_lim(0.02),
+                            hedge_bps=5e-3)
+    assert (b.n_trades, b.skip_reasons, b.n_killed_midtrade) == (
+        9, {"kill_switch": 4, "regime": 3}, 1), (b.n_trades, b.skip_reasons)
+    assert abs(b.metrics.total_return - (-0.02078833)) < 1e-7
+    assert abs(b.worst_intratrade_drawdown - 0.020320) < 1e-6
+
+    c = run_hedged_backtest(price_path_with_crash(400, seed=4), limits=_lim(0.02),
+                            hedge_bps=5e-3)
+    assert (c.n_trades, c.skip_reasons, c.n_killed_midtrade) == (
+        7, {"kill_switch": 6, "regime": 3}, 0), (c.n_trades, c.skip_reasons)
+    assert abs(c.metrics.total_return - (-0.02099018)) < 1e-7
+
+
+def test_a_scheduled_event_skips_the_trade_and_sees_only_the_past():
+    """`event_at(i, trailing)` is the gate for a jump whose DATE is public. It had
+    no test at all: dropping the gate, handing it the whole price list, and
+    shifting its bar by one all passed.
+
+    It must be called on each entry bar with exactly the history up to and
+    including that bar -- len(trailing) == i + 1 -- or it can see the event it is
+    meant to anticipate.
+    """
+    path = price_path_with_crash(400, seed=1)
+    seen = []
+
+    def spy(i, trailing):
+        seen.append((i, len(trailing)))
+        return False
+
+    base = run_hedged_backtest(path, event_at=spy)
+    assert seen and all(n == i + 1 for i, n in seen), seen[:3]
+    # Every call is on a 21-bar cycle, in order. The regime gate runs FIRST, so
+    # bars it skips (147, 252, ...) never reach the event gate -- 11 calls here,
+    # not one per cycle.
+    bars = [i for i, _ in seen]
+    assert all((i - 63) % 21 == 0 for i in bars) and bars == sorted(bars)
+    assert bars[:5] == [63, 84, 105, 126, 168], bars[:5]
+    assert base.skip_reasons.get("event", 0) == 0
+
+    allev = run_hedged_backtest(path, event_at=lambda i, tr: True)
+    assert allev.n_trades == 0 and allev.skip_reasons["event"] == 11
+    assert allev.metrics.total_return == 0.0
+
+    one = run_hedged_backtest(path, event_at=lambda i, tr: i == 63 + 21)
+    assert one.skip_reasons["event"] == 1
+    assert one.n_trades == base.n_trades - 1
+
+
+def test_the_run_handles_a_path_that_ends_exactly_on_an_expiry():
+    """When (n - warmup) is a multiple of dte the last trade ends on the final bar.
+    `i0 + dte < n` is the guard that keeps the loop off the end; relaxing it asks
+    for a bar that does not exist."""
+    path = _gw(63 + 21 * 10, 5, 0.012)
+    r = run_hedged_backtest(path, limits=_lim(0.02))
+    assert r.n_trades == 8 and r.skip_reasons == {"regime": 1}
+    assert abs(r.metrics.total_return - 0.01322060) < 1e-7
+
+
+def test_the_equity_curve_starts_after_the_warmup():
+    """Warmup bars carry no position, so the curve is n - warmup bars of P&L plus
+    the starting point. Counting them would dilute every Sharpe and drawdown with
+    63 days of nothing."""
+    r = run_hedged_backtest(_gw(400, 1, 0.012))
+    assert len(r.metrics.equity_curve) == 400 - 63 + 1
+    assert len(r.metrics.daily_returns) == 400 - 63
+
+
+def test_a_quiet_market_is_priced_at_the_vol_floor_not_the_forecast():
+    """In a very quiet market the HAR forecast sits well under 5%, and the floor is
+    what keeps the straddle priced at a vol anyone would quote."""
+    r = run_hedged_backtest(_gw(400, 1, 0.002), limits=_lim(0.25))
+    assert r.n_trades == 14 and r.skip_reasons == {"regime": 2}
+    assert abs(r.metrics.total_return - 0.01043994) < 1e-7
+
+
+def test_the_vega_model_reduces_to_the_constant_iv_run_when_switched_off_by_its_knobs():
+    """Two exact identities that pin the model's parameters: with the shock cap at
+    zero the IV never moves, and with a zero beta it does not respond to the shock.
+    Both must reproduce the constant-IV run to the last digit, and the model with
+    its defaults must NOT, or it is not a model.
+    """
+    path = price_path_with_crash(400, seed=1)
+    off = run_hedged_backtest(path, limits=_lim(0.02))
+    on = run_hedged_backtest(path, limits=_lim(0.02), model_vega_loss=True)
+    cap0 = run_hedged_backtest(path, limits=_lim(0.02), model_vega_loss=True,
+                               iv_shock_cap=0.0)
+    beta0 = run_hedged_backtest(path, limits=_lim(0.02), model_vega_loss=True,
+                                iv_beta=0.0)
+    assert cap0.trade_pnl == off.trade_pnl
+    assert beta0.trade_pnl == off.trade_pnl
+    assert max(abs(a - b) for a, b in zip(on.trade_pnl, off.trade_pnl)) > 1e-6
+
+
+def test_realised_vol_uses_only_the_window_ending_today():
+    """The vega model reprices off trailing realised vol, and that estimate has to
+    be walk-forward: nothing after day `s` may enter it. Altering every later
+    price must leave it unchanged, and it must equal the textbook figure."""
+    from engine.hedged_backtest import _recent_realized_vol
+    path = _gw(120, 3, 0.02)
+    s, w = 80, 21
+    got = _recent_realized_vol(path, s, w)
+    rets = [math.log(path[k] / path[k - 1]) for k in range(s - w + 1, s + 1)]
+    m = sum(rets) / w
+    want = math.sqrt(sum((x - m) ** 2 for x in rets) / (w - 1) * 252)
+    assert abs(got - want) < 1e-12, (got, want)
+    tampered = path[:s + 1] + [p * 3.0 for p in path[s + 1:]]
+    assert _recent_realized_vol(tampered, s, w) == got
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
