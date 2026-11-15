@@ -98,7 +98,7 @@ def test_time_sensitive_thai():
     assert tags("ปัจจุบันนายกรัฐมนตรีของไทยคือคุณอนุทิน") == ["time_sensitive"]
     assert tags("ล่าสุดราคาทองอยู่ที่ 40,000 บาท") == ["time_sensitive"]
     assert tags("ในปี พ.ศ. 2569 อัตราดอกเบี้ยอยู่ที่ 2.5%") == ["time_sensitive"]
-    assert tags("ในปี พ.ศ. 2560 อัตราดอกเบี้ยอยู่ที่ 2.5%") == ["time_sensitive"]   # number 2.5 + "ปัจจุบัน" absent -> no trigger?
+    assert tags("ในปี พ.ศ. 2560 อัตราดอกเบี้ยอยู่ที่ 2.5%") == []                    # 2560 BE = 2017: old
     assert tags("ตอนนี้ฉันหิวแล้ว") == []
     assert tags("ปีนี้ฝนตกเยอะ") == []
 
@@ -129,6 +129,10 @@ def test_absolute_false_positive_guards():
     assert tags("Take the drug every 4 hours.") == []
     assert tags("After all, the legal advice was sound.") == []
     assert tags("There is no guaranteed return on investment.") == []
+    assert tags("Investment returns are never guaranteed.") == []                    # a caution, not a claim
+    assert tags("ผลตอบแทนการลงทุนไม่ได้รับประกันในอนาคต") == []
+    assert tags("Every function returns undefined by default.") == []              # "returns" alone is not money
+    assert tags("Average returns are never the same for every fund.") == ["absolute_claim"]
     assert tags("Is it always safe to take this drug?") == []                         # a question
     # documented FP: a correct universal rule is still flagged
     assert tags("All taxes must be filed by April.") == ["absolute_claim"]
@@ -216,7 +220,6 @@ def test_unsourced_quote_positive_english():
 
 
 def test_unsourced_quote_negative_english():
-    assert tags(f'Albert Einstein said: "{EIN}" (https://example.org/q)') == ["placeholder_url"] or True
     assert "unsourced_quote" not in tags(f'Albert Einstein said: "{EIN}" See https://www.britannica.com/quote.')
     assert "unsourced_quote" not in tags(f'Albert Einstein said: "{EIN}" [1]')
     assert "unsourced_quote" not in tags(f'Albert Einstein said: "{EIN}" (Calaprice, 2010)')
@@ -233,6 +236,11 @@ def test_unsourced_quote_source_in_next_sentence_but_not_two_later():
     assert "unsourced_quote" not in tags(f'Albert Einstein said: "{EIN}" It is from Calaprice (2010).')
     far = f'Albert Einstein said: "{EIN}" It is a nice thought. It is often shared. See Calaprice (2010).'
     assert "unsourced_quote" in tags(far)
+
+
+def test_unsourced_quote_adverb_before_verb_and_acronym_name():
+    assert "unsourced_quote" in tags(f'Albert Einstein once told reporters, "{EIN}"')
+    assert "unsourced_quote" in tags(f'The WHO has stated that "{EIN}"')
 
 
 def test_unsourced_quote_internal_period_does_not_split():
@@ -317,6 +325,7 @@ def test_count_mismatch_thai():
     assert tags("มี 3 ข้อที่ควรรู้:\n1. ก\n2. ข\n") == ["count_mismatch"]
     assert tags("มีสี่ขั้นตอนดังนี้\n1. ผสม\n2. อบ\n3. พัก\n") == ["count_mismatch"]
     assert tags("มี 3 ข้อที่ควรรู้:\n1. ก\n2. ข\n3. ค\n") == []
+    assert tags("Here are 3 key exercises:\n- Squat\n- Deadlift\n- Bench\n- Pull-up\n") == ["count_mismatch"]
     assert tags("มี ๓ วิธี:\n๑. ก\n๒. ข\n๓. ค\n") == []
     assert tags("สรุป 3 ข้อ:\n- ก\n- ข\n- ค\n- สรุป: ทั้งหมดนี้\n") == []
 
@@ -363,7 +372,7 @@ def test_code_is_ignored():
 def test_empty_and_odd_input():
     assert scan("") == [] and scan("   \n\t ") == [] and scan("```\ncode\n```") == []
     assert scan(None) == [] and scan("!!! ??? ...") == []                          # type: ignore[arg-type]
-    assert scan("x", question="cite sources") == [] or True                        # must not raise
+    assert [f.tag for f in scan("x", question="cite sources")] == ["question_asks_for_sources"]
 
 
 def test_offsets_after_emoji_combining_marks_and_crlf():
@@ -397,9 +406,10 @@ def test_ids_order_and_overlap_rules():
 
 def test_sentence_boundaries():
     assert tags("The drug is effective. Never share it. Currently the price is 5 dollars.") == ["time_sensitive"]
-    assert tags("Dr. Smith said hi. The latest news is great.") == []
+    assert tags("Dr. Smith smiled. The latest news is great.") == []
     assert tags("The CEO left. Currently nothing changes.") == []                     # fact in the previous sentence
-    assert tags("Currently\nthe CEO is Tim Cook.") == []                              # newline is a boundary
+    assert tags("Currently\nThe CEO is Tim Cook.") == []                              # newline is a boundary
+    assert tags("Currently the CEO,\nTim Cook, is busy.") == ["time_sensitive"]      # hard-wrapped line is not
     assert tags("It is e.g. a thing, vs. another. Currently the CEO is Tim Cook.") == ["time_sensitive"]
 
 

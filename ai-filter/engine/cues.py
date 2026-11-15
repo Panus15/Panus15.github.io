@@ -117,7 +117,7 @@ _DOMAIN_EN = [r"health\w*", r"medic\w*", r"drugs?", r"disease\w*", r"illness\w*"
               r"vaccin\w+", r"supplements?", r"pregnan\w+", r"surgery", r"surgical", r"infect\w+", r"allerg\w+",
               r"antibiotics?", r"doctors?", r"patients?", r"legal\w*", r"illegal", r"laws?", r"lawful", r"lawsuits?",
               r"lawyers?", r"attorneys?", r"courts?", r"tax", r"taxes", r"taxation", r"taxable",
-              r"invest(?:s|ed|ing|ment|ments|or|ors)?", r"returns", r"(?:rate\s+of|annual|expected)\s+return",
+              r"invest(?:s|ed|ing|ment|ments|or|ors)?", r"(?:rate\s+of|annual|expected|investment|average|stock|market)\s+returns?",
               r"return\s+on", r"stocks", r"stock\s+market", r"crypto\w*", r"portfolios?", r"loans?", r"mortgages?",
               r"interest\s+rates?", r"safety", r"unsafe", r"safe", r"dangerous", r"toxic", r"poison\w*", r"hazard\w*"]
 _DOMAIN_TH = ["สุขภาพ", "โรค", "วัคซีน", "มะเร็ง", "เบาหวาน", "ความดัน", "อาหารเสริม", "ผลข้างเคียง", "ลดน้ำหนัก",
@@ -191,7 +191,8 @@ _COUNT_NOUNS_EN = (r"ways|reasons|steps|tips|tricks|things|types|kinds|benefits|
                    r"phases|causes|ingredients|differences|advantages|disadvantages|pros|cons|lessons|takeaways|"
                    r"questions|myths|facts|characteristics|qualities|elements|components|categories|levels|risks|"
                    r"symptoms|requirements|considerations|challenges|resources|techniques|approaches|"
-                   r"recommendations|key\s+points|main\s+points")
+                   r"recommendations|key\s+points|main\s+points|exercises|foods|places|books|movies|apps|skills|goals|"
+                   r"countries|cities|languages|dishes|recipes|destinations|activities")
 _COUNT_NOUNS_TH = ("อย่าง", "ข้อ", "ขั้นตอน", "วิธี", "เหตุผล", "ประการ", "เคล็ดลับ", "ประเภท", "ชนิด", "แบบ",
                    "ปัจจัย", "แนวทาง", "สัญญาณ", "ตัวเลือก", "ประเด็น", "เทคนิค", "สิ่ง", "ข้อดี", "ข้อเสีย", "ขั้น",
                    "หลักการ", "ข้อควรระวัง", "ข้อควรรู้", "รายการ", "กลยุทธ์", "แนวคิด", "อาการ", "สาเหตุ", "ตัวอย่าง")
@@ -255,7 +256,7 @@ _ABS_RE = re.compile("|".join([
     r"(?P<pct>(?<![\w.,$€£])100\s?%)",
     r"(?P<cure>" + _L + r"(?:(?:can|will|to|completely|fully|permanently|instantly|quickly|miracle)\s+cure|cures|cure-all)(?![A-Za-z-]))",
     # เสมอ is also in สม่ำเสมอ (regularly), เสมอภาค (equality), เสมอกัน (a draw)
-    r"(?P<th>ทุกคน|(?<!ม่ำ)เสมอ(?!ภาค|กัน|ต้น|ปลาย|หน้า)|ไม่เคย|รับประกัน|หายขาด|ทุกกรณี|ไม่มีผลข้างเคียง|ร้อยเปอร์เซ็นต์)",
+    r"(?P<th>ทุกคน|(?<!ม่ำ)เสมอ(?!ภาค|กัน|ต้น|ปลาย|หน้า)|ไม่เคย|(?<!ไม่)(?<!ไม่ได้)รับประกัน|หายขาด|ทุกกรณี|ไม่มีผลข้างเคียง|ร้อยเปอร์เซ็นต์)",
 ]), re.I)
 _ABS_NEG_BEFORE = re.compile(r"(?:not|n['’]t)\s+\Z", re.I)
 _ABS_IMPERATIVE = re.compile(r"(?:you|should|must|please|to|can|could|let['’]s)\s+\Z", re.I)
@@ -268,6 +269,7 @@ _ALL_AFTER = re.compile(r"\s+(?:right|set|in|but)\b", re.I)
 _EVERY_AFTER = re.compile(
     r"\s+(?:[0-9]|few|other|second|couple|day|night|morning|evening|afternoon|week|weekend|month|year|hour|minute|"
     r"one|two|three|four|six|eight|twelve)\b", re.I)
+_NEVER_AFTER = re.compile(r"\s+(?:be\s+)?(?:guaranteed|certain|assured|promised)\b", re.I)
 _GUAR_BEFORE = re.compile(r"(?:not|n['’]t|no|never)\s+\Z", re.I)
 _DOMAIN_RE = re.compile(r"(?<![A-Za-z-])(?:" + "|".join(_DOMAIN_EN) + r")(?![A-Za-z])|" + "|".join(_DOMAIN_TH), re.I)
 
@@ -290,7 +292,7 @@ _NAME_EN = (r"(?:(?:Dr|Prof|Mr|Mrs|Ms|Sir|Professor|President|Senator|Sen|Rep|Ge
             r"(?:[A-Z][A-Za-z'’\-]+|[A-Z]\.)"
             r"(?:\s+(?:(?:of|the|de|van|von|der|bin|al|el|la|and|&)\s+)?(?:[A-Z][A-Za-z'’\-]+|[A-Z]\.)){0,4}")
 _ATTR_PRE_EN = re.compile(
-    r"(?P<name>" + _NAME_EN + r")\s+(?:" + _SAY_VERBS + r")\b[^\"“”«»「」\n]{0,60}\Z")
+    r"(?P<name>" + _NAME_EN + r")\s+(?:[a-z]+\s+)?(?:" + _SAY_VERBS + r")\b[^\"“”«»「」\n]{0,60}\Z")
 _ATTR_PRE_ACCORDING = re.compile(r"(?:according\s+to|as)\s+(?P<name>" + _NAME_EN + r")\s*[,:]?\s*\Z", re.I)
 _ATTR_PRE_TH = re.compile(r"(?P<verb>" + "|".join(_SAY_VERBS_TH) + r")\s*[:：,\-]?\s*\Z")
 _ATTR_POST_EN = re.compile(
@@ -324,8 +326,8 @@ _TH_STOPWORDS = "|".join(sorted(set(_AFFIL_TH + _FIND_VERBS_TH + ("ให้", "
 _TH_NAME_END = r"(?=\s|" + _TH_STOPWORDS + r"|[^ก-๿]|\Z)"
 _EXPERT_TH = re.compile(
     r"(?<![ก-๿.])(?:(?:ศ|รศ|ผศ)\.\s?(?:ดร|นพ|พญ)\.\s?|(?:ศ|รศ|ผศ|ดร|นพ|พญ)\.\s?)"
-    r"[ก-ฮ][ก-๎]{1,24}?" + _TH_NAME_END +
-    r"(?:\s(?!" + _TH_STOPWORDS + r")[ก-ฮ][ก-๎]{1,24}?" + _TH_NAME_END + r")?")
+    r"[ก-ฮเ-ไ][ก-๎]{1,24}?" + _TH_NAME_END +
+    r"(?:\s(?!" + _TH_STOPWORDS + r")[ก-ฮเ-ไ][ก-๎]{1,24}?" + _TH_NAME_END + r")?")
 _AFFIL_EN = re.compile(r"\b(?:of|from|at)\s+(?:the\s+)?[A-Z][A-Za-z]")
 _FIND_EN = re.compile(r"\b(?:" + _FIND_VERBS_EN + r")\b")
 _FIND_TH = re.compile("|".join(_AFFIL_TH + _FIND_VERBS_TH))
@@ -460,7 +462,7 @@ def _trim_url_end(raw: str, start: int) -> int:
     while u.endswith(")") and u.count(")") > u.count("("):
         u = u[:-1].rstrip(",;:!?}*_>")
     body = re.sub(r"^[a-z]+://", "", u, flags=re.I)
-    if body and not re.fullmatch(r"[.…]+", body):
+    if body and not re.fullmatch(r"[.…]+", body) and not re.search(r"/(?:\.{3}|…)$", u):
         u = u.rstrip(".…")
     return start + len(u)
 
@@ -666,6 +668,8 @@ def _absolute_cue(cx: _Ctx, hits: list[Hit]) -> None:
                 continue                                        # "Always consult a doctor": advice, not a claim
             if word == "always" and _ABS_NEG_BEFORE.search(before):
                 continue                                        # "not always"
+            if word == "never" and _NEVER_AFTER.match(after):
+                continue                                        # "returns are never guaranteed": a caution
         elif fam == "all":
             if _ALL_BEFORE.search(before) or _ALL_AFTER.match(after):
                 continue                                        # "after all", "at all", "not all", "all right"
@@ -729,23 +733,22 @@ def _is_placeholder_url(u: str) -> bool:
 
 def _placeholder_cue(cx: _Ctx, hits: list[Hit]) -> None:
     t = cx.masked
-    taken: list[tuple[int, int]] = []
-
-    def add(a: int, b: int) -> None:
-        if any(a < y and x < b for x, y in taken):
-            return
-        taken.append((a, b))
+    cands: list[tuple[int, int]] = [(m.start(), m.end()) for m in _TOKEN_RE.finditer(t)]
+    cands += [(a, b) for a, b in cx.urls if _is_placeholder_url(t[a:b])]
+    url_starts = [a for a, _ in cx.urls]
+    for m in _BARE_EXAMPLE_RE.finditer(t):
+        k = bisect_right(url_starts, m.start()) - 1
+        if k >= 0 and m.start() < cx.urls[k][1]:
+            continue                                            # already inside a scheme URL
+        cands.append((m.start(), _trim_url_end(m.group(), m.start())))
+    cands.sort(key=lambda c: (c[0], -c[1]))
+    last_end = -1
+    for a, b in cands:
+        if a < last_end:
+            continue
+        last_end = b
         hits.append((a, b, "placeholder_url",
                      f"'{_short(t[a:b], 50)}' is a template address, not a real source — a placeholder cannot back a claim."))
-
-    for m in _TOKEN_RE.finditer(t):
-        add(m.start(), m.end())
-    for a, b in cx.urls:
-        if _is_placeholder_url(t[a:b]):
-            add(a, b)
-    for m in _BARE_EXAMPLE_RE.finditer(t):
-        if not any(a < m.end() and m.start() < b for a, b in cx.urls):
-            add(m.start(), _trim_url_end(m.group(), m.start()))
 
 
 # ===========================================================================
@@ -755,9 +758,9 @@ def _named(name: str) -> bool:
     toks = name.replace("&", " ").split()
     if not toks:
         return False
-    if len(toks) == 1 and toks[0].lower().strip(".,") in _GENERIC_EN:
+    if len(toks) == 1 and toks[0].lower().strip(".,") in _GENERIC_EN and not (toks[0].isupper() and len(toks[0]) > 1):
         return False
-    return not all(tk.lower() in _GENERIC_EN for tk in toks)
+    return not all(tk.lower() in _GENERIC_EN and not (tk.isupper() and len(tk) > 1) for tk in toks)
 
 
 def _thai_subject_named(before: str) -> bool:

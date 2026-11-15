@@ -288,6 +288,8 @@ def _date_from_match(kind: str, m) -> Optional[_Date]:
         if mon is None:
             return None
         day = int(g["d"])
+        if not g.get("yr") and not 1 <= day <= 31:
+            return None
         if g.get("yr"):
             r = _year_ce(int(g["yr"]), g.get("e1"), g.get("e2"))
             if r is None:
@@ -961,22 +963,44 @@ _UNITS = [
 _UNIT_BY_ID = {u.id: u for u in _UNITS}
 
 
-def _build_unit_rx():
+def _first_chars(pat: str, ci: bool):
+    if pat.startswith("("):
+        return None
+    if pat.startswith("["):
+        chars = set(pat[1:pat.index("]")])
+    else:
+        chars = {pat[1]} if pat[0] == "\\" else {pat[0]}
+    if ci:
+        chars = chars | {c.lower() for c in chars} | {c.upper() for c in chars}
+    return chars
+
+
+def _build_unit_entries():
     entries = []
     for u in _UNITS:
         for pat, ci in u.pats:
             entries.append((u.id, pat, ci))
     entries.sort(key=lambda e: -len(re.sub(r"\\.|[\[\]()?:]", "", e[1])))
-    parts = []
-    for i, (uid, pat, ci) in enumerate(entries):
-        parts.append(f"(?P<u{i}>(?{'i' if ci else '-i'}:{pat}))")
-    return "(?:" + "|".join(parts) + ")", {f"u{i}": e[0] for i, e in enumerate(entries)}
+    return [(uid, re.compile(pat + r"(?![A-Za-z0-9²³/])", re.I if ci else 0), _first_chars(pat, ci))
+            for uid, pat, ci in entries]
 
 
-_UNIT_RX, _UNIT_GROUPS = _build_unit_rx()
+_UNIT_ENTRIES = _build_unit_entries()
+_UNIT_BY_CHAR: dict = {}
+
+
+def _entries_for(c: str):
+    got = _UNIT_BY_CHAR.get(c)
+    if got is None:
+        got = [e for e in _UNIT_ENTRIES if e[2] is None or c in e[2]]
+        if len(_UNIT_BY_CHAR) < 5000:
+            _UNIT_BY_CHAR[c] = got
+    return got
+
+
 _QTY = re.compile(
     r"(?<![0-9A-Za-z.,])(?P<a1>" + _NUM + r")(?:" + S0 + r"(?P<op>-|–|—|to)" + S0 + r"(?P<a2>" + _NUM + r"))?"
-    r"(?P<gap>[ \t]{0,3}-?[ \t]{0,3})" + _UNIT_RX + r"(?![A-Za-z0-9²³/])", re.I)
+    r"(?P<gap>[ \t]{0,3}-?[ \t]{0,3})(?=[^\W\d_]|[°º˚℃℉′'″\"])", re.I)
 _HEDGE = (r"(?:about|approximately|approx\.?|roughly|around|circa|c\.|~|≈|=|or|i\.e\.|equal[ \t]+to|"
           r"equivalent[ \t]+to|that[ \t]+is|that's|which[ \t]+is)")
 _INEQ = (r"(?:nearly|almost|over|under|more[ \t]+than|less[ \t]+than|at[ \t]+least|at[ \t]+most|up[ \t]+to|"
@@ -1015,19 +1039,22 @@ def _num(txt: str):
 def _quantities(s: str) -> list:
     qs = []
     for m in _QTY.finditer(s):
+        pos = m.end()
+        um = None
+        uid = None
+        for e_uid, rx, _fc in _entries_for(s[pos]):
+            um = rx.match(s, pos)
+            if um:
+                uid = e_uid
+                break
+        if um is None:
+            continue
         q = _Q()
-        q.start, q.end = m.start(), m.end()
-        uname = m.lastgroup
-        if uname not in _UNIT_GROUPS:
-            uname = next((k for k in _UNIT_GROUPS if m.group(k) is not None), None)
-            if uname is None:
-                continue
-        q.unit = _UNIT_BY_ID[_UNIT_GROUPS[uname]]
-        q.raw_unit = m.group(uname)
+        q.start, q.end = m.start(), um.end()
+        q.unit = _UNIT_BY_ID[uid]
+        q.raw_unit = um.group(0)
         q.gap = m.group("gap")
         if q.unit.quote and q.raw_unit in ("'", "′", '"', "″") and q.gap:
-            continue
-        if q.unit.id == "L" and q.raw_unit in ("l", "L") and False:
             continue
         vals, ds, tzs, texts = [], [], [], []
         for g in ("a1", "a2"):
@@ -1102,3 +1129,245 @@ def _variants(u: _Unit):
     yield None, u.factor
     for label, f in u.alts:
         yield label, f
+
+
+def _lenient_half(tz: int) -> Fraction:
+    """A whole number with trailing zeros may have been rounded to 2 significant figures (at least to tens)."""
+    return F(5 * 10 ** max(tz - 2, 0)) if tz >= 2 else F(5)
+
+
+def _lenient_unit(tz: int) -> int:
+    return 10 ** max(tz - 1, 1)
+
+
+def _endpoint_level(a, ad, atz, ua, b, bd, btz, ub, delta_ctx):
+    """-> (level, note, expected_b).  0 ok, 1 other convention, 2 only if rounded to tens, 3 wrong, 4 only as a difference.
+
+    The tolerance is rounding at the precision STATED for b (the converted value) plus 1 %."""
+    if ua.dim == _TEMP:
+        exp_b = _conv_temp(a, ua.id, False)
+        if _fits(b, exp_b, _half(bd)):
+            return 0, "", exp_b
+        if _fits(b, _conv_temp(a, ua.id, True), _half(bd)):
+            if delta_ctx:
+                return 0, "", exp_b
+            return 4, "it matches only if it describes a temperature difference rather than a temperature", exp_b
+        return 3, "", exp_b
+    exp_b = a * ua.factor / ub.factor
+    if _fits(b, exp_b, _half(bd)):
+        return 0, "", exp_b
+    for la, fa in _variants(ua):
+        for lb, fb in _variants(ub):
+            if la is None and lb is None:
+                continue
+            if _fits(b, a * fa / fb, _half(bd)):
+                return 1, f"it matches only under {la or lb}, not the default convention", exp_b
+    if bd == 0 and btz and b != 0 and _fits(b, exp_b, _lenient_half(btz)):
+        return 2, f"it matches only if the figure was rounded to the nearest {_lenient_unit(btz)}", exp_b
+    return 3, "", exp_b
+
+
+_PAREN_CLOSE = re.compile(r"[ \t]{0,3}\)")
+_MULT_AFTER = re.compile(r"[ \t]{0,3}(?:x|×|\*)[ \t]{0,3}\d", re.I)
+
+
+def _check_units(s: str) -> list:
+    out = []
+    qs = _quantities(s)
+    for i in range(len(qs) - 1):
+        q1, q2 = qs[i], qs[i + 1]
+        if q2.start - q1.end > 40 or q1.unit.dim != q2.unit.dim:
+            continue
+        if q1.unit.id == q2.unit.id or q1.is_range != q2.is_range:
+            continue
+        sep = s[q1.end:q2.start]
+        paren = False
+        hedge = None
+        m = _SEP_PAREN.fullmatch(sep)
+        if m:
+            paren = True
+            hedge = m.group("h")
+        else:
+            m = _SEP_COMMA.fullmatch(sep)
+            if m:
+                hedge = m.group("h")
+            else:
+                m = _SEP_WORD.fullmatch(sep)
+                if m:
+                    hedge = m.group("h")
+                    if m.group("c").lower() == "or" and not hedge:
+                        continue
+                elif _SEP_SYM.fullmatch(sep):
+                    m = True
+                else:
+                    continue
+        if hedge and re.fullmatch(_INEQ, hedge, re.I):
+            continue
+        end = q2.end
+        if paren:
+            cm = _PAREN_CLOSE.match(s, q2.end)
+            if not cm:
+                continue
+            end = cm.end()
+        if _INEQ_BEFORE.search(s, max(0, q1.start - 16), q1.start):
+            continue
+        if _MULT_BEFORE.search(s, max(0, q1.start - 8), q1.start) or _MULT_AFTER.match(s, q2.end):
+            continue
+        ua, ub = q1.unit, q2.unit
+        delta_ctx = False
+        if ua.dim == _TEMP:
+            around = s[max(0, q1.start - 28):q1.start] + " " + s[end:end + 18]
+            delta_ctx = bool(_DELTA.search(around))
+        worst, note, bad = 0, "", None
+        shown = []
+        for k in range(len(q1.vals)):
+            lvl, nt, exp_b = _endpoint_level(q1.vals[k], q1.ds[k], q1.tz[k], ua, q2.vals[k], q2.ds[k], q2.tz[k], ub,
+                                             delta_ctx)
+            shown.append((q1.texts[k], q2.texts[k], exp_b))
+            if lvl == 3 and bad is None:
+                bad = (q1.texts[k], q2.texts[k], exp_b)
+            if lvl in (1, 2, 4) and lvl > worst:
+                worst, note = lvl, nt
+        verb = "is" if ua.dim == _TEMP else "is about"
+        if bad is not None:
+            at, bt, e = bad
+            out.append(_cand(q1.start, end, "unit_conversion", C,
+                             f"{at} {ua.disp} {verb} {_fmt_num(e)} {ub.disp}, not {bt} {ub.disp}.", 3,
+                             (f"computed: {_fmt_num(e)} {ub.disp}", f"claimed: {bt} {ub.disp}")))
+        elif worst:
+            out.append(_cand(q1.start, end, "unit_conversion", U,
+                             f"{q1.texts[0]} {ua.disp} versus {q2.texts[0]} {ub.disp}: {note}.", 3))
+        else:
+            parts = ", ".join(f"{a} {ua.disp} {verb} {_fmt_num(e)} {ub.disp}" for a, _, e in shown)
+            out.append(_cand(q1.start, end, "unit_conversion", V,
+                             f"{parts}, matching the stated {'-'.join(x[1] for x in shown)} {ub.disp} within rounding.", 3))
+    return out
+
+
+# ------------------------------------------------------------- 7: percentages, counts ---
+
+_PNUM = r"(?:\d{1,3}(?:,\d{3})+|\d{1,12})(?:\.\d{1,12})?"
+_PCT_ALL = re.compile(
+    r"(?:ร้อยละ" + S0 + r"(?P<pt>" + _PNUM + r")|(?<![\d.,])(?P<pe>" + _PNUM + r")" + S0 +
+    r"(?:%|％|percent(?![A-Za-z])|per[ \t]?cent(?![A-Za-z])|เปอร์เซ็นต์|เปอร์เซนต์))", re.I)
+_REM_KW = re.compile(
+    r"(?:(?:the" + S1 + r"other|(?:the" + S1 + r")?(?:remaining|remainder|rest))(?:" + S1 +
+    r"(?:is|are|was|were|being|come|comes|came|went|go|goes|had|have|has|at|of))?" + S1 +
+    r"|(?:ส่วนที่เหลืออีก|ส่วนที่เหลือ|ที่เหลืออีก|ที่เหลือ|เหลืออีก)" + S0 + r")", re.I)
+_PLAIN = r"(?:\d{1,3}(?:,\d{3})+|\d{1,12})"
+_OUT_OF = re.compile(
+    r"(?<![\d.,$€£฿#])(?P<x>" + _PLAIN + r")" + S1 + r"out" + S1 + r"of" + S1 +
+    r"(?:(?:the|all|a" + S1 + r"total" + S1 + r"of|a" + S1 + r"possible)" + S1 + r")?(?P<y>" + _PLAIN + r")(?!\d)(?![.,]\d)"
+    r"(?!" + S0 + r"(?:%|°|[$€£฿]|percent))", re.I)
+_OUT_OF_TH = re.compile(
+    r"(?<![\d.,])(?P<x>" + _PLAIN + r")" + S0 + r"(?:คน|ราย|ครั้ง|ชิ้น|ข้อ|แห่ง|ครอบครัว|ประเทศ)?" + S0 +
+    r"จาก(?:ทั้งหมด|จำนวน|ทั้งสิ้น)" + S0 + r"(?P<y>" + _PLAIN + r")(?!\d)(?![.,]\d)(?!" + S0 + r"(?:%|°|[$€£฿]))")
+_TOTAL_EN = re.compile(
+    r"(?<![\d.,])(?P<n>" + _PNUM + r")" + S0 + r"(?:%|％|percent(?![A-Za-z]))" + S1 + r"of" + S1 +
+    r"(?:the" + S1 + r"(?:total|whole|entire" + S1 + r"total)|all(?=" + S0 + r"(?:[.,;:!?)]|\r|\n|\Z))|all" + S1 +
+    r"(?:the" + S1 + r")?(?:respondents|participants|people|users|cases|votes|voters|students|employees|patients|"
+    r"customers|members|residents|adults|children|women|men))(?![A-Za-z])", re.I)
+_TOTAL_TH = re.compile(
+    r"(?:ร้อยละ" + S0 + r"(?P<n>" + _PNUM + r")|(?<![\d.,])(?P<n2>" + _PNUM + r")" + S0 + r"(?:%|％|เปอร์เซ็นต์))" + S0 +
+    r"ของ(?:ทั้งหมด|ยอดรวม|ผลรวม|ทั้งสิ้น)")
+_GROWTH_BEFORE = re.compile(r"(?:increase|rise|rose|grew|growth|up|by|to|increased|raised)[ \t]{0,3}(?:of[ \t]{0,3})?\Z", re.I)
+
+
+def _pct_value(m):
+    t = m.group("pt") or m.group("pe")
+    v, d, _ = _num(t)
+    return v, d
+
+
+def _check_percent(s: str) -> list:
+    out = []
+    for kw in _REM_KW.finditer(s):
+        m2 = _PCT_ALL.match(s, kw.end())
+        if not m2:
+            continue
+        ss = _sent_start(s, kw.start())
+        prev = list(_PCT_ALL.finditer(s, ss, kw.start()))
+        if len(prev) != 1 or kw.start() - prev[0].end() > 250:
+            continue
+        n, nd = _pct_value(prev[0])
+        mv, md = _pct_value(m2)
+        tot = n + mv
+        a, b = prev[0].start(), m2.end()
+        if abs(tot - 100) <= _half(nd) + _half(md):
+            out.append(_cand(a, b, "percent_remaining", V,
+                             f"{_fmt_num(n)}% + {_fmt_num(mv)}% = {_fmt_num(tot)}%, consistent with a whole of 100%.", 4))
+        else:
+            out.append(_cand(a, b, "percent_remaining", C,
+                             f"{_fmt_num(n)}% and the remaining {_fmt_num(mv)}% add up to {_fmt_num(tot)}%, not 100% "
+                             f"(the remainder should be {_fmt_num(100 - n)}%).", 4,
+                             (f"computed: {_fmt_num(tot)}%",)))
+    for rx in (_OUT_OF, _OUT_OF_TH):
+        for m in rx.finditer(s):
+            x, y = int(m.group("x").replace(",", "")), int(m.group("y").replace(",", ""))
+            if x > y:
+                out.append(_cand(m.start(), m.end(), "percent_remaining", C,
+                                 f"\"{m.group('x')} out of {m.group('y')}\" is impossible: a part ({x:,}) cannot exceed "
+                                 f"the total ({y:,}).", 4))
+    for rx in (_TOTAL_EN, _TOTAL_TH):
+        for m in rx.finditer(s):
+            t = m.group("n") or (m.groupdict().get("n2"))
+            if t is None:
+                continue
+            v, _, _ = _num(t)
+            if v > 100 and not _GROWTH_BEFORE.search(s, max(0, m.start() - 16), m.start()):
+                out.append(_cand(m.start(), m.end(), "percent_remaining", C,
+                                 f"{t}% of the total is impossible: no part can be more than 100% of the whole.", 4))
+    return out
+
+
+# --------------------------------------------------------------------------- scan ---
+
+_CHECKS = (_check_ranges, _check_lifespans, _check_century, _check_units, _check_percent)
+
+
+def _resolve(cands: list) -> list:
+    import bisect
+    cands = [c for c in cands if c[1] > c[0]]
+    cands.sort(key=lambda c: (0 if c[3] is C else 1, c[5], c[0], -(c[1] - c[0])))
+    starts: list = []
+    ends: list = []
+    kept = []
+    for c in cands:
+        a, b = c[0], c[1]
+        i = bisect.bisect_left(starts, a)
+        if i > 0 and ends[i - 1] > a:
+            continue
+        if i < len(starts) and starts[i] < b:
+            continue
+        starts.insert(i, a)
+        ends.insert(i, b)
+        kept.append(c)
+    kept.sort(key=lambda c: (c[0], c[1]))
+    return kept
+
+
+def scan(text: str, *, today: Optional[datetime.date] = None) -> list[Finding]:
+    """Find claims in `text` that calculation alone can prove or refute.  See the module docstring."""
+    if not isinstance(text, str) or not text:
+        return []
+    if today is None:
+        today = datetime.date.today()
+    s = _mask_code(text.translate(_NORMALIZE))
+    cands: list = []
+    try:
+        cands += _check_dates(s, today)
+    except Exception:
+        pass
+    for fn in _CHECKS:
+        try:
+            cands += fn(s, today) if fn is _check_lifespans else fn(s)
+        except Exception:
+            pass
+    out = []
+    for n, (a, b, typ, status, reason, _prio, ev) in enumerate(_resolve(cands), 1):
+        if _CODE in s[a:b]:
+            continue
+        claim = Claim(id=f"m{len(out) + 1}", kind=ClaimKind.COMPUTED, text=text[a:b], start=a, end=b,
+                      data={"type": typ})
+        out.append(Finding(claim, status, MODULE, reason, ev))
+    return out
