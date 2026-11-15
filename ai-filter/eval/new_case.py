@@ -58,7 +58,8 @@ def main(argv=None, input_fn=input):
         corpus = json.load(open(a.corpus, encoding="utf-8"))
     corpus["cases"] = [c for c in corpus["cases"] if c["id"] != a.id] + [build_case(a.id, text, items)]
     json.dump(corpus, open(a.corpus, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print(f"\nบันทึกแล้ว: {a.corpus} ({len(corpus['cases'])} เคส) รันด้วย: python3 eval/run_eval.py --corpus {a.corpus} -v")
+    runner = os.path.relpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_eval.py"))
+    print(f"\nบันทึกแล้ว: {a.corpus} ({len(corpus['cases'])} เคส) รันด้วย: python3 {runner} --corpus {a.corpus} -v")
     return 0
 
 
