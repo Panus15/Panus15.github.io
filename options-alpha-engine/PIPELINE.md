@@ -758,6 +758,53 @@ and `f(hi) > 0` and is refused by the sign test first.
 
 ---
 
+### 2.7m The harness everything is compared against had no number in its tests
+
+`engine/hedged_backtest.py` is the delta-hedged short-straddle harness every other
+result here is measured against, and its first mutation sweep scored **49/78** —
+the weakest of any module. The 14 existing tests were all qualitative (the
+kill-switch fires, a crash hurts, the vega cap binds), so every cost term in the
+daily P&L could be wrong or absent and none noticed: the rebalancing cost (dropped,
+unsigned, priced without the share price), the entry spread (full instead of half,
+without its floor, without its proportional part), the opening hedge (absent, and
+the wrong size), time to expiry in calendar days, the unwind on liquidation, the
+whole `event_at` gate, and half of the vega-loss model.
+
+**The fix is an oracle.** One hedged trade is re-derived from the module's own
+docstring in a single function written differently from the engine, and it agreed
+with the engine bit-for-bit on four paths before being trusted:
+
+| path | trade P&L | what it isolates |
+|---|---|---|
+| flat | +226.2989 | no shares P&L: theta and every friction alone |
+| 1% sine wiggle | −656.9115 | opening hedge, yesterday's-delta shares, daily re-hedge |
+| 5% gap on day 4, 0.3% limit | −896.0623 | liquidated: exit spread **and** hedge unwind |
+| the same, limit 1% | −925.2948 | ridden to expiry |
+| gap on the expiry bar | −1011.3690 | **not** liquidated: nothing left to exit |
+
+A flat 63-bar warmup gives HAR a forecast of exactly 0.0, so the straddle is sold
+at the 5% IV floor — which pins the floor for free.
+
+**The `event_at` gate had no test at all.** Dropping it, handing it the whole price
+list, and shifting its bar by one all passed. It must see exactly the history
+through the entry bar, `len(trailing) == i + 1`. The regime gate runs first, so bars
+it skips never reach the event gate.
+
+**The vega model got two exact identities:** a zero shock cap or a zero beta must
+reproduce the constant-IV run to the last digit, and the defaults must not. The
+fixture that shows the model matters sits at a **2%** drawdown limit — at 25% the
+0.8 deadband means no trade ever sees a shock, so a test written there would have
+passed for the wrong reason.
+
+**74/74 mutants killed.** Four are documented and removed from the table:
+`max(peak, eq)` cannot matter because the outer floor already zeroes a negative
+drawdown; `>=` against `>` needs exact float equality; the realised-vol window is
+sliced `[-window:]` so extra history is discarded; and `killed_dd = dd_now` is
+**unreached, not proven equivalent** — it needs two liquidations in one run and none
+occurred in 240 grid scenarios plus 600 gaussian ones.
+
+---
+
 ### 2.8 The volatility input, measured against a known answer
 
 The fetcher discarded 5 of the 6 fields Yahoo already returns. The range carries
