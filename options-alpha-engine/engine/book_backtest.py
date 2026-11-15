@@ -111,6 +111,19 @@ def run_book_backtest(
               for i, s in enumerate(syms)}
 
     for t in range(warmup, n - 1):
+        # EQUITY ACCRUES AS P&L LANDS. It used to be credited with a trade's whole
+        # outcome the moment the trade was entered, but positions here overlap by
+        # design, so the next entry -- one bar later -- was sized by
+        # `size_by_cvar` and gated by the drawdown kill-switch against equity that
+        # already contained P&L from bars that had not happened yet. The
+        # day-by-day `pnl` array was right all along; only the scalar feeding the
+        # decisions ran ahead of it. Measured: up to 1.2 points of total return
+        # (+26.65% -> +25.46%) and different trade counts on the same paths.
+        # hedged_backtest is unaffected, because it advances by `dte` and every
+        # trade is fully resolved before the next entry.
+        if t > warmup:
+            equity += pnl[t - 1]
+            peak = max(peak, equity)
         # retire anything that expired at this bar
         for s in [s for s, (exp, _) in open_until.items() if exp <= t]:
             _, pos = open_until.pop(s)
@@ -184,8 +197,6 @@ def run_book_backtest(
                 total += day
                 v_prev, hedge_prev = v_now, hedge_now
             trades.append(total)
-            equity += total
-            peak = max(peak, equity)
 
         if open_until:
             max_open = max(max_open, len(open_until))

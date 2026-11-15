@@ -114,6 +114,63 @@ def test_it_refuses_an_empty_universe_with_a_useful_message():
     raise AssertionError("an empty symbol set should raise, not return a fake result")
 
 
+
+def _gauss_world(n=700, seed=1, vol=0.012, crash_at=None):
+    """Three symbols on seeded random walks, with an optional 12-bar crash."""
+    import math
+    import random
+    rng = random.Random(seed)
+    out = {}
+    for sym in ("AAA", "BBB", "CCC"):
+        pr = [100.0]
+        for i in range(n - 1):
+            step = rng.gauss(0.0002, vol)
+            if crash_at is not None and crash_at <= i < crash_at + 12:
+                step = rng.gauss(-0.035, vol * 4)
+            pr.append(pr[-1] * math.exp(step))
+        out[sym] = pr
+    return out
+
+
+def test_equity_accrues_as_pnl_lands_not_when_the_trade_is_entered():
+    """The kill-switch and the CVaR sizer both read `equity`, and positions here
+    overlap by design, so the next entry -- one bar later -- used to be sized and
+    gated against equity that already contained the WHOLE outcome of trades that
+    had barely started. The day-by-day P&L array was right; the scalar feeding
+    the decisions ran ahead of it.
+
+    Measured on the pre-fix code, 3 symbols, 700 bars, max_drawdown 0.2%:
+
+        seed 1, crash at 300:  1 trade made (kill-switch latched for 79 entries)
+                               against 23 once equity accrues as it lands.
+        seed 2, no crash, 0.5%: kill-switch never fired, against once.
+
+    The first is the dramatic one -- a single early losing trade, debited in full
+    at entry, held the book out of the market for the rest of the run -- and the
+    second is the quiet one: a real drawdown the old scalar could not see.
+    """
+    lim = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.002)
+    r = run_book_backtest(_gauss_world(seed=1, crash_at=300), dte=21, warmup=63,
+                          limits=lim)
+    assert r.n_trades == 23, r.n_trades
+    assert r.skip_reasons.get("kill_switch", 0) == 51, r.skip_reasons
+
+    lim2 = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.005)
+    q = run_book_backtest(_gauss_world(seed=2), dte=21, warmup=63, limits=lim2)
+    assert q.skip_reasons.get("kill_switch", 0) == 1, q.skip_reasons
+    assert q.n_trades == 57, q.n_trades
+
+
+def test_a_book_that_never_draws_down_is_unchanged_by_accrual():
+    """Accrual must not move a run whose equity only ever rises between entries:
+    with a drawdown limit it never approaches, the result is the same trades."""
+    wide = portfolio.RiskLimits(max_net_short_vega=8_000.0, max_drawdown=0.9)
+    r = run_book_backtest(_gauss_world(n=900, seed=1), dte=21, warmup=63, limits=wide)
+    assert r.skip_reasons.get("kill_switch", 0) == 0
+    assert (r.n_trades, r.n_blocked_by_vega_cap) == (82, 19), (
+        r.n_trades, r.n_blocked_by_vega_cap)
+    assert abs(r.metrics.total_return - 0.0903) < 5e-4, r.metrics.total_return
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
