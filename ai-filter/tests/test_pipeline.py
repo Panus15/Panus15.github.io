@@ -23,7 +23,7 @@ def ok(url, body=b"<html><title>Real page</title></html>"):
 
 
 GOOD_URL = "https://www.nature.com/articles/real-paper"
-DEAD_URL = "https://www.example.org/reports/2023/made-up-study"
+DEAD_URL = "https://reports.acme-news.net/2023/made-up-study"   # NOT example.*: cues rightly flag those as placeholders
 GOOD_DOI = "10.1038/real.2020.1"
 FAKE_DOI = "10.9999/totally.fake.2021"
 
@@ -78,7 +78,7 @@ def test_planted_defects_are_caught_and_controls_pass():
 def test_every_extracted_claim_gets_exactly_one_finding():
     fs = pipeline.run(ANSWER, FakeFetcher(routes()))
     claims = extract.extract(ANSWER)
-    ids = [f.claim.id for f in fs if f.module != "vague"]
+    ids = [f.claim.id for f in fs if f.module in ("citations", "recompute", "sandbox", "pipeline")]
     assert sorted(ids) == sorted(c.id for c in claims)
     assert len(ids) == len(set(ids))
 
@@ -106,7 +106,8 @@ def test_a_crashing_checker_degrades_to_unverified_not_a_crash():
         fs = pipeline.run("2 + 2 = 5", FakeFetcher({}))
     finally:
         recompute.check = real
-    assert len(fs) == 1 and fs[0].status is U and "could not check" in fs[0].reason
+    mine = [f for f in fs if f.module == "recompute"]
+    assert len(mine) == 1 and mine[0].status is U and "could not check" in mine[0].reason
 
 
 def test_unhandled_claim_kind_is_not_silently_dropped():

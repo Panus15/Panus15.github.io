@@ -27,7 +27,7 @@ from typing import Callable, Optional
 from engine import citations, extract, recompute, sandbox, vague
 from engine.llm import LLM, LLMError
 from engine.models import Claim, ClaimKind, Finding, Status
-from engine.net import Fetcher, UrllibFetcher
+from engine.net import Fetcher, OfflineFetcher, UrllibFetcher
 from engine.search import SearchClient
 
 
@@ -36,6 +36,8 @@ class AIConfig:
     llm: LLM
     search: Optional[SearchClient] = None     # None -> official-source checks are reported as unavailable
     max_fact_claims: int = 10
+    samples: int = 3                          # independent re-answers for the consistency check (needs a question)
+    general_fallback: bool = True             # consult general references (Wikipedia, ...) when no official source decides
 
 
 def _ai_note(kind_id: str, reason: str) -> Finding:
@@ -47,8 +49,15 @@ def _inside(inner: Claim, outer: Claim) -> bool:
     return outer.start <= inner.start and inner.end <= outer.end
 
 
+def _note(name: str, e: Exception) -> Finding:
+    """A finding about the filter itself: one of its checkers broke. Never an accusation."""
+    return Finding(Claim(f"{name}0", ClaimKind.CUE, "", 0, 0), Status.UNVERIFIED, name,
+                   f"the {name} check could not run ({type(e).__name__})")
+
+
 def run(text: str, fetcher: Optional[Fetcher] = None, *, run_code: bool = False,
-        timeout: float = 10.0, ai: Optional[AIConfig] = None) -> list[Finding]:
+        timeout: float = 10.0, ai: Optional[AIConfig] = None,
+        question: Optional[str] = None) -> list[Finding]:
     claims = extract.extract(text)
     findings: list[Finding] = []
     # One fetcher for the whole run: citations and the support check then share
@@ -70,8 +79,31 @@ def run(text: str, fetcher: Optional[Fetcher] = None, *, run_code: bool = False,
     guarded("recompute", {ClaimKind.ARITHMETIC}, recompute.check)
     guarded("sandbox", {ClaimKind.CODE}, lambda cs: sandbox.check(cs, run=run_code))
 
+    # Topic-independent checks: they need no knowledge base, so they apply to every kind of answer.
+    # Each is imported INSIDE its own try: a module that fails even to import (not only to run)
+    # costs that module, never the whole report.
+    offline = isinstance(fetcher, OfflineFetcher)
+
+    def _cue():
+        from engine import cues
+        return cues.scan(text, question=question)
+
+    def _computable():
+        from engine import computable
+        return computable.scan(text)
+
+    def _codecheck():
+        from engine import codecheck
+        return codecheck.scan(text, claims, fetcher=fetcher, registries=not offline)
+
+    for name, fn in (("cue", _cue), ("computable", _computable), ("codecheck", _codecheck)):
+        try:
+            findings.extend(fn())
+        except Exception as e:
+            findings.append(_note(name, e))
+
     if ai is not None:
-        findings = _run_ai(text, claims, findings, fetcher, ai)
+        findings = _run_ai(text, claims, findings, fetcher, ai, question)
 
     covered = {f.claim.id for f in findings}
     for c in claims:
@@ -94,9 +126,9 @@ def run(text: str, fetcher: Optional[Fetcher] = None, *, run_code: bool = False,
 
 
 def _run_ai(text: str, claims: list[Claim], findings: list[Finding], fetcher: Fetcher,
-            ai: AIConfig) -> list[Finding]:
+            ai: AIConfig, question: Optional[str] = None) -> list[Finding]:
     # Imported here so that phase-1 use never needs (or loads) any AI module.
-    from engine import ai_extract, official, support
+    from engine import ai_extract, consistency, official, support
 
     # (a) does the page behind each link actually say what the answer says?
     try:
@@ -123,11 +155,17 @@ def _run_ai(text: str, claims: list[Claim], findings: list[Finding], fetcher: Fe
     if ai.search is None:
         out += [Finding(c, Status.UNVERIFIED, "official",
                         "not checked: no web-search key configured (set BRAVE_API_KEY)") for c in fact_claims]
-        return out
-    try:
-        out += official.check(fact_claims, llm=ai.llm, search=ai.search, fetcher=fetcher,
-                              max_claims=ai.max_fact_claims)
-    except Exception as e:
-        out += [Finding(c, Status.UNVERIFIED, "official",
-                        f"could not check ({type(e).__name__})") for c in fact_claims]
+    else:
+        try:
+            out += official.check(fact_claims, llm=ai.llm, search=ai.search, fetcher=fetcher,
+                                  max_claims=ai.max_fact_claims, general_fallback=ai.general_fallback)
+        except Exception as e:
+            out += [Finding(c, Status.UNVERIFIED, "official",
+                            f"could not check ({type(e).__name__})") for c in fact_claims]
+    # Re-ask the question: needs no search key and no knowledge base, so it works on any topic.
+    if question and question.strip():
+        try:
+            out += consistency.check(question, text, ai.llm, n_samples=ai.samples, facts=fact_claims)
+        except Exception as e:
+            out.append(_note("consistency", e))
     return out

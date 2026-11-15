@@ -8,6 +8,7 @@
     python3 cli.py check answer.md --offline       # no network; lookups come back UNVERIFIED
     python3 cli.py check answer.md --run-code      # ALSO execute Python blocks (see warning)
     python3 cli.py check answer.md --ai            # AI claim extraction, official-source and page checks
+    python3 cli.py check answer.md --ai --question "What was asked?"   # also re-asks it and flags unstable claims
 
 --ai SENDS DATA TO THIRD PARTIES: the answer text goes to the Anthropic API, and
 search queries derived from it go to the Brave Search API; fetched pages are sent
@@ -56,8 +57,14 @@ def _build_ai(args, env=None):
     search = BraveSearch() if env.get("BRAVE_API_KEY") else None
     print("aifilter: --ai is on. The answer text is being sent to the Anthropic API"
           + (", search queries to Brave Search," if search else "; no BRAVE_API_KEY, so official-source search is skipped,")
-          + " and fetched pages to Anthropic for judging.", file=sys.stderr)
-    return AIConfig(llm=llm, search=search), None
+          + " and fetched pages to Anthropic for judging."
+          + (f" With --question, the question is also re-asked {getattr(args, 'samples', 3)} times (about {2 * getattr(args, 'samples', 3) + 1} extra LLM calls)."
+             if getattr(args, "question", None) else ""), file=sys.stderr)
+    samples = getattr(args, "samples", 3)
+    if not 2 <= samples <= 10:
+        return None, "--samples must be between 2 and 10"
+    return AIConfig(llm=llm, search=search, samples=samples,
+                    general_fallback=not getattr(args, "no_general_reference", False)), None
 
 
 def main(argv=None, stdin=None, stdout=None) -> int:
@@ -71,6 +78,11 @@ def main(argv=None, stdin=None, stdout=None) -> int:
     c.add_argument("--offline", action="store_true", help="never touch the network")
     c.add_argument("--run-code", action="store_true", help="execute Python code blocks (read the warning)")
     c.add_argument("--timeout", type=float, default=10.0, help="per-request network timeout, seconds")
+    c.add_argument("--question", default=None, metavar="TEXT|@FILE",
+                   help="the question the answer responds to; improves cues, and with --ai enables the re-ask check")
+    c.add_argument("--samples", type=int, default=3, help="independent re-answers for the --ai consistency check (2-10)")
+    c.add_argument("--no-general-reference", action="store_true",
+                   help="with --ai: never fall back to general references such as Wikipedia")
     c.add_argument("--ai", action="store_true", help="enable AI-assisted checks (sends text to third parties; read the notice)")
     c.add_argument("--model", default=None, help="Claude model for --ai (default: claude-opus-5-5)")
     c.add_argument("--max-llm-calls", type=int, default=40, help="hard cap on LLM calls per run (default 40)")
@@ -97,6 +109,17 @@ def main(argv=None, stdin=None, stdout=None) -> int:
         print("aifilter: input is not valid UTF-8", file=sys.stderr)
         return 3
 
+    question = None
+    if args.question:
+        q = args.question
+        if q.startswith("@"):
+            try:
+                with open(q[1:], "rb") as fh:
+                    q = fh.read(100_000).decode("utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                print(f"aifilter: cannot read question file {q[1:]}: {getattr(e, 'strerror', 'not valid UTF-8')}", file=sys.stderr)
+                return 3
+        question = q
     ai = None
     if args.ai:
         if args.offline:
@@ -107,7 +130,7 @@ def main(argv=None, stdin=None, stdout=None) -> int:
             print(f"aifilter: {err}", file=sys.stderr)
             return 3
     findings = pipeline.run(text, OfflineFetcher() if args.offline else None,
-                            run_code=args.run_code, timeout=args.timeout, ai=ai)
+                            run_code=args.run_code, timeout=args.timeout, ai=ai, question=question)
     out = (json.dumps(report.to_dict(findings), ensure_ascii=False, indent=2)
            if args.json else report.render(findings))
     if args.output:
