@@ -30,7 +30,7 @@ def html(url, body):
     return FetchResult(url, url, 200, body, headers={"content-type": "text/html; charset=utf-8"})
 
 
-def make_llm(extract_claims, judge=None, queries=("WHO founded year",), fail_extract=False):
+def make_llm(extract_claims, judge=None, queries=("WHO founded year",), fail_extract=False, concerns=(), fail_critique=False):
     """LLM stub that dispatches on which schema it was asked to fill."""
     def script(system, user, schema):
         keys = set(schema.get("properties", {}))
@@ -40,6 +40,10 @@ def make_llm(extract_claims, judge=None, queries=("WHO founded year",), fail_ext
             return {"claims": extract_claims}
         if "queries" in keys:
             return {"queries": list(queries)}
+        if "concerns" in keys:
+            if fail_critique:
+                raise LLMError("critique boom")
+            return {"concerns": list(concerns)}
         if "verdict" in keys:
             return judge(user) if callable(judge) else judge
         raise AssertionError(f"unexpected schema {keys}")
@@ -217,6 +221,45 @@ def test_llm_call_budget_is_enforced():
     assert llm.calls == 1
     assert official(fs) and all(f.status is U for f in official(fs))
     assert verdict(fs) is Verdict.REVIEW
+
+
+# ------------------------------------------------------- critique ("which parts may be wrong?")
+
+ADVICE = ("การอบผ้าของหลายคนพร้อมกันยังแห้งสนิทได้ในครั้งเดียว ทำได้โดยใช้ถุงตาข่ายแยกรายบุคคล "
+          "ห้ามยัดผ้าจนแน่นเป็นก้อนเด็ดขาด และควรเปิดตู้เขย่าถุงช่วงกลางรอบ\n")
+
+
+def test_advice_answer_with_no_facts_still_gets_the_critique():
+    # an answer that is advice, not facts, yields no FACT claims; the review must still run
+    concern = {"span": "ยังแห้งสนิทได้ในครั้งเดียว ทำได้โดยใช้ถุงตาข่ายแยกรายบุคคล", "kind": "mechanism",
+               "concern": "clothes packed in a bag may not tumble apart, so they may stay damp"}
+    llm = make_llm([], None, concerns=[concern])
+    fs, _ = run_ai(ADVICE, llm, None)
+    rv = [f for f in fs if f.module == "critique"]
+    assert len(rv) == 1 and rv[0].status is U and rv[0].tag == "ai_critique"
+    assert "unverified" in rv[0].reason.lower() and ADVICE[rv[0].claim.start:rv[0].claim.end] == rv[0].claim.text
+    assert not [f for f in fs if f.status is C]            # an opinion can never contradict
+    assert verdict(fs) is Verdict.REVIEW
+
+
+def test_critique_failure_is_visible_not_fatal():
+    llm = make_llm([], None, fail_critique=True)
+    fs, _ = run_ai(ADVICE, llm, None)
+    notes = [f for f in fs if f.module == "ai" and "review unavailable" in f.reason]
+    assert notes and notes[0].status is U
+
+
+def test_critique_can_be_switched_off_and_then_makes_no_call():
+    llm = make_llm([], None, concerns=[{"span": "x" * 20, "kind": "other", "concern": "c"}])
+    fs = pipeline.run(ADVICE, FakeFetcher({}), ai=AIConfig(llm=llm, search=None, critique=False))
+    assert not [f for f in fs if f.module == "critique"]
+    assert not any("concerns" in (h["schema"].get("properties") or {}) for h in llm.history)
+
+
+def test_a_hijacked_reviewer_inventing_a_span_adds_nothing():
+    llm = make_llm([], None, concerns=[{"span": "this sentence was never in the answer at all", "kind": "mechanism", "concern": "bogus"}])
+    fs, _ = run_ai(ADVICE, llm, None)
+    assert not [f for f in fs if f.module == "critique"]
 
 
 # ------------------------------------------------------------------------- CLI

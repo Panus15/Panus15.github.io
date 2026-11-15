@@ -59,6 +59,8 @@ CUE_WEIGHTS: dict[str, int] = {
     "placeholder_url": 3,            # a template address cannot be a source
     "unsourced_quote": 3,            # fabricated quotations are a known failure
     "inconsistent_across_samples": 3,  # independent answers disagree: the model was guessing
+    "ai_critique": 2,                # an unverified doubt raised by a model reviewing the answer
+    "fragile_promise": 2,            # promises complete success, then lists ways its own method fails
     "absolute_claim": 2,
     "named_expert_claim": 2,
     "count_mismatch": 2,

@@ -38,6 +38,7 @@ class AIConfig:
     max_fact_claims: int = 10
     samples: int = 3                          # independent re-answers for the consistency check (needs a question)
     general_fallback: bool = True             # consult general references (Wikipedia, ...) when no official source decides
+    critique: bool = True                     # ask the model which parts of the answer may be wrong (1 extra call)
 
 
 def _ai_note(kind_id: str, reason: str) -> Finding:
@@ -135,37 +136,48 @@ def _run_ai(text: str, claims: list[Claim], findings: list[Finding], fetcher: Fe
         findings = support.refine(text, findings, llm=ai.llm, fetcher=fetcher)
     except Exception as e:  # keep the phase-1 findings if refinement breaks
         findings = findings + [_ai_note("a0s", f"could not check whether pages support their claims ({type(e).__name__})")]
+    out = list(findings)
 
-    # (b) AI-proposed factual claims, verified against official sources.
+    # (b) AI-proposed factual claims, verified against sources. Answers that are advice, not facts,
+    # legitimately yield none -- and must still reach the critique below, so nothing here returns early.
+    fact_claims: list[Claim] = []
     try:
         facts = ai_extract.extract_facts_ex(text, ai.llm)
+        fact_claims = [c for c in facts.claims
+                       if not any(_inside(c, o) for o in claims
+                                  if o.kind in (ClaimKind.ARITHMETIC, ClaimKind.CODE))]
+        if facts.truncated:
+            out.append(_ai_note("a0t", "the answer was too long to analyse completely for factual claims"))
     except LLMError as e:
-        return findings + [_ai_note("a0", f"AI claim extraction unavailable ({e})")]
+        out.append(_ai_note("a0", f"AI claim extraction unavailable ({e})"))
     except Exception as e:
-        return findings + [_ai_note("a0", f"AI claim extraction failed ({type(e).__name__})")]
+        out.append(_ai_note("a0", f"AI claim extraction failed ({type(e).__name__})"))
 
-    fact_claims = [c for c in facts.claims
-                   if not any(_inside(c, o) for o in claims
-                              if o.kind in (ClaimKind.ARITHMETIC, ClaimKind.CODE))]
-    out = list(findings)
-    if facts.truncated:
-        out.append(_ai_note("a0t", "the answer was too long to analyse completely for factual claims"))
-    if not fact_claims:
-        return out
-    if ai.search is None:
-        out += [Finding(c, Status.UNVERIFIED, "official",
-                        "not checked: no web-search key configured (set BRAVE_API_KEY)") for c in fact_claims]
-    else:
-        try:
-            out += official.check(fact_claims, llm=ai.llm, search=ai.search, fetcher=fetcher,
-                                  max_claims=ai.max_fact_claims, general_fallback=ai.general_fallback)
-        except Exception as e:
+    if fact_claims:
+        if ai.search is None:
             out += [Finding(c, Status.UNVERIFIED, "official",
-                            f"could not check ({type(e).__name__})") for c in fact_claims]
-    # Re-ask the question: needs no search key and no knowledge base, so it works on any topic.
-    if question and question.strip():
+                            "not checked: no web-search key configured (set BRAVE_API_KEY)") for c in fact_claims]
+        else:
+            try:
+                out += official.check(fact_claims, llm=ai.llm, search=ai.search, fetcher=fetcher,
+                                      max_claims=ai.max_fact_claims, general_fallback=ai.general_fallback)
+            except Exception as e:
+                out += [Finding(c, Status.UNVERIFIED, "official",
+                                f"could not check ({type(e).__name__})") for c in fact_claims]
+        # Re-ask the question: needs no search key and no knowledge base, so it works on any topic.
+        if question and question.strip():
+            try:
+                out += consistency.check(question, text, ai.llm, n_samples=ai.samples, facts=fact_claims)
+            except Exception as e:
+                out.append(_note("consistency", e))
+
+    # (c) "which parts of this may be wrong?" -- an OPINION, shown as a doubt to check, never as a verdict.
+    if ai.critique:
         try:
-            out += consistency.check(question, text, ai.llm, n_samples=ai.samples, facts=fact_claims)
+            from engine import critique      # imported here: a broken module costs the review, not the run
+            out += critique.check(question, text, ai.llm)
+        except LLMError as e:
+            out.append(_ai_note("r0", f"AI review unavailable ({e})"))
         except Exception as e:
-            out.append(_note("consistency", e))
+            out.append(_note("critique", e))
     return out

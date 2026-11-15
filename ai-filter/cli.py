@@ -58,13 +58,16 @@ def _build_ai(args, env=None):
     print("aifilter: --ai is on. The answer text is being sent to the Anthropic API"
           + (", search queries to Brave Search," if search else "; no BRAVE_API_KEY, so official-source search is skipped,")
           + " and fetched pages to Anthropic for judging."
+          + (" A review pass asks the model which parts of the answer may be wrong (1 more call; its doubts are shown as unverified)."
+             if not getattr(args, "no_critique", False) else "")
           + (f" With --question, the question is also re-asked {getattr(args, 'samples', 3)} times (about {2 * getattr(args, 'samples', 3) + 1} extra LLM calls)."
              if getattr(args, "question", None) else ""), file=sys.stderr)
     samples = getattr(args, "samples", 3)
     if not 2 <= samples <= 10:
         return None, "--samples must be between 2 and 10"
     return AIConfig(llm=llm, search=search, samples=samples,
-                    general_fallback=not getattr(args, "no_general_reference", False)), None
+                    general_fallback=not getattr(args, "no_general_reference", False),
+                    critique=not getattr(args, "no_critique", False)), None
 
 
 def main(argv=None, stdin=None, stdout=None) -> int:
@@ -81,6 +84,8 @@ def main(argv=None, stdin=None, stdout=None) -> int:
     c.add_argument("--question", default=None, metavar="TEXT|@FILE",
                    help="the question the answer responds to; improves cues, and with --ai enables the re-ask check")
     c.add_argument("--samples", type=int, default=3, help="independent re-answers for the --ai consistency check (2-10)")
+    c.add_argument("--no-critique", action="store_true",
+                   help="with --ai: skip the 'which parts may be wrong?' review (saves one LLM call)")
     c.add_argument("--no-general-reference", action="store_true",
                    help="with --ai: never fall back to general references such as Wikipedia")
     c.add_argument("--ai", action="store_true", help="enable AI-assisted checks (sends text to third parties; read the notice)")
