@@ -26,6 +26,16 @@ fails -- so a harness that quietly flattered the wings would have reversed a fin
 MUTANTS THAT DELETE `t += dte` ARE NOT TRIED. They loop forever and the runner's only
 defence is a ten-minute timeout per mutant, which costs far more than the information
 is worth; the advance is exercised by every test that counts periods.
+
+ONE EQUIVALENT MUTANT IS DELIBERATELY ABSENT. `rem <= 0` against `rem < 0` in the
+daily mark decides whether the expiry bar is settled at intrinsic or priced by the
+model at a zero tenor, and `pricing.price` at T = 0 returns exactly intrinsic --
+checked on calls and puts in, at and out of the money. The two branches give the
+same number on the only bar where they differ.
+
+THE DEGENERATE-STRUCTURE GUARD IS REACHED BY SUBSTITUTING THE BUILDER. The spread
+builders already refuse a zero-width wing, so `max_loss <= 0` cannot arrive through
+them; the guard exists for a builder that hands one over, and the test makes one.
 """
 
 TARGET = "engine/spread_backtest.py"
@@ -48,7 +58,6 @@ MUTANTS = [
  ("unmarkable leg accepted",      "    if any(v is None for _, v in legs):", "    if False:"),
  ("liability wings added",        "            total += px if leg.side == \"short\" else -px", "            total += px"),
  ("liability sides swapped",      "            total += px if leg.side == \"short\" else -px", "            total += -px if leg.side == \"short\" else px"),
- ("expiry priced not settled",    "                  else max(leg.strike - S, 0.0)) if rem <= 0 else \\", "                  else max(leg.strike - S, 0.0)) if rem < 0 else \\"),
  ("daily pnl sign flipped",       "        day[s] = mult * (prev - now)", "        day[s] = mult * (now - prev)"),
  ("daily pnl multiplier dropped", "        day[s] = mult * (prev - now)", "        day[s] = (prev - now)"),
  ("liability not carried forward", "        prev = now\n    return day", "        pass\n    return day"),

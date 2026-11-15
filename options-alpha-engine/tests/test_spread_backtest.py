@@ -429,6 +429,139 @@ def test_the_exit_split_note_states_its_sample_and_its_provenance():
         assert f"{v:.0%}" in EXIT_SPLIT_NOTE
 
 
+
+# --------------------------------------------------------------------------- #
+# The bookkeeping and the verdict. The tests above pin the economics; nothing
+# pinned the ledger the result is reported from, or the three verdict branches
+# at their boundaries -- 16 of 74 first-sweep defects survived for that reason.
+# --------------------------------------------------------------------------- #
+from engine import backtest as _bt
+from engine.spread_backtest import SpreadBacktestResult
+
+
+def _base():
+    return run_spread_backtest(PRICES, _chains(), FC, always_sell=True)
+
+
+def test_the_equity_curve_is_the_sum_of_the_trades():
+    """Held to expiry the daily marks telescope, so the curve's total must equal
+    the sum of the trades it reports. A curve that books nothing would still
+    report every trade and every worst/best figure."""
+    r = _base()
+    assert r.n_sold == 29 and r.skip_reasons == {"no_structure": 10}
+    total = sum(t["pnl"] for t in r.trades)
+    assert abs((r.metrics.equity_curve[-1] - 100_000.0) - total) < 1e-3, total
+    assert abs(total - (-880.5619)) < 1e-3, total
+
+
+def test_the_curve_starts_after_the_warmup():
+    r = _base()
+    assert len(r.metrics.equity_curve) == len(PRICES) - 63 + 1
+
+
+def test_worst_and_best_are_the_extremes_of_the_trades():
+    r = _base()
+    pn = [t["pnl"] for t in r.trades]
+    assert r.worst_trade == min(pn) and r.best_trade == max(pn)
+    assert abs(r.worst_trade - (-558.60)) < 1e-6 and abs(r.best_trade - 290.40) < 1e-6
+
+
+def test_each_trade_settles_on_its_own_expiry_bar():
+    r = _base()
+    assert all(t["terminal"] == PRICES[t["t"] + 21] for t in r.trades)
+
+
+def test_the_cap_budget_includes_the_commission_it_will_pay():
+    """The worst loss the structure ALLOWED is the width times the multiplier
+    PLUS a commission on every leg -- the bound `realize_spread` documents."""
+    r = _base()
+    want = max(100.0 * t["max_loss"] + 0.65 * 4 for t in r.trades)
+    assert abs(r.max_loss_budgeted - want) < 1e-9, (r.max_loss_budgeted, want)
+    assert abs(r.max_loss_budgeted - 648.20) < 1e-6
+
+
+def test_the_wing_counter_counts_only_trades_where_a_wing_finished_in_the_money():
+    """`n_capped` is the evidence that the wings did anything. On this path a long
+    wing finished in the money on 2 of 29 trades; testing either side backwards
+    would count most of the book as 'capped'."""
+    r = _base()
+    assert r.n_capped == 2, r.n_capped
+
+
+def test_the_ev_gate_refuses_a_trade_whose_ev_equals_the_minimum():
+    """`ev <= min_ev` is a strict demand for a positive margin: a trade that only
+    matches the bar is not sold. Setting the bar to a sold trade's exact EV must
+    drop that trade."""
+    gated = run_spread_backtest(PRICES, _chains(), FC)
+    first = gated.trades[0]
+    again = run_spread_backtest(PRICES, _chains(), FC, min_ev=first["ev"])
+    assert not any(t["t"] == first["t"] for t in again.trades)
+
+
+def test_the_event_gate_sees_only_the_past():
+    seen = []
+
+    def spy(t, trailing):
+        seen.append((t, len(trailing)))
+        return False
+
+    run_spread_backtest(PRICES, _chains(), FC, always_sell=True, event_at=spy)
+    assert seen and all(n == t + 1 for t, n in seen), seen[:3]
+
+
+def test_a_zero_width_structure_is_refused_as_degenerate():
+    """The builder already refuses a zero-width wing, so the guard is only
+    reachable if a builder hands one over -- which is the case it exists for."""
+    from types import SimpleNamespace
+    real = spreads.iron_condor
+
+    def zero_width(*a, **k):
+        return SimpleNamespace(max_loss=0.0, ev=1.0, net_credit=1.0, legs=[],
+                               contract_mult=100.0, max_gain=1.0)
+
+    spreads.iron_condor = zero_width
+    try:
+        r = run_spread_backtest(PRICES, _chains(), FC, always_sell=True)
+    finally:
+        spreads.iron_condor = real
+    assert r.n_sold == 0 and r.skip_reasons == {"degenerate": r.n_periods}
+
+
+def test_an_empty_series_is_returned_as_held_to_expiry():
+    _, sp = _one_spread()
+    out, bar, why = apply_exit_rule({}, sp, 200, 21)
+    assert (out, bar, why) == ({}, None, "expiry")
+
+
+def _verdict(spread_ret, naked_ret, worst, naked_worst, n_sold=10):
+    def m(ret):
+        return _bt.run_backtest([ret * 100_000.0], starting_equity=100_000.0)
+    return SpreadBacktestResult(metrics=m(spread_ret), n_periods=10, n_sold=n_sold,
+                                worst_trade=worst, naked=m(naked_ret),
+                                naked_worst=naked_worst, n_naked=10).verdict()
+
+
+def test_a_naked_worst_of_exactly_zero_is_a_calm_sample():
+    """Zero is not a loss, so a naked book whose worst trade was break-even had no
+    tail for the wings to cap."""
+    assert _verdict(0.01, 0.03, -100.0, 0.0).startswith("NOTHING STRESSED")
+
+
+def test_an_equal_tail_is_reported_as_worse_not_as_a_saving():
+    """A tail saving of exactly zero bought nothing for the return given up."""
+    assert "simply worse" in _verdict(0.01, 0.03, -500.0, -500.0)
+
+
+def test_the_return_given_up_is_naked_minus_spread():
+    """Reported as a positive cost when the naked book earned more."""
+    v = _verdict(0.01, 0.03, -300.0, -900.0)
+    assert "600 smaller worst trade" in v and "2.0% of return" in v, v
+
+
+def test_a_spread_that_gave_up_nothing_is_treated_as_suspicious():
+    v = _verdict(0.03, 0.03, -300.0, -900.0)
+    assert "gave up NOTHING" in v and "too good to accept" in v, v
+
 def _run_all():
     tests = [v for k, v in globals().items() if k.startswith("test_") and callable(v)]
     failed = 0
