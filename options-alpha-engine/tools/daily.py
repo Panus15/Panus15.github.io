@@ -260,6 +260,12 @@ _EMIT = {
 }
 
 
+#: Flags whose parser default is NOT empty, so an explicit '' has to be written
+#: out to survive the trip into the scheduled job. Every other flag defaults to
+#: '' already, where dropping an empty value changes nothing.
+_EMPTY_MEANS_SKIP = {"holdings"}
+
+
 def _q(v) -> str:
     """Quote a value for a shell/batch line. Paths on Windows contain spaces."""
     v = str(v)
@@ -271,8 +277,15 @@ def job_command(cfg: dict, *, python: str | None = None) -> str:
     py = python or sys.executable or "python3"
     parts = [_q(py), "-m", "tools.daily", "run"]
     for key, want in _EMIT.items():
-        if want(cfg) and cfg.get(key) not in (None, ""):
-            parts += [f"--{key.replace('_', '-')}", _q(cfg[key])]
+        val = cfg.get(key)
+        if key in _EMPTY_MEANS_SKIP and val == "":
+            # '' is an instruction here, not an absence: it means SKIP this
+            # step. Dropping it lets the parser's non-empty default come back,
+            # so the scheduled job ran a step the operator had switched off.
+            parts.append(f"--{key.replace('_', '-')}=")
+            continue
+        if want(cfg) and val not in (None, ""):
+            parts += [f"--{key.replace('_', '-')}", _q(val)]
     return " ".join(parts)
 
 
@@ -350,7 +363,12 @@ def _cfg(a) -> dict:
             "events": a.events, "sources": a.sources, "source": a.source,
             "dte": a.dte, "currency": a.currency, "symbol": a.symbol,
             "chain_json": a.chain_json,
-            "price_json": a.price_json, "equity": a.equity}
+            "price_json": a.price_json, "equity": a.equity,
+            # `dashboard` was parsed and never copied in, so `--dashboard` was
+            # accepted and then silently ignored -- on a manual run AND in the
+            # scheduled job. Found on the first real Windows install: the run
+            # printed no dashboard step, and the written job had no --dashboard.
+            "dashboard": a.dashboard}
 
 
 def main(argv=None):

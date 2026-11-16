@@ -421,6 +421,56 @@ def test_install_writes_the_wrapper_but_schedules_nothing_without_apply():
 
 
 
+def _cfg_as_parsed(argv):
+    """The cfg `main` actually builds from a command line -- the real path, not
+    a hand-made dict. Every test above builds its cfg by hand, which is why a
+    flag the parser accepted and `_cfg` never copied went unnoticed."""
+    got = {}
+    real = daily.status
+    daily.status = lambda cfg: (got.update(cfg), "")[1]
+    try:
+        with redirect_stdout(io.StringIO()):
+            daily.main(["status"] + list(argv))
+    finally:
+        daily.status = real
+    return got
+
+
+def test_every_flag_typed_reaches_the_config_it_runs_with():
+    """Found on the first real Windows install: `--dashboard dashboard.html` was
+    parsed, never copied into the config, and so never rendered -- not on a
+    manual run, not in the scheduled job."""
+    cfg = _cfg_as_parsed(["--ledger", "btc.jsonl", "--holdings=",
+                          "--dashboard", "dashboard.html"])
+    assert cfg["dashboard"] == "dashboard.html", cfg
+    assert cfg["holdings"] == "" and cfg["ledger"] == "btc.jsonl"
+
+
+def test_the_scheduled_job_runs_with_exactly_what_was_installed():
+    """Round trip: what the operator typed -> the command written into the
+    scheduled job -> parsed back. The two configs must match.
+
+    Two things broke this on the first real install. `--dashboard` never reached
+    the config, and `--holdings=` -- an empty value that MEANS skip -- was dropped
+    when the job was written, so the parser's default 'holdings' came back and
+    the job ran a step the operator had switched off.
+    """
+    import shlex
+    typed = ["--ledger", "btc.jsonl", "--holdings=", "--dashboard", "dashboard.html"]
+    want = _cfg_as_parsed(typed)
+    cmd = daily.job_command(want, python="python3")
+    assert "--holdings=" in cmd and "--dashboard dashboard.html" in cmd, cmd
+    emitted = shlex.split(cmd)[cmd.split().index("run") + 1:]
+    back = _cfg_as_parsed(emitted)
+    for key in ("holdings", "ledger", "dashboard", "source", "dte", "currency"):
+        assert back[key] == want[key], (key, back[key], want[key])
+
+    # and the default -- fund books ON -- survives too, rather than being skipped
+    dflt = _cfg_as_parsed(["--ledger", "btc.jsonl"])
+    again = _cfg_as_parsed(shlex.split(daily.job_command(dflt, python="python3"))[4:])
+    assert again["holdings"] == dflt["holdings"] == "holdings"
+
+
 def test_a_space_in_a_configured_path_survives():
     """Not only the interpreter. A ledger under "C:\\My Data\\" is ordinary, and
     an unquoted value splits the same way the interpreter path did."""
