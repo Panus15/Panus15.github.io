@@ -52,7 +52,7 @@ command that starts the clock, because an invisible clock is one nobody winds.
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
 python3 -m tools.check_offline      # prove no test needs a network
-for t in tests/test_*.py; do python3 "$t"; done   # 739 tests, 48 files
+for t in tests/test_*.py; do python3 "$t"; done   # 752 tests, 49 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
@@ -123,6 +123,27 @@ and **PROFIT** (did the signal-fired, delta-hedged, cost-inclusive trades make
 money?). The same thing runs fully offline on a replayed snapshot —
 `--source replay --chain-json c.json --price-json p.json` — or in Python via
 `PaperLedger` / `paper_trade_series(...)` (that is what `demo.py` section 6 prints).
+
+## 1c. If your broker only lets you BUY options
+
+Many retail apps sell US options long-only: buy a call, buy a put, sell to close.
+The variance edge this engine measures belongs to the seller, so it cannot be
+traded there -- but the same forecast answers the buyer's most expensive
+question: **am I paying for more movement than this stock has been making?**
+Copy three numbers off the app's option screen -- the implied vol, the days left,
+and, optionally, the strike and premium -- and run:
+
+```bash
+python -m tools.option_check IREN --iv 121.42 --days 24 --spot 16.39 \
+        --strike 16 --price 2.41 --kind call
+```
+
+It fetches the stock's daily closes (keyless), forecasts vol over the option's
+life with the same `term_vol` the rest of the engine uses, and prints the IV
+against that forecast, the market's one-sd move against the stock's, the
+break-even and the move needed to reach it, and what the premium would be at the
+forecast vol. The OVERPRICED / FAIR / CHEAP word is a reading aid, NOT a measured
+threshold, and it cannot see earnings: check the date yourself before you buy.
 
 ## 2. What to look at (and not fool yourself)
 
