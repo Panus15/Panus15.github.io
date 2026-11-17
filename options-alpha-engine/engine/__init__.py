@@ -17,13 +17,23 @@ Public surface:
     signal_backtest  multi-date signal-driven walk-forward (does the signal add value?)
     benchmark    same-path comparison: signal vs always-sell (income-ETF) vs buy-hold
     american     binomial American pricing + de-Americanization to a European chain
+    stress       overnight-gap / jump stress — the short-gamma risk a smooth backtest hides
+    crowding_backtest  paired experiment: does selling a FUND-CROWDED strike pay or cost?
+    spread_backtest  defined-risk structures realised: do the wings earn their cost?
+    robustness   seed ensemble + block bootstrap — how wide is that Sharpe really?
+    rotation_backtest  does the sector rotation chart actually predict anything?
+    book_backtest  MANY positions at once — the case the risk governor exists for
 """
 
-from . import (adapters, american, backtest, benchmark, data, deribit,
-               hedged_backtest, ibkr, iv, portfolio, pricing, signal,
-               signal_backtest, sizing, tradier, volforecast)
+from . import (adapters, american, backtest, benchmark, book_backtest,
+               crowding_backtest,
+               data, deribit, hedged_backtest, ibkr, iv, portfolio, pricing,
+               robustness, rotation_backtest, signal, signal_backtest, sizing,
+               spread_backtest, stress, tradier, volforecast)
 
 __all__ = ["pricing", "iv", "volforecast", "signal", "sizing", "backtest",
            "data", "adapters", "deribit", "tradier", "ibkr", "portfolio",
-           "hedged_backtest", "signal_backtest", "benchmark", "american"]
+           "hedged_backtest", "signal_backtest", "benchmark", "american",
+           "stress", "crowding_backtest", "spread_backtest", "robustness",
+           "rotation_backtest", "book_backtest"]
 __version__ = "0.1.0"

@@ -1,11 +1,58 @@
 # Quickstart — test the engine on real options data
 
-## 0. Right now, no network, no installs
+## 0. The one-command path (sector rotation, real prices)
+
+**Windows:** open the `options-alpha-engine` folder and **double-click `START.bat`**.
+
+**macOS / Linux:**
+
+```bash
+python3 -m tools.quickstart
+```
+
+It updates the checkout, downloads prices, renders the chart, opens it, and
+writes the verdict lines to `RESULT.txt`. It runs every step **from its own
+folder**, so it does not matter where your shell is — and if the data step
+produces nothing it stops there and names the reason, instead of letting the
+next step die on a missing file.
+
+No network, or the vendor is blocking? `--demo` renders a generated world and
+downloads nothing:
+
+```bash
+python3 -m tools.quickstart --demo
+```
+
+**Put the OPTIONS decision on the page too.** Without a chain the dashboard can only
+show the context signals — and the one study this repo has run on real data answered
+NO for the sector quadrant, so a page with only that half is a page leading with its
+weakest number. It says so plainly rather than looking complete. Dump a chain once,
+then pass it:
+
+```bash
+python3 -m tools.run_live tradier --symbol SPX --dte 30 --dump spx.json
+python3 -m tools.quickstart --chain-json spx.json --price-json spx_px.json \
+        --symbol SPX --equity 250000 --ledger spx.jsonl
+```
+
+The page then leads with the vol side, P vs Q, the VRP, the fused size multiplier,
+and **the order itself** — every leg, the limit, the dollar worst case — or a named
+refusal.
+
+`--ledger` adds the second panel, and it is the one that can answer *"does the edge
+persist?"* — recorded / settled / open, **P against Q over time** (the gap between
+the lines is the variance premium), the calibration and profit scoreboards, and the
+verdict. It also supplies the ticket's evidence label from the settled count on
+disk: read, never typed. With no ledger it prints **0 recorded, 0 settled** and the
+command that starts the clock, because an invisible clock is one nobody winds.
+
+## 0b. Everything else, no network, no installs
 
 ```bash
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
-for t in tests/test_*.py; do python3 "$t"; done   # 144 tests
+python3 -m tools.check_offline      # prove no test needs a network
+for t in tests/test_*.py; do python3 "$t"; done   # 752 tests, 49 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
@@ -76,6 +123,27 @@ and **PROFIT** (did the signal-fired, delta-hedged, cost-inclusive trades make
 money?). The same thing runs fully offline on a replayed snapshot —
 `--source replay --chain-json c.json --price-json p.json` — or in Python via
 `PaperLedger` / `paper_trade_series(...)` (that is what `demo.py` section 6 prints).
+
+## 1c. If your broker only lets you BUY options
+
+Many retail apps sell US options long-only: buy a call, buy a put, sell to close.
+The variance edge this engine measures belongs to the seller, so it cannot be
+traded there -- but the same forecast answers the buyer's most expensive
+question: **am I paying for more movement than this stock has been making?**
+Copy three numbers off the app's option screen -- the implied vol, the days left,
+and, optionally, the strike and premium -- and run:
+
+```bash
+python -m tools.option_check IREN --iv 121.42 --days 24 --spot 16.39 \
+        --strike 16 --price 2.41 --kind call
+```
+
+It fetches the stock's daily closes (keyless), forecasts vol over the option's
+life with the same `term_vol` the rest of the engine uses, and prints the IV
+against that forecast, the market's one-sd move against the stock's, the
+break-even and the move needed to reach it, and what the premium would be at the
+forecast vol. The OVERPRICED / FAIR / CHEAP word is a reading aid, NOT a measured
+threshold, and it cannot see earnings: check the date yourself before you buy.
 
 ## 2. What to look at (and not fool yourself)
 
