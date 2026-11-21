@@ -77,6 +77,17 @@ def macro_regime_gate(
     return False, "macro benign"
 
 
+def macro_stress_at(snapshot_at, **gate_kwargs):
+    """Build a ``stress_at(t, trailing) -> bool`` callable for
+    engine.signal_backtest.run_signal_backtest from a ``snapshot_at(t) ->
+    MacroSnapshot | None`` lookup. Skips it causes are counted under
+    ``skip_reasons['news']`` (the forward-gate bucket)."""
+    def _stress(t, trailing):
+        snap = snapshot_at(t)
+        return snap is not None and macro_regime_gate(snap, **gate_kwargs)[0]
+    return _stress
+
+
 @dataclass
 class FileMacroAdapter:
     """OFFLINE macro source: load dated MacroSnapshots from a JSON file.

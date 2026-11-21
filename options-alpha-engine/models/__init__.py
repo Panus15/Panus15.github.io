@@ -10,17 +10,29 @@ option-implied (risk-neutral) distribution. The gap is the tradeable edge.
     rnd       risk-neutral moments recovered from the option chain (BKM / model-free)
     edge      compares physical P forecast vs risk-neutral Q -> distributional signals
     strike_scan  per-contract board: model vs market P(ITM) + EV -> BUY/WRITE/FAIR
+    spreads   defined-risk structures (iron condor / put credit spread) — capped tail
+    trade_card   one decision card: vol side + direction + levels + trust
+    calibration  PIT test: is the P density RIGHT in absolute terms (vol scale)?
     surface   SVI IV-surface fit -> densify sparse chains for robust Q extraction
     sentiment Phase-2 NLP: news -> sentiment feature (lexicon core, FinBERT optional)
     news_signal  forward-looking vol-regime gate from sentiment (feeds edge.stressed)
+    fund_flow  option footprint of the big income ETFs (supply map, crowding)
+    events    scheduled-event gate: earnings/FDA inside the option's life
     macro     macro regime gate: curve/credit/VIX-term/tightening -> vol-risk veto
+    rotation  sector relative-rotation (RRG): RS-Ratio / RS-Momentum quadrants
+    decision  fuses edge + rotation + crowding; unproven inputs may only CUT size
+    tail_fit  fits the crash-tail shape the promotion gate grades against
 
 Production target: swap `baseline`'s parameter function for a TFT-encoder + MDN
 head that emits the SAME MixtureLogNormal. Everything else stays put.
 """
 
-from . import (baseline, density, edge, macro, mdn, news_signal, objective,
-               rnd, sentiment, strike_scan, surface)
+from . import (baseline, calibration, decision, density, edge, events, fund_flow,
+               macro,
+               mdn, news_signal, objective, rnd, rotation, sentiment, spreads,
+               strike_scan, surface, tail_fit, trade_card)
 
 __all__ = ["density", "baseline", "mdn", "rnd", "edge", "objective",
-           "sentiment", "news_signal", "surface", "strike_scan", "macro"]
+           "sentiment", "news_signal", "surface", "strike_scan", "macro",
+           "spreads", "calibration", "trade_card", "events", "fund_flow",
+           "rotation", "decision", "tail_fit"]
