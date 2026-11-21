@@ -64,6 +64,14 @@ question_asks_for_sources
                  figures" but the answer contains no URL, DOI, [n] or author-year citation.
                  Risk: models invent citations when asked for them without search.
                  FP: the user wanted a plain explanation and only used the word "sources".
+fragile_promise  a success PROMISE near the start of the answer ("dry completely in one cycle",
+                 "แห้งสนิท", "guaranteed", "foolproof") followed by >= 3 DISTINCT sentences that
+                 say the method fails or something goes wrong unless a condition is met
+                 ("otherwise", "won't dry", "ห้าม ... เพราะ", "ไม่ทัน").  One finding, on the
+                 promise.  Risk: an answer that guarantees success and then lists several ways its
+                 own method fails is often more fragile than it claims.  Nothing offline can check
+                 the physics; this only points at the shape.
+                 FP: a careful recipe that opens with "foolproof" and then gives three real caveats.
 
 Interplay with vague.py (do not duplicate it): vague flags "studies show", "experts say",
 "it has been proven that", "is proven to" and over-precise figures.  absolute_claim skips
@@ -225,6 +233,90 @@ _ASK_TH = [
     r"(?:งานวิจัย|ผลวิจัย|ผลการวิจัย|ผลการศึกษา)[^\n]{0,8}(?:ไหน|อะไร|บ้าง)",
 ]
 
+# -- fragile_promise --------------------------------------------------------
+# PROMISE: the answer says what the method ACHIEVES in complete / unconditional / one-shot terms.
+# Why it signals risk: an unconditional promise leaves no room for the caveats a real method needs;
+# when the same answer then lists several ways it fails, the promise was overconfident.
+# KNOWN FP: a careful recipe that really is robust ("foolproof pancakes") and lists three real caveats.
+#   Entries named "outcome-needed" only count when the same sentence also names an outcome (_OUTCOME_*):
+#   "in one go" alone is often just a description ("mix everything in one go").
+_PROMISE_EN = {
+    # "in one cycle" / "in a single pass": outcome-needed
+    "one": r"in\s+(?:just\s+|only\s+)?(?:one|a\s+single)\s+(?:go|cycle|pass|step|session|shot|run|batch|wash|round)",
+    "strong": "|".join([
+        r"guaranteed", r"foolproof",
+        r"(?:works?|succeeds?|delivers?|dries|cooks|bakes|sets|comes?\s+out|turns?\s+out)\s+(?:\w+\s+){0,2}?every\s+time",
+        r"never\s+fails?(?!\s+to\b)",
+        r"(?:works?|succeeds?|runs?|performs?|dries|cooks)\s+(?:\w+\s+){0,2}?without\s+fail",
+        r"(?:works?|succeeds?|holds?|dries|cooks|bakes|sets)\b[^.,;\n]{0,25}?\bno\s+matter\b",
+        # "completely" / "perfectly" ONLY next to an outcome word ("dry completely"), never "completely different"
+        r"(?:dr(?:y|ies|ied)|clean(?:s|ed)?|remov(?:e|es|ed)|eliminat(?:e|es|ed)|fix(?:es|ed)?|solv(?:e|es|ed)|"
+        r"seal(?:s|ed)?|cur(?:e|es|ed)|heal(?:s|ed)?|cook(?:s|ed)?|restor(?:e|es|ed)|prevent(?:s|ed)?)\s+completely",
+        r"completely\s+(?:dry|dried|clean|cleaned|remov(?:e|es|ed)|eliminat(?:e|es|ed)|fix(?:es|ed)?|solv(?:e|es|ed)|"
+        r"seal(?:s|ed)?|cur(?:e|es|ed)|heal(?:s|ed)?|cooked|restor(?:e|es|ed)|prevent(?:s|ed)?)",
+        r"(?:works?|cooks?|dr(?:y|ies)|sets?|seals?|cleans?|fits?|holds?|comes?\s+out|turns?\s+out|bakes?|rises?)\s+perfectly",
+        r"perfectly\s+(?:dry|clean|cooked|crispy|crisp|sealed|baked|even|smooth|fluffy|tender)",
+    ]),
+}
+_PROMISE_TH = {
+    # "ในครั้งเดียว" / "ในรอบเดียว" / "ทีเดียวจบ": outcome-needed
+    # "ได้แน่นอน" is also the conversational opener "sure, can do": it only counts after an outcome word, never at the start
+    "one": r"ใน(?:ครั้ง|รอบ)เดียว(?:จบ)?|(?:ครั้ง|ที)เดียวจบ|ในทีเดียว|(?<!ไม่)ได้แน่นอน",
+    "strong": "|".join([
+        # สนิท as "completely": not เพื่อนสนิท (close friend), หลับสนิท (sound sleep), ปิดสนิท, ไม่สนิท ...
+        r"(?:(?:แห้ง|สะอาด|สุก|หาย|เรียบ|เกลี้ยง)สนิท|(?<!เพื่อน)(?<!คน)(?<!หลับ)(?<!ปิด)(?<!ไม่)(?<!ใกล้)(?<!ล็อก)(?<!ชิด)"
+        r"(?<!แน่น)สนิท(?!ใจ|กัน|ชิด))",
+        # ทุกครั้ง only after a success word: "ล้างมือทุกครั้ง" is advice, "ได้ผลทุกครั้ง" is a promise
+        r"(?:ได้ผล|ได้|สำเร็จ|เวิร์ค|เวิร์ก|อร่อย|เป๊ะ|สวย|ฟู|นุ่ม|แห้ง|สุก|หาย)ทุกครั้ง(?!ที่|ก่อน|หลัง|เมื่อ)",
+        r"(?<!หนังสือ)(?<!ได้)(?<!ไม่)(?<!ผู้)รับรอง(?:ว่า|ผลลัพธ์|ได้ผล|ความสำเร็จ|เลย)",
+        r"ไม่มีพลาด|ไม่มีวันพลาด",
+        # เด็ดขาด only after a success verb; "ห้าม ... เด็ดขาด" is a prohibition (checked in code too)
+        r"(?:กำจัด|ขจัด|ปราบ|แก้|รักษา|ป้องกัน|หาย)\S{0,10}?เด็ดขาด",
+    ]),
+}
+# an outcome in the same sentence (for the "one" triggers)
+_OUTCOME_EN = (r"dr(?:y|ies|ied)|clean\w*|cook\w*|finish\w*|complet\w*|done|work\w*|remov\w+|fix\w*|solv\w+|heal\w*|"
+               r"ready|achiev\w+|eliminat\w+|cure\w*|sorted|wash\w*|everything|succe\w+|perfect\w*|bak\w+|dissolv\w+")
+_OUTCOME_TH = ["แห้ง", "เสร็จ", "สะอาด", "หาย", "สำเร็จ", "เรียบร้อย", "ครบ", "จบ", "กำจัด", "ขจัด", "แก้", "สุก", "ได้ผล",
+               "ใช้ได้", "ทำได้", "อร่อย", "ผ่าน"]
+# a sentence that LEADS with an instruction / prohibition is a caution, not a promise
+_FP_LEAD_EN = (r"make\s+sure|be\s+sure|ensure|always|remember|never|do\s+not|don['’]t|avoid|check|let|allow|wait|dry|wash|"
+               r"rinse|cool|drain|wipe|stir|mix|heat|chill|dissolve|cook|bake|clean|remove|keep|please|note|beware|"
+               r"be\s+careful|careful")
+_FP_LEAD_TH = ["ห้าม", "อย่า", "หลีกเลี่ยง", "ควรหลีกเลี่ยง", "ระวัง", "โปรด", "กรุณา", "ไม่ควร", "ต้องไม่"]
+# right before the trigger: "until / before / make sure ..." (a goal to check, not a promise)
+_FP_COND_EN = r"(?:until|before|once|make\s+sure|be\s+sure|ensure|unless|whether|wait|check)\b[^,.;\n]{0,40}\Z"
+_FP_COND_TH = r"(?:จนกว่า|ก่อนที่|ก่อน|ให้แน่ใจ|ตรวจสอบว่า|ตรวจดูว่า)\S{0,25}\Z"
+# negation just before the trigger
+_FP_NEG_EN = r"(?:\bnot|n['’]t|\bno|\bnever|\bhardly|\brarely)\s+(?:\w+\s+){0,2}\Z"
+_FP_NEG_TH = r"(?:ไม่|ห้าม|อย่า|มิ)\S{0,4}\Z"
+# FAILURE-MODE sentences (after the promise).  STRONG cues count by themselves.
+_FAIL_STRONG_EN = [
+    r"(?<!unless )(?<!or )otherwise\b(?!\s+(?:stated|noted|specified|known|indicated|directed|instructed|mentioned|required))",
+    r"or\s+else",
+    # "won't" only before a result verb: "the rest won't dry" is a failure, "slicing won't mutate" is a feature
+    r"won['’]t\s+(?:\w+\s+)?(?:dry|work|cook|set|hold|rise|cool|heat|stick|fit|last|form|come|turn|taste|bake|melt|open|"
+    r"close|start|drain|get|be|help|save|keep|survive|stay|run|fix|solve|clean|remove|fully|properly|completely)",
+    r"will\s+not\s+(?:\w+\s+)?(?:dry|work|cook|set|hold|rise|cool|heat|stick|fit|last|form|come|turn|taste|bake|melt|open|"
+    r"close|start|drain)",
+    r"(?:can['’]t|cannot)\s+(?:\w+\s+)?(?:dry|work|cook|set|hold|rise|cool|heat|fit|last|form|come|turn|bake|melt|drain)",
+    r"fail(?:s|ed|ure|ures)?", r"ruin(?:s|ed|ing)?", r"stick(?:s|ing)?(?!\s+(?:to|with|around|out|together)\b)",
+    r"burn(?:s|ed|t|ing)?(?!\s+(?:calories|fat|energy|off|more|less|a\s+lot)\b)", r"soggy",
+    r"damp(?!\s+(?:cloth|towel|rag|sponge|paper|hands|brush)\b)",
+]
+# WEAK cues only count when a consequence word follows in the same sentence ("never leave it, it may burn")
+_FAIL_WEAK_EN = [r"if\s+not", r"too\s+(?:tight|full|much|many|hot|cold|wet|thick|thin|crowded|loose|packed)",
+                 r"must\s+not", r"never"]
+_FAIL_CONSEQ_EN = (r"will|would|won['’]t|may|might|could|can['’]t|cannot|because|otherwise|or\s+else|then\s+(?:it|they|the)|"
+                   r"ruin|fail|burn|stick|crack|break|collapse|spoil|dense|soggy|damp|wet|tough|rubbery|dry\s+out|"
+                   r"not\s+(?:dry|work|cook|set|hold|rise)")
+_FAIL_STRONG_TH = ["มิฉะนั้น", "ไม่เช่นนั้น", "ไม่งั้น", "เพราะจะ", "ไม่แห้ง", "ไม่ทัน", "แห้งไม่", "เสียหาย", "ไหม้", "แฉะ",
+                   "ล้มเหลว", "ไม่สุก", "ไม่เซ็ต", "ไม่ขึ้นฟู", "ไม่ได้ผล", "ไม่สำเร็จ",
+                   r"จะทำให้.{0,40}?ไม่", r"จะไม่(?!ต้อง|มีปัญหา|มีพลาด|มีวัน)"]
+# a caution lead (ห้าม / อย่า / หลีกเลี่ยง ...) counts as a failure when it carries a consequence clause or a "too much" cue
+_FAIL_LEAD_TH = ["ห้าม", "อย่า", "หลีกเลี่ยง", "ไม่ควร"]
+_FAIL_CONSEQ_TH = ["เพราะ", "ทำให้"]
+_FAIL_OVER_TH = ["เกินไป", "เกินพอดี", "จนแน่น", "จนเต็ม", "ยัด", "อัดแน่น", "แน่นเกิน", "มากเกิน"]
 # ===========================================================================
 # Compiled patterns
 # ===========================================================================
@@ -349,6 +441,25 @@ _CONCLUSION_RE = re.compile(r"\**(?:" + _CONCLUSION_LABEL + r")\b[\s:*—–-]",
 _THAI_DIGITS = str.maketrans("๐๑๒๓๔๕๖๗๘๙", "0123456789")
 
 _ASK_RE = re.compile("|".join(_ASK_EN + _ASK_TH), re.I)
+
+_PROMISE_RE = re.compile(
+    r"(?P<one_en>" + _L + _PROMISE_EN["one"] + _R + r")|(?P<en>" + _L + "(?:" + _PROMISE_EN["strong"] + ")" + _R + r")|"
+    r"(?P<one_th>" + _PROMISE_TH["one"] + r")|(?P<th>" + _PROMISE_TH["strong"] + ")", re.I)
+_OUTCOME_RE = re.compile(_L + "(?:" + _OUTCOME_EN + ")" + _R + "|" + "|".join(_OUTCOME_TH), re.I)
+_FP_LEAD_RE = re.compile(r"[\s>*#\-•·▪●○0-9๐-๙.):]*(?:(?:" + _FP_LEAD_EN + r")(?![A-Za-z])|" + "|".join(_FP_LEAD_TH) + ")", re.I)
+_FP_COND_EN_RE = re.compile(_FP_COND_EN, re.I)
+_FP_COND_TH_RE = re.compile(_FP_COND_TH)
+_FP_NEG_EN_RE = re.compile(_FP_NEG_EN, re.I)
+_FP_NEG_TH_RE = re.compile(_FP_NEG_TH)
+_TH_PROHIB = re.compile("ห้าม|อย่า|ไม่|หลีกเลี่ยง|งด|มิ")
+_TH_QUESTION_END = re.compile(r"(?:ไหม|มั้ย|หรือไม่|หรือเปล่า|หรือยัง|เหรอ|หรอ)[\s?？]*\Z")
+_FAIL_STRONG_RE = re.compile(_L + "(?:" + "|".join(_FAIL_STRONG_EN) + ")" + _R + "|" + "|".join(_FAIL_STRONG_TH), re.I)
+_FAIL_WEAK_RE = re.compile(_L + "(?:" + "|".join(_FAIL_WEAK_EN) + ")" + _R, re.I)
+_FAIL_CONSEQ_RE = re.compile(_L + "(?:" + _FAIL_CONSEQ_EN + ")" + _R, re.I)
+_FAIL_LEAD_TH_RE = re.compile("|".join(_FAIL_LEAD_TH))
+_FAIL_CONSEQ_TH_RE = re.compile("|".join(_FAIL_CONSEQ_TH))
+_FAIL_OVER_TH_RE = re.compile("|".join(_FAIL_OVER_TH))
+_HEADING_LINE = re.compile(r"[ \t]{0,3}(?:#{1,6}[ \t]|\*\*[^*\n]+\*\*[ \t]*:?[ \t]*\r?$|__[^_\n]+__[ \t]*:?[ \t]*\r?$)", re.M)
 
 _ABBREVIATIONS = {"et al", "al", "e.g", "i.e", "vs", "dr", "prof", "mr", "mrs", "ms", "fig", "figs", "approx", "inc",
                   "ltd", "co", "jr", "sr", "st", "cf", "ca", "vol", "pp", "ed", "eds", "u.s", "u.k", "etc", "est",
@@ -1006,11 +1117,130 @@ def _question_cue(cx: _Ctx, question: str, hits: list[Hit]) -> None:
 
 
 # ===========================================================================
+# 9. fragile_promise
+# ===========================================================================
+_FP_REGION = 0.30                  # a promise must START within the first 30% of the answer (or lead a section)
+_FP_MIN_FAILURES = 3               # distinct failure-mode sentences needed after the promise
+
+
+def _is_heading_line(body: str, ls: int) -> bool:
+    return bool(_HEADING_LINE.match(body, ls))
+
+
+def _leads_section(body: str, nls: list[int], s: int) -> bool:
+    """Is the sentence starting at `s` a heading, or the first sentence under one?  `nls`: newline offsets."""
+    k = bisect_right(nls, s - 1) - 1                            # index of the last newline before s
+    ls = nls[k] + 1 if k >= 0 else 0
+    if s - ls > 12 or body[ls:s].strip(" \t>*#-•0123456789๐-๙.)") != "":
+        return False                                            # not the first sentence on its line
+    if _is_heading_line(body, ls):
+        return True
+    j = k                                                       # the line before ours
+    for _ in range(4):                                          # skip a few blank lines at most
+        if j < 0:
+            return False
+        st = nls[j - 1] + 1 if j >= 1 else 0
+        if body[st:nls[j]].strip():
+            return _is_heading_line(body, st)
+        j -= 1
+    return False
+
+
+def _is_question_text(st: str) -> bool:
+    st = st.rstrip()
+    return st.endswith(("?", "？")) or bool(_TH_QUESTION_END.search(st))
+
+
+def _promise_span(st: str) -> Optional[tuple[int, int]]:
+    """The promise phrase (offsets into the sentence text) or None.  Adjacent triggers are merged."""
+    if _is_question_text(st) or _FP_LEAD_RE.match(st):
+        return None
+    good: list[tuple[int, int]] = []
+    negated = False                                             # a negated trigger spoils the whole sentence
+    outs: Optional[list[tuple[int, int]]] = None
+    for m in _PROMISE_RE.finditer(st):
+        a, b = m.span()
+        kind = m.lastgroup or ""
+        th = kind.endswith("th") or kind == "th"
+        if kind.startswith("one"):
+            if outs is None:
+                outs = [o.span() for o in _OUTCOME_RE.finditer(st)]
+            if not outs or not (outs[0][1] <= a or outs[-1][0] >= b):
+                continue                                            # "in one go" with no outcome: just a description
+            if th and m.group().endswith("แน่นอน") and a < 6:
+                continue                                        # "ได้แน่นอน ลองทำตามนี้": an opener, not a promise
+        if th:
+            if _FP_NEG_TH_RE.search(st[max(0, a - 8):a]):
+                negated = True
+                continue
+            if _FP_COND_TH_RE.search(st[max(0, a - 30):a]):
+                continue
+            if m.group().endswith("เด็ดขาด") and _TH_PROHIB.search(st[:a]):
+                continue                                        # "ห้าม ... เด็ดขาด": a prohibition
+        else:
+            if _FP_NEG_EN_RE.search(st[max(0, a - 30):a]):
+                negated = True
+                continue
+            if _FP_COND_EN_RE.search(st[max(0, a - 60):a]):
+                continue
+        good.append((a, b))
+    if negated or not good:
+        return None
+    a, b = good[0]
+    for a2, b2 in good[1:]:
+        if a2 <= b + 2 and not st[b:a2].strip():
+            b = max(b, b2)
+        else:
+            break
+    return a, b
+
+
+def _is_failure_sentence(st: str) -> bool:
+    if _is_question_text(st):
+        return False
+    if _FAIL_STRONG_RE.search(st):
+        return True
+    for m in _FAIL_WEAK_RE.finditer(st):
+        if _FAIL_CONSEQ_RE.search(st, m.end(), m.end() + 90):
+            return True
+    ml = _FAIL_LEAD_TH_RE.search(st)
+    if ml:
+        if _FAIL_CONSEQ_TH_RE.search(st, ml.end(), ml.end() + 90) or _FAIL_OVER_TH_RE.search(st, ml.end(), ml.end() + 90):
+            return True
+    return False
+
+
+def _fragile_cue(cx: _Ctx, hits: list[Hit]) -> None:
+    body = _mask_spans(cx.prose, [(a, b) for a, b, _ia, _ib in cx.quotes])      # quotes take no part
+    limit = len(body) * _FP_REGION
+    nls: Optional[list[int]] = None
+    first = None
+    for i, (s, e) in enumerate(cx.sents):
+        if s >= limit:
+            if nls is None:
+                nls = [m.start() for m in re.finditer("\n", body)]
+            if not _leads_section(body, nls, s):
+                continue
+        span = _promise_span(body[s:e])
+        if span:
+            first = (i, s + span[0], s + span[1])
+            break                                               # the earliest promise has the most failures after it
+    if first is None:
+        return
+    i, a, b = first
+    n = sum(1 for s, e in cx.sents[i + 1:] if _is_failure_sentence(body[s:e]))
+    if n >= _FP_MIN_FAILURES:
+        hits.append((a, b, "fragile_promise",
+                     f"Promises complete success but then lists {n} ways the same method can fail — the method may be "
+                     f"more fragile than the answer claims."))
+
+
+# ===========================================================================
 # scan
 # ===========================================================================
 _TAG_ORDER = {t: i for i, t in enumerate((
     "time_sensitive", "absolute_claim", "ai_self_disclosure", "placeholder_url", "unsourced_quote",
-    "named_expert_claim", "count_mismatch", "question_asks_for_sources"))}
+    "named_expert_claim", "count_mismatch", "question_asks_for_sources", "fragile_promise"))}
 
 
 def scan(text: str, *, question: Optional[str] = None, today: Optional[_dt.date] = None) -> list[Finding]:
@@ -1027,6 +1257,7 @@ def scan(text: str, *, question: Optional[str] = None, today: Optional[_dt.date]
         _absolute_cue(cx, hits)
         _quote_cue(cx, hits)
         _expert_cue(cx, hits)
+        _fragile_cue(cx, hits)
     _self_cue(cx, hits)
     _placeholder_cue(cx, hits)
     _count_cue(cx, hits)

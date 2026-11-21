@@ -10,7 +10,7 @@ from engine.cues import scan
 
 TODAY = datetime.date(2026, 11, 14)
 ALL_TAGS = {"time_sensitive", "absolute_claim", "ai_self_disclosure", "placeholder_url", "unsourced_quote",
-            "named_expert_claim", "count_mismatch", "question_asks_for_sources"}
+            "named_expert_claim", "count_mismatch", "question_asks_for_sources", "fragile_promise"}
 
 
 def run(text, **kw):
@@ -355,6 +355,206 @@ def test_question_asks_for_sources_negative():
                  "Green tea helps, doi:10.1000/xyz123."):
         assert tags(good, question="Please cite your sources") == [], good
     assert tags("", question="cite sources") == []
+
+
+# ---------------------------------------------------------------- 9. fragile_promise
+TH_PROMISE = "การอบผ้าของหลายคนพร้อมกันในตู้เดียวโดยไม่ให้ปะปนกันและยังแห้งสนิท ทำได้โดยใช้ ถุงตาข่ายอบผ้าขนาดใหญ่แบบตาห่าง"
+TH_FAILS = ["หลีกเลี่ยงถุงตาถี่หรือถุงผ้าทึบเพราะจะกักความชื้นทำให้ผ้าด้านในไม่แห้ง",
+            "ห้ามยัดผ้าจนแน่นเป็นก้อนเด็ดขาด",
+            "ไม่ควรใส่ปนกับเสื้อผ้าเนื้อบาง เพราะผ้าหนาจะอมความชื้นทำให้ผ้าชิ้นอื่นในถุงเดียวกันแห้งไม่ทันในรอบเดียว"]
+EN_PROMISE = "Drying several people's laundry separately in a coin dryer works perfectly in one cycle if you use large mesh bags."
+EN_FAILS = ["Avoid fine-mesh bags because they trap moisture so clothes inside stay damp.",
+            "Never pack the bag tight, or the clothes inside won't dry.",
+            "Keep heavy items separate because they hold moisture and the rest won't dry in time."]
+
+
+def fp(text, **kw):
+    return [f for f in run(text, **kw) if f.tag == "fragile_promise"]
+
+
+def test_fragile_promise_thai_laundry_shape():
+    t = "\n".join([TH_PROMISE] + TH_FAILS) + "\n"
+    fs = fp(t)
+    assert len(fs) == 1
+    c = fs[0].claim
+    assert c.text == "แห้งสนิท" and c.start == t.index("แห้งสนิท")
+    assert fs[0].reason == ("Promises complete success but then lists 3 ways the same method can fail — the method may be "
+                            "more fragile than the answer claims.")
+    assert [f.tag for f in run(t)] == ["fragile_promise"]
+    # the promise phrase is the smallest phrase, merged with an adjacent one-shot phrase
+    t2 = "ผ้าแห้งสนิทในครั้งเดียวด้วยถุงตาห่าง\n" + "\n".join(TH_FAILS[:2] + [TH_FAILS[2]])
+    assert [f.claim.text for f in fp(t2)] == ["แห้งสนิทในครั้งเดียว"]
+
+
+def test_fragile_promise_english_laundry_shape():
+    t = " ".join([EN_PROMISE] + EN_FAILS)
+    fs = fp(t)
+    assert [f.claim.text for f in fs] == ["works perfectly in one cycle"]
+    assert fs[0].claim.start == t.index("works perfectly")
+    t2 = "\n".join(["Clothes will dry completely in one cycle with large mesh bags."] + EN_FAILS)
+    assert [f.claim.text for f in fp(t2)] == ["dry completely in one cycle"]
+    # N is the number of distinct failure sentences
+    t3 = "\n".join([EN_PROMISE] + EN_FAILS + ["Too much fabric in one bag means the middle stays wet, or it will smell."])
+    assert "lists 4 ways" in fp(t3)[0].reason
+
+
+def test_fragile_promise_other_promise_words():
+    fails = "\n".join(EN_FAILS)
+    for promise, span in (("This method is foolproof.", "foolproof"),
+                          ("The result is guaranteed to hold.", "guaranteed"),
+                          ("It works every time.", "works every time"),
+                          ("This setup never fails.", "never fails"),
+                          ("It works without fail.", "works without fail"),
+                          ("It works no matter the weather.", "works no matter"),
+                          ("The paint cures perfectly.", None),
+                          ("Everything is completely dry in a single pass.", "completely dry in a single pass")):
+        got = [f.claim.text for f in fp(promise + "\n" + fails)]
+        assert got == ([span] if span else []) or (span is None and got == []), (promise, got)
+    for promise, span in (("วิธีนี้ได้ผลทุกครั้ง", "ได้ผลทุกครั้ง"), ("ผมรับรองว่าทำได้", "รับรองว่า"),
+                          ("วิธีนี้ไม่มีพลาด", "ไม่มีพลาด"), ("ผ้าแห้งได้แน่นอน", "ได้แน่นอน"),
+                          ("กำจัดเชื้อราได้เด็ดขาด", "กำจัดเชื้อราได้เด็ดขาด")):
+        assert [f.claim.text for f in fp(promise + "\n" + "\n".join(TH_FAILS))] == [span], promise
+
+
+def test_fragile_promise_section_lead_beyond_first_30_percent():
+    filler = "Intro filler sentence number one is right here. " * 30
+    body = "Works perfectly every time.\n" + "\n".join(EN_FAILS)
+    assert fp(filler + "\n\n## The method\n" + body) and fp(filler + "\n\n**The method**\n" + body)
+    # the same promise as a plain late sentence does NOT count
+    assert fp(filler + "\n\nThe method:\n" + body) == []
+    assert fp(filler + " " + body) == []
+
+
+def test_fragile_promise_needs_three_distinct_failure_sentences():
+    assert fp("\n".join([EN_PROMISE] + EN_FAILS[:2])) == []                       # promise + 2 caveats
+    assert fp("\n".join([TH_PROMISE] + TH_FAILS[:2])) == []
+    # several failure cues in ONE sentence still count once
+    one = "Avoid fine bags, otherwise they stay damp, or else the clothes won't dry and the zip will burn."
+    assert fp("\n".join([EN_PROMISE, one, EN_FAILS[1]])) == []
+    assert len(fp("\n".join([EN_PROMISE, one, EN_FAILS[1], EN_FAILS[2]]))) == 1
+    # a question is not a failure statement
+    assert fp("\n".join([EN_PROMISE] + EN_FAILS[:2] + ["Why else would it stay damp otherwise?"])) == []
+    # failures BEFORE the promise do not count
+    assert fp("\n".join(EN_FAILS + [EN_PROMISE])) == []
+
+
+def test_fragile_promise_negative_controls_recipes_and_checklists():
+    # cautions but no success promise (English)
+    assert fp("Do not overmix or the cake will be dense. Do not open the oven door, otherwise the cake will sink. "
+              "Never use cold eggs, or the batter will split. Do not skip the cooling time, or it will crack. "
+              "Bake at 170C until golden.") == []
+    # cautions but no success promise (Thai)
+    assert fp("ห้ามคนไข่ในกระทะ เพราะไข่จะไม่ฟู\nอย่าใช้ไฟอ่อนเกินไป เพราะไข่จะแฉะ\n"
+              "ห้ามเปิดฝาบ่อย มิฉะนั้นจะไม่สุก\nทอดจนเหลืองทอง") == []
+    # safety checklists
+    assert fp("Safety checklist:\n- Never leave the stove unattended, or a fire may start.\n"
+              "- Do not use a damp cloth near live wires, otherwise you risk shock.\n"
+              "- Unplug the heater, or it can burn out.\n- Keep children away, because hot surfaces will burn.\n") == []
+    assert fp("ข้อควรระวัง\n- ห้ามเสียบปลั๊กขณะมือเปียก เพราะอาจถูกไฟดูด\n- อย่าวางผ้าบนเตา เพราะจะไหม้\n"
+              "- หลีกเลี่ยงการใช้ปลั๊กพ่วงเกินไป เพราะไฟจะไม่พอ\n- ห้ามปล่อยเด็กไว้ลำพังเด็ดขาด") == []
+    # "won't" describing a feature, not a failure
+    assert fp("Reversing works every time for plain lists.\nSlicing won't mutate the list.\n"
+              "Use reversed() otherwise.\nIt won't change the tuple either.") == []
+
+
+def test_fragile_promise_descriptive_and_historical_words():
+    fails = "\n".join(EN_FAILS)
+    for desc in ("The two methods are completely different.", "The sugar is completely dissolved.",
+                 "This is a perfectly normal result.", "He wrote it in one go."):
+        assert fp(desc + "\n" + fails) == [], desc
+    # "never" in a historical / descriptive sentence is not a failure mode
+    hist = ["The first dryers never reached high temperatures.", "Early models never sold well in Europe."]
+    assert fp("\n".join([EN_PROMISE, EN_FAILS[0], EN_FAILS[1]] + hist)) == []
+    # ... while "never" + a consequence is one
+    assert len(fp("\n".join([EN_PROMISE, EN_FAILS[0], EN_FAILS[1], "Never overload it, or it will stall."]))) == 1
+    # "สนิท" in other words is not a promise
+    assert fp("เขาเป็นเพื่อนสนิทของฉัน\n" + "\n".join(TH_FAILS)) == []
+    assert fp("เด็กหลับสนิทตลอดคืน\n" + "\n".join(TH_FAILS)) == []
+
+
+def test_fragile_promise_not_a_promise_prohibition_question_imperative():
+    th_f = "\n".join(TH_FAILS)
+    assert fp("ห้ามแช่ผ้าข้ามคืนเด็ดขาด\n" + th_f) == []                               # prohibition, not a promise
+    assert fp("ไม่ควรกำจัดเชื้อราด้วยน้ำยาผสมเด็ดขาด\n" + th_f) == []
+    assert fp("ผ้าไม่แห้งสนิทในครั้งเดียว\n" + th_f) == []                            # negated
+    assert fp("ผ้าจะแห้งสนิทไหม\n" + th_f) == []                                      # question
+    en_f = "\n".join(EN_FAILS)
+    assert fp("Can it dry completely in one cycle?\n" + en_f) == []
+    assert fp("It does not dry completely in one cycle.\n" + en_f) == []
+    assert fp("This is not guaranteed.\n" + en_f) == []
+    assert fp("Make sure the clothes dry completely in one cycle.\n" + en_f) == []     # imperative caution
+    assert fp("Dry completely before folding.\n" + en_f) == []
+    assert fp("Wait until the clothes are completely dry.\n" + en_f) == []
+    assert fp("Never claim it is guaranteed.\n" + en_f) == []
+    assert fp("ได้แน่นอน ลองทำตามนี้\n" + th_f) == []                                  # conversational opener
+    assert fp("ล้างมือทุกครั้งก่อนจับอาหาร\n" + th_f) == []                            # advice, not a promise
+    assert fp("หนังสือรับรองบริษัทต้องมีตราประทับ\n" + th_f) == []
+
+
+def test_fragile_promise_quotes_and_code_are_masked():
+    quote = ('A forum post said: "This foolproof method works perfectly in one cycle. Avoid fine bags, otherwise they stay '
+             'damp. Never pack tight, or it won\'t dry. Heavy items won\'t dry in time." and that was all.')
+    assert fp(quote) == []
+    fenced = "Intro.\n```\n" + "\n".join([EN_PROMISE] + EN_FAILS) + "\n```\n"
+    assert fp(fenced) == []
+    assert fp("Intro.\n" + "\n".join([EN_PROMISE] + [f"`{x}`" for x in EN_FAILS])) == []
+    # a promise in prose is not rescued by failures quoted afterwards
+    assert fp(EN_PROMISE + ' Someone said: "Avoid bags, otherwise damp. Never pack tight, or it won\'t dry. It won\'t dry in time."') == []
+
+
+def test_fragile_promise_exactly_one_finding_per_answer():
+    t = "\n".join(["This is foolproof and works perfectly every time.", EN_PROMISE] + EN_FAILS +
+                 ["It is guaranteed to work.", "Avoid steam, otherwise it will burn."])
+    fs = fp(t)
+    assert len(fs) == 1 and fs[0].claim.text == "foolproof"
+    assert len([f for f in run(TH_PROMISE + "\n" + "\n".join(TH_FAILS) + "\nอีกครั้ง: " + TH_PROMISE) if f.tag == "fragile_promise"]) == 1
+
+
+def test_fragile_promise_offsets_emoji_combining_marks_crlf():
+    pre = "😀 é ที่นี่ น้ำ 🎉\r\n"
+    t = pre + "\r\n".join([TH_PROMISE] + TH_FAILS) + "\r\n"
+    fs = fp(t)
+    assert [f.claim.text for f in fs] == ["แห้งสนิท"] and fs[0].claim.start == t.index("แห้งสนิท")
+    t2 = "🙂🙂 é\r\n" + "\r\n".join([EN_PROMISE] + EN_FAILS)
+    assert [f.claim.text for f in fp(t2)] == ["works perfectly in one cycle"]
+    t3 = "\r\n".join(["## ผ้า", "ผ้าแห้งสนิทในครั้งเดียว"] + TH_FAILS)
+    assert [f.claim.text for f in fp(t3)] == ["แห้งสนิทในครั้งเดียว"]
+
+
+def test_fragile_promise_coexists_with_other_cues():
+    t = ("This supplement is a guaranteed cure for diabetes, working perfectly every time.\n"
+         "Avoid taking it with food, otherwise it will not work.\n"
+         "Never exceed the dose, or it can burn your stomach.\n"
+         "Skip it when stressed, because it fails then.\n"
+         "Currently the price is 45 dollars. As an AI I may be wrong. See https://example.com/x.\n")
+    fs = run(t)
+    got = {f.tag for f in fs}
+    assert {"fragile_promise", "absolute_claim", "time_sensitive", "ai_self_disclosure", "placeholder_url"} <= got, got
+    assert [f.claim.id for f in fs] == [f"q{i}" for i in range(1, len(fs) + 1)]
+    assert len([f for f in fs if f.tag == "fragile_promise"]) == 1
+    # same span, different tags: both kept, never the same (tag, span) twice
+    assert len({(f.tag, f.claim.start, f.claim.end) for f in fs}) == len(fs)
+
+
+def test_fragile_promise_performance_and_adversarial_inputs():
+    para = "\n".join([EN_PROMISE] + EN_FAILS + [TH_PROMISE] + TH_FAILS) + "\n"
+    big = (para * (200_000 // len(para) + 1))[:200_000]
+    t0 = time.time(); run(big); assert time.time() - t0 < 1.0
+    bad_inputs = [
+        "completely dry in one cycle. " * 7_000,
+        "works perfectly in one cycle " * 7_000,
+        "in one cycle " * 15_000,
+        "in one cycle dry " * 12_000,
+        "otherwise " * 20_000, "never " * 30_000, "won't " * 30_000, "if not " * 25_000,
+        "ในครั้งเดียว" * 15_000, "แห้งสนิท " * 20_000, "ห้าม" * 40_000, "จะทำให้" * 25_000,
+        "ได้แน่นอน " * 15_000, "กำจัด" * 30_000 + "เด็ดขาด",
+        "# h\n" * 40_000, "x. " * 60_000, "foolproof. otherwise. " * 9_000,
+        "## a\nfoolproof.\n" + "otherwise it fails.\n" * 10_000,
+        "works " * 30_000, "works no matter " * 12_000,
+    ]
+    for bad in bad_inputs:
+        t0 = time.time(); run(bad[:200_000]); dt = time.time() - t0
+        assert dt < 1.0, (bad[:25], dt)
 
 
 # ---------------------------------------------------------------- general behaviour

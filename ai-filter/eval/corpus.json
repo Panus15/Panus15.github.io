@@ -506,6 +506,11 @@
           "truth": "false",
           "needs_ai": true,
           "note": "REAL MISS reported by the user: clothes packed in a bag do not tumble apart, so they stay damp. No link, number or date to check, so only an AI review (--ai) or a human can see it; a model reviewing its own family's answer may share the mistake."
+        },
+        {
+          "find": "แห้งสนิท",
+          "truth": "false",
+          "note": "the promise that bagged laundry dries completely in one cycle (the user says it does not). The fragile_promise cue points at the SHAPE (promise, then 3 ways the method fails); it was written after seeing this very case, so it must be judged on other answers, not on this one."
         }
       ]
     }
