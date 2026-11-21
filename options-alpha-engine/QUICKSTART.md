@@ -52,7 +52,7 @@ command that starts the clock, because an invisible clock is one nobody winds.
 cd options-alpha-engine
 python3 demo.py                     # full loop on synthetic data
 python3 -m tools.check_offline      # prove no test needs a network
-for t in tests/test_*.py; do python3 "$t"; done   # 752 tests, 49 files
+for t in tests/test_*.py; do python3 "$t"; done   # 762 tests, 50 files
 ```
 
 ## 1. Test on REAL options (run where outbound network is open)
@@ -144,6 +144,21 @@ against that forecast, the market's one-sd move against the stock's, the
 break-even and the move needed to reach it, and what the premium would be at the
 forecast vol. The OVERPRICED / FAIR / CHEAP word is a reading aid, NOT a measured
 threshold, and it cannot see earnings: check the date yourself before you buy.
+
+## 1d. Updating the code on Windows (keeps every record)
+
+Double-click `UPDATE.bat` in the `options-alpha-engine` folder. It downloads
+this branch, copies only the code folders (`engine models tools tests mutation
+docs`) and the top-level `*.md *.py *.txt START.bat UPDATE.bat`, and never
+deletes anything — `btc.jsonl`, `daily.log`, `daily-job.bat`, `dashboard.html`,
+`prices\` and `holdings\` are left exactly as they were, so the scheduled job
+keeps appending to the same ledger. It then checks the new code imports and
+prints the ledger's status. `tests/test_update_bat.py` pins all of that.
+
+If the scheduled job was installed before a fix to its wrapper, rewrite the
+wrapper (no Administrator needed; the existing task already points at it):
+
+    python -m tools.daily install --ledger btc.jsonl --holdings= --dashboard dashboard.html
 
 ## 2. What to look at (and not fool yourself)
 

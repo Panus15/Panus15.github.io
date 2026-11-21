@@ -1,0 +1,3 @@
+# Windows batch files are run by cmd.exe, which misreads labels and blocks in
+# LF-only files. Store them exactly as committed (CRLF), never converted.
+*.bat -text
